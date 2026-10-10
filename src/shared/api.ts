@@ -303,6 +303,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   mentionSearch(root: string, query: string): Promise<MentionHit[]>
   /** "/" autocomplete: skills available to the agent (project + active cache + user-level). */
   listSkills(root: string): Promise<SkillInfo[]>
+  /** Configurações → Skills: cada skill com nível e categoria (catálogo em níveis). */
+  skillTierList(): Promise<import('./ipc').SkillTierRow[]>
   /** Project map: the most recently modified files under `root` (+ their folders).
    *  `keep` = paths the caller is showing now, so the reply can report which of
    *  them were deleted (see ProjectTree.missing). */

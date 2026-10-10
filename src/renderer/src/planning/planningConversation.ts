@@ -10,10 +10,12 @@
  *   Automático — para nenhum caminho `isAutoModel(conv.model)` do App pegá-la.
  */
 import type { AgentCodeApi } from '@shared/api'
+import { isCentralConversation } from '@shared/central'
 import {
   clampEffortToModel,
   isAutoEffort,
   isAutoModel,
+  modelSupportsFastMode,
   PLANNING_AUTO_FALLBACK,
   type PlanningConfig,
   PLANNING_MODELS,
@@ -58,12 +60,15 @@ export function sessionStartFields(
  *  Modelo e esforço são os do Agent Manager NA HORA do envio (o último que o
  *  usuário escolheu na Tela de Planejamento). Automático segue Automático: a
  *  conversa leva o sentinel e o Automático dela revalida a cada mensagem, como
- *  em qualquer conversa. */
+ *  em qualquer conversa. `fastMode`: a escolha do botão do envio ("Leitura
+ *  guiada" ligada); só vale se o modelo do Manager tiver fast mode. Sem ela, como
+ *  sempre foi: sem fast mode. */
 export function handoffConversationFields(
   slug: string,
   titulo: string | undefined,
   manager: PlanningConfig,
-  origin?: { projectCwd: string; prompts: readonly string[] }
+  origin?: { projectCwd: string; prompts: readonly string[] },
+  fastMode = false
 ): Pick<Conversation, 'handoffSlug' | 'handoffPlan' | 'title' | 'model' | 'effort' | 'fastMode'> {
   const nome = titulo?.trim() || slug
   return {
@@ -77,8 +82,25 @@ export function handoffConversationFields(
       isAutoEffort(manager.effort) || isAutoModel(manager.model)
         ? manager.effort
         : clampEffortToModel(manager.model, manager.effort),
-    fastMode: false
+    fastMode: modelSupportsFastMode(manager.model) && fastMode
   }
+}
+
+type FastModeShape = Pick<Conversation, 'cwd' | 'fastMode' | 'mode' | 'planningSlug'> & { id?: string }
+
+/** O fast mode com que uma conversa nova do projeto `folder` nasceria — a regra do
+ *  createConversation do App: a última conversa do projeto (fora planejamento e
+ *  Central; a lista vem da mais nova) ou, sem ela, a ativa. É o valor inicial do
+ *  botão de Fast mode do envio para implementação. */
+export function inheritedFastMode(
+  conversations: readonly FastModeShape[],
+  folder: string,
+  active: FastModeShape | null | undefined
+): boolean {
+  const usable = (c: FastModeShape | null | undefined): c is FastModeShape =>
+    !!c && !isPlanningConversation(c) && !isCentralConversation(c)
+  const sameFolder = conversations.find((c) => c.cwd === folder && usable(c))
+  return sameFolder?.fastMode ?? (usable(active) ? active.fastMode : undefined) ?? false
 }
 
 /**

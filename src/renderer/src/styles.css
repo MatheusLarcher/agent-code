@@ -363,6 +363,19 @@ body {
   border-radius: 3px;
   flex-shrink: 0;
 }
+/* Ao lado do nome do projeto nos cabeçalhos dos chats (projectIcons.tsx). */
+.project-name-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  vertical-align: -2px;
+  margin-right: 5px;
+  color: var(--muted);
+}
+.project-name-icon .project-icon-img {
+  width: 1.15em;
+  height: 1.15em;
+}
 .rail-btn .project-icon-img {
   width: 17px;
   height: 17px;

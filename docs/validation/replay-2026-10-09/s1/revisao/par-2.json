@@ -1,0 +1,42 @@
+{
+  "par": 2,
+  "labels": {
+    "A": "novo",
+    "B": "hoje"
+  },
+  "comparacao": "B é ligeiramente melhor: entrega o mesmo botão e o mesmo mecanismo (--commit na skill), mas com gates mais corretos nas bordas (não recusa diff trivial, trata achados incertos, proíbe commit -a/stash/reset) e sem renomear o teste existente.",
+  "novo": {
+    "label": "A",
+    "notas": {
+      "atende": 5,
+      "bugs": 4,
+      "bordas": 4,
+      "regras": 4,
+      "justificativa": "Botão passa a enviar '/code-review --fix --commit' (Composer.tsx:1297) e a skill ganha Step 5 com gates (algo a commitar, sem achado aberto, checks do AGENTS.md/CLAUDE.md passam), stage por caminho explícito, Conventional Commits, sem push/--amend/--no-verify, e a regra 'sem --commit nunca commita' protege o subagente critico que pré-carrega a skill. Docs ARQUITETURA/REFERENCIA atualizadas. Bug/borda: gate 1 do Step 5 manda dizer 'nada a commitar' quando o diff é 'trivial (see Rules)' — um typo de uma linha é diff válido e o pedido diz 'commit sempre no final'; só vazio/whitespace deveria contar como nada. Regras: renomeou o título do `it` em ChatPanel.comment.test.tsx (aparece como teste sumido, mas as asserções continuam e foram atualizadas); nenhum teste novo, porém a mudança é em markdown de skill. Composer.tsx já tinha 1314 linhas antes (não é culpa do patch)."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo",
+        "tipo": "comportamento",
+        "motivo": "Falha na linha 318 pelo title mudado ('Revisar, corrigir e commitar' vs /Revisar código/) e pela falta do export CODE_REVIEW_PROMPT, mas mesmo igualando nomes o teste de referência exige que o texto enviado contenha 'push' — A envia '/code-review --fix --commit' e a skill proíbe push explicitamente. O push, porém, não estava no pedido, então não pesa em 'atende'."
+      }
+    ]
+  },
+  "hoje": {
+    "label": "B",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 5,
+      "justificativa": "Mesma mudança no Composer.tsx e no teste (sem renomear o `it`). Step 5 da skill é mais preciso nas bordas: whitespace/line-ending-only conta como vazio (não recusa diff trivial legítimo), achados incertos de high+ não bloqueiam mas são listados, roda TODOS os checks do projeto e proíbe afrouxar/editar check, proíbe `git commit -a`/stash/reset/checkout/clean, reporta hook que rejeitou e o hash final. Ponto fraco menor: 'If the project declares no checks, say so... don't commit silently' fica ambíguo se commita ou não nesse caso (A é mais claro: roda os scripts evidentes do package.json). Docs atualizadas e deixa explícito que '/code-review' digitado continua só revisando."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo",
+        "tipo": "comportamento",
+        "motivo": "Idêntico a f1: title e constante com outro nome, mas o teste de referência também verifica 'push' no prompt e B não faz push (Step 5: 'No push'). Diferença real de comportamento em relação à referência, ainda que fora do escopo do pedido."
+      }
+    ]
+  }
+}

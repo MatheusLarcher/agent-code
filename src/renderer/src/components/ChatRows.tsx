@@ -48,7 +48,7 @@ export interface ChatRowContext {
   busy?: boolean
   /** Reenvia a mensagem cujo turno falhou ("Tentar de novo"). */
   onRetry?: (msgId: string) => void
-  /** "Ouvir" na resposta final (e o "Ler daqui" dos blocos). */
+  /** "Ouvir" na resposta final e na narração pronta (e o "Ler daqui" dos blocos). */
   tts?: TtsControls | null
   /** "Comentar" nos blocos da resposta. */
   quote?: QuoteListApi
@@ -194,14 +194,15 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
   const { resolveRef, lastTsId, tts, quote } = ctx
   const { clean, paths } = parseDownloads(m.text)
   const speaking = !!tts && tts.speakingId === m.id
-  const listen = !!tts && !!m.answer && !!clean
+  // Resposta final e narração (o comentário do agente entre ferramentas) — esta só pronta, não pela metade.
+  const listen = !!tts && (!!m.answer || m.final) && !!clean
   // Texto que chegou ao vivo: palavra a palavra (BlurText). O histórico entra pronto.
   const blur = useFreshOnce(m.id, 'text')
   return (
     <div className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}>
       <div className="bubble">
         {clean && (
-          <QuotableMessage api={quote} messageId={m.id} read={m.answer ? tts : null} source={clean}>
+          <QuotableMessage api={quote} messageId={m.id} read={listen ? tts : null} source={clean}>
             <LazyMarkdown messageId={m.id} text={clean} resolveRef={resolveRef} blur={blur} />
           </QuotableMessage>
         )}

@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import ort from 'onnxruntime-node'
 import { planChunks } from './chunking'
 import { activeVerdict, clearVerdict, rememberVerdict } from './gpuVerdict'
+import { buildBooster, type Booster } from './hotwords'
 import { sessionOptions, type Progress } from './models'
 import { ensureParakeetFiles } from './parakeetFiles'
 import { deviceLabel, gpuDeviceFor, PARAKEET_FILES, PARAKEET_MODEL, type SttDevice, type SttState } from './protocol'
@@ -48,6 +49,8 @@ interface Engine {
   enc: Session
   dec: Session
   vocab: Vocab
+  /** Vocabulário de reforço (hotwords.ts); null quando desligado. */
+  boost: Booster | null
   device: SttDevice
   gpuError?: string
 }
@@ -110,7 +113,7 @@ async function recognize(e: Engine, samples: Float32Array): Promise<string> {
       durationLogits: logits.subarray(vocabSize),
       state: [r.output_states_1, r.output_states_2] as [Tensor, Tensor]
     }
-  })
+  }, undefined, e.boost?.session())
   return detokenize(tokens, e.vocab)
 }
 
@@ -123,7 +126,8 @@ async function run(e: Engine, pcm: Float32Array, onProgress: Progress): Promise<
     const text = await recognize(e, pcm.subarray(a, b))
     if (text) parts.push(text)
   }
-  return parts.join(' ').replace(/\s+/g, ' ').trim()
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim()
+  return e.boost ? e.boost.fixText(text) : text
 }
 
 // ------------------------------------------------------------ loading
@@ -169,16 +173,18 @@ async function load(onProgress: Progress): Promise<Engine> {
   onProgress({ phase: 'load', model: PARAKEET_MODEL })
   const path = (f: { name: string }): string => join(dir, f.name)
   const vocab = parseVocab(readFileSync(path(PARAKEET_FILES.vocab), 'utf8'))
+  const boost = buildBooster(vocab)
+  log(boost ? `Parakeet: vocabulário de reforço com ${boost.terms} termos` : 'Parakeet: sem vocabulário de reforço')
   const [pre, dec] = await Promise.all([create(path(PARAKEET_FILES.preprocessor), 'cpu'), create(path(PARAKEET_FILES.decoderJoint), 'cpu')])
   try {
     const encPath = path(PARAKEET_FILES.encoder)
     const device = gpuDeviceFor(ort.listSupportedBackends().map((b) => b.name))
     let gpuError = gpuBroken ?? (device ? activeVerdict(cacheDir, device, runtimeVersion()) : undefined)
     if (device && !gpuError) {
-      const got = await tryGpu({ pre, dec, vocab }, encPath, device)
+      const got = await tryGpu({ pre, dec, vocab, boost }, encPath, device)
       if (typeof got !== 'string') {
         log(`Parakeet: encoder na ${deviceLabel(device)}, decoder na CPU`)
-        return { pre, enc: got, dec, vocab, device }
+        return { pre, enc: got, dec, vocab, boost, device }
       }
       gpuError = got
       gpuBroken = got
@@ -186,7 +192,7 @@ async function load(onProgress: Progress): Promise<Engine> {
     if (gpuError) log(`Parakeet: GPU descartada (${gpuError}); usando a CPU`)
     const enc = await create(encPath, 'cpu')
     if (!gpuError) log('Parakeet na CPU')
-    return { pre, enc, dec, vocab, device: 'cpu', ...(gpuError ? { gpuError } : {}) }
+    return { pre, enc, dec, vocab, boost, device: 'cpu', ...(gpuError ? { gpuError } : {}) }
   } catch (err) {
     await release(pre, dec)
     throw err

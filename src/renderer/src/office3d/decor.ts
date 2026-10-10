@@ -31,6 +31,7 @@ import type { Kit, ScreenStatus } from './kit'
 import type { RoomLayout } from './layout'
 import type { MonitorTexture, ScreenPage } from './monitorTexture'
 import { ISLANDS, OFFICE, ZONE_IDS, ZONES, type ZoneId } from './officePlan'
+import type { MemoryPapers } from './memoryPapers'
 import type { PaperPiles } from './paperPile'
 import { buildPlaques, type Plaques } from './plaques'
 import { collectRoomLod, type RoomLod } from './roomLod'
@@ -68,7 +69,7 @@ export interface RoomView {
   screens: ScreenView[]
   /** A tela do console da Central (o monitor dela). */
   consoleScreen: ScreenView
-  /** Alvos de clique fixos da sala (a estante de Memórias). */
+  /** Alvos de clique fixos da sala (a estante de Memórias, o kanban e os papéis de memória de cada mesa). */
   pickables: Object3D[]
   /** Dobradiça da porta: rotation.y 0 = fechada, positivo abre para dentro. */
   door: Group
@@ -85,6 +86,8 @@ export interface RoomView {
   tv: Mesh
   /** Pilha de papéis por mesa (contexto usado do dono). */
   piles: PaperPiles
+  /** Papéis de memória por mesa (as memórias que o dono leu; memoryPapers.ts). Os alvos de clique estão em `pickables`. */
+  memos: Pick<MemoryPapers, 'set' | 'sheets'>
   /** Placa no chão de cada ilha reservada e plaquinha de cada mesa ocupada. */
   plaques: Plaques
   /** Esconde a cadeira da mesa `index` (foco no monitor); null mostra todas. */
@@ -181,6 +184,16 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
       return at ? at.parts.piles.step(at.local) : 0
     }
   }
+  const memos: RoomView['memos'] = {
+    set(desk, sheets, ownerKey) {
+      const at = islandOf(desk)
+      at?.parts.memos.set(at.local, sheets, ownerKey)
+    },
+    sheets(desk) {
+      const at = islandOf(desk)
+      return at ? at.parts.memos.sheets(at.local) : 0
+    }
+  }
   const furniture = roomFurniture(r)
   const doorZone = zone(ISLANDS[1].zone)
 
@@ -191,7 +204,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     zone,
     screens,
     consoleScreen,
-    pickables: [walls.shelfPick, walls.boardPick],
+    pickables: [walls.shelfPick, walls.boardPick, ...islands.flatMap((i) => i.parts.memos.picks)],
     door: walls.door,
     doorAt: { x: furniture.door.x, z: furniture.door.z },
     doorZone,
@@ -200,6 +213,7 @@ export function buildRoom(kit: Kit, r: RoomLayout, onDirty: () => void): RoomVie
     skies: shell.skies,
     tv: meeting.tv,
     piles,
+    memos,
     plaques,
     lod: zone('shell').lod,
     hideChair(index) {

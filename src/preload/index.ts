@@ -86,6 +86,7 @@ import type {
   ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
+  SkillTierRow,
   PermissionExpiredMsg,
   VigiaAlertMsg,
   PoProviderDiagnosticMsg,
@@ -240,6 +241,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.mentionSearch, root, query),
   listSkills: (root: string): Promise<SkillInfo[]> =>
     ipcRenderer.invoke(Channels.listSkills, root),
+  skillTierList: (): Promise<SkillTierRow[]> => ipcRenderer.invoke(Channels.skillTierList),
   projectTree: (root: string, keep: string[] = []): Promise<ProjectTree> =>
     ipcRenderer.invoke(Channels.projectTree, root, keep),
   projectDir: (root: string, rel: string): Promise<ProjectDirListing> =>

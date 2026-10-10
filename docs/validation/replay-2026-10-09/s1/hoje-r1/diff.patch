@@ -1,0 +1,95 @@
+diff --git a/.agents/skills/code-review/SKILL.md b/.agents/skills/code-review/SKILL.md
+index 5377025..ecf5fdb 100644
+--- a/.agents/skills/code-review/SKILL.md
++++ b/.agents/skills/code-review/SKILL.md
+@@ -5,8 +5,9 @@ description: >-
+   at a given effort level (low/medium: fewer, high-confidence findings; high→max: broader
+   coverage, may include uncertain findings; ultra: deep multi-agent review in the cloud).
+   Pass --comment to post findings as inline PR comments, or --fix to apply the findings to
+-  the working tree after the review. Triggers: "revisar código", "revisar antes de commitar",
+-  "code review", "/code-review".
++  the working tree after the review; --commit (only when passed explicitly) ends with one
++  local commit once nothing is left open and the project's checks pass. Triggers: "revisar
++  código", "revisar antes de commitar", "code review", "/code-review".
+ ---
+ 
+ # Code Review
+@@ -64,6 +65,43 @@ user commit unaware that open findings exist.
+ - `--fix`: after reporting, apply fixes for the confirmed findings directly to the working
+   tree, then re-run the affected checks (typecheck/tests) to confirm the fix didn't break
+   anything. Do not silently fix — tell the user what was changed and why.
++- `--commit`: final step, after the report and any `--fix` — see Step 5.
++
++## Step 5 — Commit (only with `--commit`)
++
++Run this step **only** when `--commit` was passed explicitly to this invocation (in the
++command, e.g. `/code-review --fix --commit`, or in the skill's arguments). Never infer it
++from wording ("revisar antes de commitar", "ready to ship"), and never commit when running
++as a review subagent, even if asked. Without `--commit`, never commit.
++
++The project under review sets the rules: read its AGENTS.md / CLAUDE.md for the checks it
++requires before committing and for its commit conventions. Commit only if **all** gates hold;
++otherwise make **no commit** and say which gate failed and why — the user decides what next:
++
++1. **There is something to commit.** Empty or trivial diff (nothing meaningful, e.g. only
++   whitespace/line-ending noise) → say there was nothing to commit.
++2. **No confirmed finding is left open.** Every confirmed finding was fixed — so `--commit`
++   without `--fix` only commits when there were no findings. List any uncertain finding you
++   left unfixed; those don't block.
++3. **The project's checks pass on the final tree.** Run, fresh and after the fixes, every check
++   the project requires before committing (e.g. typecheck + tests + build). If it declares
++   none, run its own typecheck/test scripts if it has them and name what you ran. Any failure
++   → no commit; quote the failing command and its error.
++
++How to commit:
++
++- Commit the whole reviewed diff — the original work plus your fixes — staged **by explicit
++  path**: `git add -- <paths>` then `git commit -m "<msg>" -- <paths>`, so anything else already
++  staged stays out. Never `git add -A`, `git add .` or `git commit -a`: other work may be in
++  progress in the same tree. Never commit `.env` files, credentials, keys or other secrets —
++  leave them out and say so.
++- Message in Conventional Commits (`type(scope): summary`), in the language of the repo's
++  recent history (`git log --oneline -10`), describing the change rather than the review.
++- No `Co-Authored-By` or other attribution trailer unless the project's `.claude/settings.json`
++  sets `attribution.commit` — ignore default commit templates that suggest one.
++- Current branch only: no push, no new branch, no `--amend`, no `--no-verify`.
++- Finish with the result: the commit's short hash and message (`git log -1 --format="%h %s"`)
++  and its file list (`git show --stat --format= HEAD`), or the reason no commit was made.
+ 
+ ## Rules
+ 
+diff --git a/src/renderer/src/components/ChatPanel.comment.test.tsx b/src/renderer/src/components/ChatPanel.comment.test.tsx
+index 8a35da7..cc82d5b 100644
+--- a/src/renderer/src/components/ChatPanel.comment.test.tsx
++++ b/src/renderer/src/components/ChatPanel.comment.test.tsx
+@@ -311,11 +311,11 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
+     expect(firstP(container).classList.contains('qc-pending')).toBe(true)
+   })
+ 
+-  it('o botão de revisão (/code-review) não leva o trecho; ele continua no campo', () => {
++  it('o botão de revisão (/code-review --fix --commit) não leva o trecho; ele continua no campo', () => {
+     const { container, onSend } = renderPanel()
+     commentOn(firstP(container))
+-    fireEvent.click(screen.getByTitle(/Revisar código/))
+-    expect(onSend).toHaveBeenCalledWith('/code-review', [], [], [])
++    fireEvent.click(screen.getByTitle(/Revisar, corrigir e commitar/))
++    expect(onSend).toHaveBeenCalledWith('/code-review --fix --commit', [], [], [])
+     expect(tokens()).toHaveLength(1)
+   })
+ 
+diff --git a/src/renderer/src/components/Composer.tsx b/src/renderer/src/components/Composer.tsx
+index eff81a9..a4a5754 100644
+--- a/src/renderer/src/components/Composer.tsx
++++ b/src/renderer/src/components/Composer.tsx
+@@ -1294,9 +1294,9 @@ export function Composer(props: Props): JSX.Element {
+         )}
+         <button
+           className="ref-btn"
+-          onClick={() => props.onSend('/code-review', [], [], [])}
++          onClick={() => props.onSend('/code-review --fix --commit', [], [], [])}
+           disabled={props.disabled || blocked}
+-          title="Revisar código (chama a skill code-review)"
++          title="Revisar, corrigir e commitar (skill code-review)"
+         >
+           <IconShieldCheck />
+         </button>

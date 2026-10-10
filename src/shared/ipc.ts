@@ -1389,6 +1389,70 @@ export interface BoardConfig {
 export const PO_MODELS = VIGIA_MODELS
 
 /**
+ * Os interruptores do "Enviar para implementação". Cada um, desligado, volta o
+ * pedido de handoff e a conversa de implementação EXATAMENTE ao de antes dele;
+ * valem só para handoffs e conversas novos (ver shared/handoffGuidance.ts).
+ */
+export interface HandoffConfig {
+  /** Cada prompt exige plan → test → implement → review → verify → remember →
+   *  improve por etapa, e as skills do ciclo (kit .agents/skills-ciclo) ficam
+   *  disponíveis. Ligado por padrão: pedido explícito do usuário. */
+  ciclo: boolean
+  /** Seção "Arquivos" no topo de cada prompt, leitura em lote e o Fast mode no
+   *  envio. Desligado por padrão até o teste final aprovar. */
+  leituraGuiada: boolean
+}
+
+/** Nível de uma skill no catálogo em níveis: `critical` vai inteira no prompt de
+ *  sistema; `medium` como hoje (nome, descrição, caminho); `low` só o nome, por
+ *  categoria, achada por skills_buscar/skills_listar. */
+export type SkillTier = 'critical' | 'medium' | 'low'
+export const SKILL_TIERS: readonly SkillTier[] = ['critical', 'medium', 'low']
+
+/** As categorias fixas do catálogo em níveis (decisão do usuário). */
+export const SKILL_CATEGORIES = [
+  'Planejamento e processo',
+  'Frontend',
+  'Backend',
+  'Banco de dados',
+  'Testes e qualidade',
+  'Depuração',
+  'Segurança',
+  'Mobile',
+  'Python',
+  'Vídeo e mídia',
+  'Documentos',
+  'Regras de negócio (ERP)',
+  'Outras'
+] as const
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number]
+
+/**
+ * Catálogo de skills em três níveis (src/main/skills/skillTiers.ts). Desligado
+ * (padrão) = exatamente como antes: catálogo completo, `skills: 'all'` e as
+ * skills do ECC fora do cache. `overrides` são as escolhas do usuário por skill
+ * nas Configurações, por cima do índice que vem com o app.
+ */
+export interface SkillCatalogConfig {
+  tiered: boolean
+  overrides: Record<string, { tier: SkillTier; category: SkillCategory }>
+}
+
+/** Uma linha do editor de níveis das Configurações (canal skills:tier-list). */
+export interface SkillTierRow {
+  name: string
+  description: string
+  /** Em uso: o ajuste do usuário, ou o padrão do índice. */
+  tier: SkillTier
+  category: SkillCategory
+  /** O que vem com o app (índice), para "voltar ao padrão". */
+  defaultTier: SkillTier
+  defaultCategory: SkillCategory
+  /** Veio da curadoria do ECC (kit .agents/skills-ecc). */
+  fromEcc: boolean
+}
+
+/**
  * Memorista — o terceiro observador, no mesmo molde do vigia e do PO.
  *
  * Ele lê o fim de cada turno e grava o que vale lembrar amanhã. Existe porque a
@@ -1713,6 +1777,10 @@ export interface AppConfig {
   planning: PlanningConfig
   /** O quadro de tarefas: a trava do plano e o agente PO (see BoardConfig). */
   board: BoardConfig
+  /** Os interruptores do envio para implementação (see HandoffConfig). */
+  handoff: HandoffConfig
+  /** Catálogo de skills em níveis e os ajustes por skill (see SkillCatalogConfig). */
+  skillCatalog: SkillCatalogConfig
   /** Decisões estruturadas rápidas pelo TypeSafe AI (see TypeSafeConfig). */
   typesafe: TypeSafeConfig
 }
@@ -1981,6 +2049,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
   board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } },
+  // O ciclo é pedido do usuário e só aumenta o rigor; a leitura guiada espera o
+  // teste em tarefas reais antes de virar padrão.
+  handoff: { ciclo: false, leituraGuiada: false },
+  // Desligado até o teste de acerto de skill (e o teste final) aprovarem.
+  skillCatalog: { tiered: false, overrides: {} },
   // Desligado por padrão, ao contrário dos observadores acima: depende de um
   // serviço externo e de uma chave que só o usuário tem.
   typesafe: {
@@ -2270,6 +2343,8 @@ export const Channels = {
   mentionSearch: 'app:mention-search',
   /** "/" autocomplete: list the skills available to the agent (project + user). */
   listSkills: 'app:list-skills',
+  /** As skills com nível e categoria, para o editor do catálogo em níveis. */
+  skillTierList: 'skills:tier-list',
   /** Project map (grafo): every folder/file under the project, capped. */
   projectTree: 'app:project-tree',
   /** One project folder at a time (office code screen "Todos os arquivos"), validated and capped. */

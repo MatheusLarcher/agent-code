@@ -5,6 +5,7 @@ import {
   existingPlanTitle,
   handoffConversationFields,
   handoffPlanOf,
+  inheritedFastMode,
   isPlanningConversation,
   managerModelLabel,
   planningConversationFields,
@@ -143,6 +144,46 @@ describe('handoffConversationFields', () => {
     for (const key of ['mode', 'planningSlug']) {
       expect(f, key).not.toHaveProperty(key)
     }
+  })
+})
+
+describe('Fast mode da implementação (botão no envio, com "Leitura guiada")', () => {
+  const opus = { model: 'claude-opus-5-5', effort: 'max' as const }
+  const sonnet = { model: 'claude-sonnet-5-5', effort: 'high' as const }
+
+  it('escolhido + modelo do Manager com suporte → nasce com fast mode', () => {
+    expect(handoffConversationFields('x', 'X', opus, undefined, true).fastMode).toBe(true)
+  })
+
+  it('escolhido + modelo sem suporte (ou Automático) → sem fast mode', () => {
+    expect(handoffConversationFields('x', 'X', sonnet, undefined, true).fastMode).toBe(false)
+    expect(handoffConversationFields('x', 'X', { model: AUTO_MODEL, effort: 'auto' }, undefined, true).fastMode).toBe(false)
+  })
+
+  it('não escolhido, ou sem o botão (interruptor desligado = sem o parâmetro) → sem fast mode', () => {
+    expect(handoffConversationFields('x', 'X', opus, undefined, false).fastMode).toBe(false)
+    expect(handoffConversationFields('x', 'X', opus).fastMode).toBe(false)
+  })
+
+  it('modelo e esforço continuam os do Manager com fast mode', () => {
+    expect(handoffConversationFields('x', 'X', opus, undefined, true)).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' })
+  })
+})
+
+describe('inheritedFastMode (a escolha das conversas do projeto, como no createConversation)', () => {
+  const conv = (id: string, cwd: string, fastMode: boolean, extra: Record<string, unknown> = {}) => ({ id, cwd, fastMode, ...extra })
+  const planningConv = conv('p', 'C:\\proj', false, { mode: 'planning', planningSlug: 'x' })
+
+  it('a última conversa do mesmo projeto (a lista vem da mais nova), fora planejamento e Central', () => {
+    const all = [planningConv, conv('central', 'C:\\proj', false, { mode: 'central' }), conv('a', 'C:\\proj', true), conv('b', 'C:\\proj', false)]
+    expect(inheritedFastMode(all, 'C:\\proj', planningConv)).toBe(true)
+  })
+
+  it('sem conversa do projeto: a ativa, se ela não for planejamento nem Central', () => {
+    const other = conv('o', 'C:\\outro', true)
+    expect(inheritedFastMode([other], 'C:\\proj', other)).toBe(true)
+    expect(inheritedFastMode([planningConv], 'C:\\proj', planningConv)).toBe(false)
+    expect(inheritedFastMode([], 'C:\\proj', null)).toBe(false)
   })
 })
 

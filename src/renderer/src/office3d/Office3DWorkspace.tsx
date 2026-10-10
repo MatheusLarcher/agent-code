@@ -4,25 +4,21 @@
  * workspace e da Tela de Planejamento. O chat flutua por cima (OfficeChatFloat)
  * e o HUD (OfficeHud) traz a energia, o aviso do Controle do Windows e a legenda das teclas.
  *
- * O chat flutuante segue a mesa selecionada: com um agente focado (ou uma
- * conversa escolhida fora do 3D) ele mostra a conversa ativa (`chat`, o MESMO
- * ChatPanel do workspace); sem mesa, o painel da Central (`central`). Clicar
- * num agente seleciona a conversa exata dele (`model.convId` — a mesma que o
- * monitor mostra, sem decisor). O usuário desfazer a seleção (Esc, clique no
- * vazio, × da tela, girar/arrastar/zoom/WASD) volta à Central sem trocar a
- * conversa ativa; o motor fechar a tela sozinho (📍, follow, o agente saiu)
- * não. Abrir a aba sem mesa mostra a Central; reabrir com um agente focado
- * seleciona a conversa dele. Sem `central`, o chat é sempre a conversa ativa.
+ * O chat flutuante segue a mesa selecionada: com um agente focado (ou uma conversa escolhida fora do
+ * 3D) ele mostra a conversa ativa (`chat`, o MESMO ChatPanel do workspace); sem mesa, o painel da Central
+ * (`central`). Clicar num agente seleciona a conversa exata dele (`model.convId` — a mesma que o monitor
+ * mostra, sem decisor). O usuário desfazer a seleção (Esc, clique no vazio, × da tela, girar/arrastar/
+ * zoom/WASD) volta à Central sem trocar a conversa ativa; o motor fechar a tela sozinho (📍, follow, o
+ * agente saiu) não. Abrir a aba sem mesa mostra a Central; reabrir com um agente focado seleciona a
+ * conversa dele. Sem `central`, o chat é sempre a conversa ativa.
  *
- * Com `monitorComposer`, a tela do monitor focado tem o chat: abre no Código, o
- * Chat à direita com o campo embaixo (o Composer do App, que envia para a conversa
- * ativa — a do agente) e o chat flutuante sai enquanto ela está aberta; fechar
- * a tela o traz de volta (sem mesa, a Central). Toda troca de foco tira o foco
- * do campo da tela e do chat antes (o blur grava o rascunho). Em cima do campo,
- * `monitorModelPicker` (o seletor de modelo/esforço do chat) para a conversa do
- * agente focado. Ir à Central (`centralSignal` ou a Central virando a conversa
- * ativa) fecha a tela e volta a câmera à vista inicial (`engine.resetView`, o
- * mesmo do "↺ Vista inicial" do HUD), com a Central no flutuante.
+ * Com `monitorComposer`, a tela do monitor focado tem o chat: abre no Código, o Chat à direita com o
+ * campo embaixo (o Composer do App, que envia para a conversa ativa — a do agente) e o chat flutuante
+ * sai enquanto ela está aberta; fechar a tela o traz de volta (sem mesa, a Central). Toda troca de foco
+ * tira o foco do campo da tela e do chat antes (o blur grava o rascunho). Em cima do campo,
+ * `monitorModelPicker` (o seletor de modelo/esforço do chat) para a conversa do agente focado. Ir à
+ * Central (`centralSignal` ou a Central virando a conversa ativa) fecha a tela e volta a câmera à vista
+ * inicial (`engine.resetView`, o mesmo do "↺ Vista inicial" do HUD), com a Central no flutuante.
  *
  * O motor (three puro) nasce na montagem e vive enquanto a aba existir: com `active` false (aba
  * Conversa) fica PAUSADO e volta na hora, com a mesma câmera; com a aba fechada não existem a tela
@@ -34,14 +30,14 @@
  * encaixa o chat dela (`central`) na tela inclinada. Clique na TV voa até ela de frente e abre DENTRO
  * dela o que estava na tela (<TvFocus>, useTvFocus.ts: o mockup com Aprovar / Pedir ajuste, o teste
  * ao vivo, o planejamento; na TV vazia, o "📋 Planejar"). Papel do kanban: o cartão grande
- * (<BoardOverlay>). Balão de pedido: o pedido (`onFocusRequest`). Trocar de conversa fora do 3D fecha a
- * TV aberta e voa até o agente dela (engine.follow; nunca para a Central). 📍 minimiza o chat e voa até a mesa.
+ * (<BoardOverlay>). Papéis de memória na mesa: a lista do que o agente leu e a folha (<OfficeMemoryPapers>).
+ * Balão de pedido: o pedido (`onFocusRequest`). Trocar de conversa fora do 3D fecha a TV aberta e voa
+ * até o agente dela (engine.follow; nunca para a Central). 📍 minimiza o chat e voa até a mesa.
  *
- * Só em DEV e com a aba aberta: Ctrl+Alt+Shift+D liga/desliga a demonstração
- * animada (um tique de DEMO_TICK_MS republica demoFeed(Date.now()) no
- * officeStore e o motor encurta o cochilo; desligar, fechar a aba ou desmontar
- * limpa o intervalo e o override), Ctrl+Alt+Shift+P abre/fecha o HUD de
- * desempenho (<PerfHud>) e Ctrl+Alt+Shift+B força o próximo nível de energia.
+ * Só em DEV e com a aba aberta: Ctrl+Alt+Shift+D liga/desliga a demonstração animada (um tique de
+ * DEMO_TICK_MS republica demoFeed(Date.now()) no officeStore e o motor encurta o cochilo; desligar, fechar
+ * a aba ou desmontar limpa o intervalo e o override), Ctrl+Alt+Shift+P abre/fecha o HUD de desempenho
+ * (<PerfHud>) e Ctrl+Alt+Shift+B força o próximo nível de energia.
  */
 import './office3d.css'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
@@ -63,6 +59,7 @@ import { useAvatarPreviewKey } from './agentPreview'
 import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
 import { OfficeMemoryPanel } from './OfficeMemoryPanel'
+import { OfficeMemoryPapers } from './MemoryPapersOverlay'
 import { OfficePlanDialog, type PlanProject } from './OfficePlanDialog'
 import { agentCss } from './projectColor'
 import { TvFocus } from './TvFocus'
@@ -168,6 +165,7 @@ export function Office3DWorkspace({
   const [previewKey, onHover] = useHoverPreview(active)
   // Clique no kanban: o cartão grande (ou a lista da pilha); acompanha os dados do Quadro enquanto aberto.
   const [boardOpen, setBoardOpen] = useState<BoardOpen | null>(null)
+  const [papersOf, setPapersOf] = useState<string | null>(null) // o dono da mesa cujos papéis de memória estão abertos
   const boardOpenRef = useRef(boardOpen)
   boardOpenRef.current = boardOpen
   const cbs = useRef({ onOpenConversation, onFocusRequest, onHover })
@@ -219,6 +217,7 @@ export function Office3DWorkspace({
       onProjects: (list, filter) => setProjects({ list, filter }),
       onHover: (key) => cbs.current.onHover(key),
       onBoardOpen: setBoardOpen,
+      onMemoryPapers: setPapersOf,
       onBoardChange: () => {
         if (boardOpenRef.current) setTick((t) => t + 1)
       },
@@ -320,14 +319,15 @@ export function Office3DWorkspace({
     if (active) openCentral()
   }, [centralSignal, active, openCentral])
 
-  // Aba fechada: a janela do kanban fecha.
+  // Aba fechada: a janela do kanban e os papéis de memória fecham.
   useEffect(() => {
     if (active) return
     setBoardOpen(null)
+    setPapersOf(null)
   }, [active])
 
   // Com a tela ou a prévia aberta e a aba à vista, o conteúdo acompanha o feed.
-  const showing = !!focusKey || !!previewKey
+  const showing = !!focusKey || !!previewKey || !!papersOf
   useEffect(() => {
     if (!showing || !active) return
     return source.subscribe(() => setTick((t) => t + 1))
@@ -476,6 +476,7 @@ export function Office3DWorkspace({
             <ChatPreview feed={feed} model={previewed.model} />
           </div>
         )}
+        {active && papersOf && engine ? <OfficeMemoryPapers engine={engine} feed={feed} ownerKey={papersOf} onClose={() => setPapersOf(null)} /> : null}
         {active && boardOpen && engine ? (
           <BoardOverlay open={boardOpen} board={engine.board} onClose={closeBoard} onOpen={setBoardOpen} onOpenConversation={openCardConversation} />
         ) : null}

@@ -102,6 +102,31 @@ describe('configuração persistida', () => {
     expect(() => mergeAppConfig(atual, { planning: { temperatura: 1 } })).toThrow()
   })
 
+  it('handoff: ciclo completo e leitura guiada DESLIGADOS por padrão; merge por campo', () => {
+    expect(defaultAppConfig().handoff).toEqual({ ciclo: false, leituraGuiada: false })
+    // Config antiga, gravada antes dos interruptores: cai no padrão.
+    expect(parseStoredAppConfig('{}').handoff).toEqual({ ciclo: false, leituraGuiada: false })
+    // Config salva com ativação explícita não é sobrescrita pelo novo padrão.
+    expect(parseStoredAppConfig(JSON.stringify({ handoff: { ciclo: true } })).handoff).toEqual({ ciclo: true, leituraGuiada: false })
+    // Gravar só um interruptor não apaga o outro (armadilha do spread raso).
+    const semCiclo = mergeAppConfig(defaultAppConfig(), { handoff: { ciclo: false } })
+    expect(mergeAppConfig(semCiclo, { handoff: { leituraGuiada: true } }).handoff).toEqual({ ciclo: false, leituraGuiada: true })
+    expect(defaultAppConfig().handoff).not.toBe(defaultAppConfig().handoff)
+    expect(() => mergeAppConfig(defaultAppConfig(), { handoff: { ciclo: 'sim' } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { handoff: { outro: true } })).toThrow()
+  })
+
+  it('catálogo de skills: em níveis DESLIGADO por padrão; ajustes por skill validados e com merge por campo', () => {
+    expect(defaultAppConfig().skillCatalog).toEqual({ tiered: false, overrides: {} })
+    expect(parseStoredAppConfig('{}').skillCatalog).toEqual({ tiered: false, overrides: {} })
+    const ligado = mergeAppConfig(defaultAppConfig(), { skillCatalog: { tiered: true } })
+    const ajustado = mergeAppConfig(ligado, { skillCatalog: { overrides: { brag: { tier: 'medium', category: 'Vídeo e mídia' } } } })
+    expect(ajustado.skillCatalog).toEqual({ tiered: true, overrides: { brag: { tier: 'medium', category: 'Vídeo e mídia' } } })
+    expect(() => mergeAppConfig(defaultAppConfig(), { skillCatalog: { overrides: { brag: { tier: 'altíssima', category: 'Outras' } } } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { skillCatalog: { overrides: { brag: { tier: 'low', category: 'Inventada' } } } })).toThrow()
+    expect(defaultAppConfig().skillCatalog).not.toBe(defaultAppConfig().skillCatalog)
+  })
+
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {
     const parsed = parseStoredAppConfig(
       JSON.stringify({

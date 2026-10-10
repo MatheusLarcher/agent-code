@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { handoffGuidanceRules, type HandoffGuidance } from '../../shared/handoffGuidance'
 import { MEDIA_DIR } from '../../shared/planningMedia'
 import { assertValidName } from './planningModel'
 
@@ -29,13 +30,20 @@ export interface PlanningHintInput {
   planDir: string
   /** Pasta ABSOLUTA do _sandbox do planejamento, no projeto (ver planningSandboxDir). */
   sandboxDir: string
+  /** Os interruptores do handoff (AppConfig.handoff), lidos na subida da sessão.
+   *  Ausentes ou desligados: a seção ### Handoff é a de antes deles. */
+  guidance?: HandoffGuidance
 }
 
-export function buildPlanningHint({ slug, planDir, sandboxDir }: PlanningHintInput): string {
+export function buildPlanningHint({ slug, planDir, sandboxDir, guidance }: PlanningHintInput): string {
   assertValidName(slug, 'slug')
   const sandboxForBash = sandboxDir.replace(/\\/g, '/')
   const t = (name: string): string => `mcp__planning__${name}`
   const mediaDir = path.join(planDir, MEDIA_DIR)
+  // O mesmo texto que o pedido de handoff (handoffFlow.ts) leva ao Manager.
+  const guidanceRules = handoffGuidanceRules(guidance)
+    .map((rule) => `- ${rule}\n`)
+    .join('')
   return `## Agent Manager — Tela de Planejamento
 
 Você é o Agent Manager do planejamento "${slug}" (os arquivos dele estão em ${planDir}). Seu trabalho é ajudar o usuário a PLANEJAR: entender o que ele quer, separar em etapas, registrar requisitos e decisões e deixar o caminho pronto para a implementação. Você NÃO implementa o projeto.
@@ -97,6 +105,6 @@ Você é o Agent Manager do planejamento "${slug}" (os arquivos dele estão em $
 
 ### Handoff
 - Quando o plano estiver pronto e o usuário pedir para implementar, escreva o prompt de handoff com ${t('plan_handoff_write')}: objetivo, etapas na ordem, requisitos, decisões (com o porquê), ambiguidades resolvidas, riscos e critérios de aceite. Informe em "etapas" os ids das etapas que o prompt cobre, na ordem, e traga no texto a tabela etapa → estimativa e o total do prompt. Inclua as mídias relevantes com o tipo e o caminho absoluto ([Tipo] nome — caminho) e diga que imagem e PDF se abrem com Read. Autocontido: a conversa de implementação só verá esse texto e os cards.
-- Se ${t('plan_handoff_write')} recusar porque há prompts ANTIGOS não enviados (gravados antes da última mudança do plano), pergunte ao usuário antes de seguir: se eles podem sair, chame ${t('plan_handoff_limpar')} (vão para _handoff/_descartados/, sem apagar) e grave de novo; se ele quiser mantê-los, grave de novo com manter: true. Nunca descarte sem a resposta dele.
+${guidanceRules}- Se ${t('plan_handoff_write')} recusar porque há prompts ANTIGOS não enviados (gravados antes da última mudança do plano), pergunte ao usuário antes de seguir: se eles podem sair, chame ${t('plan_handoff_limpar')} (vão para _handoff/_descartados/, sem apagar) e grave de novo; se ele quiser mantê-los, grave de novo com manter: true. Nunca descarte sem a resposta dele.
 `
 }

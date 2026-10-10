@@ -34,6 +34,14 @@ function skillNames(root) {
   }
 }
 
+// As pastas de skills do repositório: .agents/skills e os kits .agents/skills-*
+// (src/main/skillKits.ts), que vão no instalador pelo electron-builder.yml.
+function bundledDirs() {
+  return readdirSync(join(REPO, '.agents'), { withFileTypes: true })
+    .filter((e) => e.isDirectory() && (e.name === 'skills' || e.name.startsWith('skills-')))
+    .map((e) => e.name)
+}
+
 if (process.argv[2] === '--verify') {
   const appDir = resolve(process.argv[3] ?? '')
   const packed = skillNames(join(appDir, '.agents', 'seed-skills'))
@@ -42,7 +50,16 @@ if (process.argv[2] === '--verify') {
     console.error(`Skills: instalador sem as skills do cache (faltando: ${missing.join(', ') || 'todas'}).`)
     process.exit(1)
   }
-  console.log(`Skills: ${packed.length} skills do cache embutidas no instalador.`)
+  // Um kit fora do instalador deixaria o ciclo (ligado por padrão) pedindo skills que não existem.
+  for (const dir of bundledDirs()) {
+    const inApp = skillNames(join(appDir, '.agents', dir))
+    const absent = skillNames(join(REPO, '.agents', dir)).filter((name) => !inApp.includes(name))
+    if (absent.length > 0) {
+      console.error(`Skills: instalador sem .agents/${dir} (faltando: ${absent.join(', ')}). Confira o electron-builder.yml.`)
+      process.exit(1)
+    }
+  }
+  console.log(`Skills: ${packed.length} skills do cache embutidas no instalador, e as pastas ${bundledDirs().join(', ')}.`)
   process.exit(0)
 }
 
@@ -77,8 +94,9 @@ if (!source || !existsSync(source)) {
   process.exit(1)
 }
 
-// As do repositório já vão por .agents/skills; aqui entra só o que o usuário instalou.
-const bundled = new Set(skillNames(join(REPO, '.agents', 'skills')))
+// As do repositório já vão por .agents/skills e pelos kits; aqui entra só o que o
+// usuário instalou. Skill de kit na semente vazaria com o interruptor do kit desligado.
+const bundled = new Set(bundledDirs().flatMap((dir) => skillNames(join(REPO, '.agents', dir))))
 const names = skillNames(source).filter((name) => !bundled.has(name))
 rmSync(STAGED, { recursive: true, force: true })
 mkdirSync(STAGED, { recursive: true })

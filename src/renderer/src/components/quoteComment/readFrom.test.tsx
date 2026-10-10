@@ -56,15 +56,22 @@ describe('"Ler daqui" nos blocos', () => {
     expect(screen.getAllByRole('button', { name: 'Parar leitura' })).toHaveLength(1)
   })
 
-  it('narração (sem botão Ouvir na mensagem) não ganha "Ler daqui"; Comentar continua', () => {
-    const narr: UIMessage = { kind: 'assistant-text', id: 'n1', text: 'Vou ler o arquivo.', final: true }
-    function N(): JSX.Element {
+  it('narração pronta ganha "Ouvir" e "Ler daqui"; em streaming, nenhum dos dois; Comentar continua', () => {
+    const onToggleSpeak = vi.fn()
+    function N({ final }: { final: boolean }): JSX.Element {
+      const narr: UIMessage = { kind: 'assistant-text', id: 'n1', text: 'Vou ler o arquivo.', final }
       const quote = useQuoteComments([narr])
-      return <MessageList messages={[narr]} busy={false} tts={{ speakingId: null, onToggleSpeak: vi.fn() }} onRetry={() => {}} quote={quote.list} />
+      return <MessageList messages={[narr]} busy={false} tts={{ speakingId: null, onToggleSpeak }} onRetry={() => {}} quote={quote.list} />
     }
-    const { container } = render(<UiProvider><N /></UiProvider>)
-    const p = container.querySelector('.msg.assistant .md p') as HTMLElement
+    const { container, rerender } = render(<UiProvider><N final={false} /></UiProvider>)
+    let p = container.querySelector('.msg.assistant .md p') as HTMLElement
     expect(within(p).queryByRole('button', { name: 'Ler daqui' })).toBeNull()
+    expect(container.querySelector('.msg-speak')).toBeNull()
     expect(within(p).getByRole('button', { name: 'Comentar este trecho' })).toBeTruthy()
+    rerender(<UiProvider><N final /></UiProvider>)
+    p = container.querySelector('.msg.assistant .md p') as HTMLElement
+    expect(within(p).getByRole('button', { name: 'Ler daqui' })).toBeTruthy()
+    fireEvent.click(container.querySelector('.msg-speak') as HTMLElement)
+    expect(onToggleSpeak).toHaveBeenCalledWith('n1', 'Vou ler o arquivo.')
   })
 })

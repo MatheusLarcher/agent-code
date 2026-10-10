@@ -26,6 +26,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { CENTRAL_TITLE } from '@shared/central'
 import { ChatFloat, floatTop, type ChatFloatDisplay, type ChatFloatPersist, type FloatGeometry } from '../components/ChatFloat'
 import { loadOfficeChatMinimized, saveOfficeChatMinimized } from '../components/mainTabState'
+import { ProjectNameIcon } from '../components/projectIcons'
 import { principalKey, roomName } from '../office/adapter/model'
 import { PO_CHAT_TITLE } from '../poChat/PoChatPanel'
 import { projectNameOf, usePoChatOpen } from '../poChat/poChatOpen'
@@ -79,6 +80,7 @@ export function OfficeChatFloat({ children, conversation, central = false, expan
       <span className="central-orb small" aria-hidden="true" />
       <span className="o3d-chat-title">{PO_CHAT_TITLE}</span>
       <span className="o3d-chat-project" title={po}>
+        <ProjectNameIcon cwd={po} />
         {projectNameOf(po)}
       </span>
     </div>
@@ -90,6 +92,7 @@ export function OfficeChatFloat({ children, conversation, central = false, expan
       </span>
       {conversation && (
         <span className="o3d-chat-project" title={conversation.cwd}>
+          <ProjectNameIcon cwd={conversation.cwd} />
           {roomName(conversation.cwd)}
         </span>
       )}

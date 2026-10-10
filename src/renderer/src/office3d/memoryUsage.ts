@@ -69,6 +69,17 @@ export function usageFromMessages(c: Conversation, memoriesDir: string | null): 
   })
 }
 
+/**
+ * As memórias que a conversa LEU (Read de arquivo na pasta, sem erro): os relPaths
+ * distintos, na ordem da 1ª leitura — os papéis na mesa do agente (memoryPapers.ts).
+ * O índice da raiz (MEMORY.md) não é memória; a lista (memory_list/status) não tem relPath.
+ */
+export function deskMemoryReads(c: Conversation, memoriesDir: string | null): string[] {
+  const seen = new Set<string>()
+  for (const e of usageFromMessages(c, memoriesDir)) if (e.how === 'lida' && e.relPath && e.relPath.toLowerCase() !== 'memory.md') seen.add(e.relPath)
+  return [...seen]
+}
+
 /** Dos turnos do contexto: as memórias que o app escolheu e mandou no pedido. */
 export function usageFromTurns(c: Conversation, turns: readonly ContextTurnSummary[]): UsageEvent[] {
   return turns.flatMap((t) => t.memoriesSent.map((relPath) => ({ relPath, convId: c.id, agent: c.title || 'Agente', project: c.cwd, how: 'escolhida' as const, at: t.startedAt })))

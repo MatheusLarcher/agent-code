@@ -101,6 +101,7 @@ import { buildCrew, workingMembers } from './crew'
 import { IconBoard, IconGlobe } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
 import { TtsContext } from './components/ttsContext'
+import { ProjectIconsContext, ProjectNameIcon } from './components/projectIcons'
 import { fileUrl } from './fileUrl'
 import { officeStore } from './office/officeStore'
 import { useProjectColors } from './office/useProjectColors'
@@ -161,6 +162,7 @@ import { DeadlineIndicator } from './handoffTracking/DeadlineIndicator'
 import {
   handoffConversationFields,
   handoffPlanOf,
+  inheritedFastMode,
   isPlanningConversation,
   planningConversationFields,
   revalidatesAuto,
@@ -3171,7 +3173,7 @@ export function App(): JSX.Element {
   // O resultado distingue "conversa criada, envio falhou" de "nada criado": no
   // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
   const startHandoff = useCallback(
-    async (folder: string, slug: string, titulo: string, prompts: string[], names: string[]): Promise<HandoffSendOutcome> => {
+    async (folder: string, slug: string, titulo: string, prompts: string[], names: string[], fastMode = false): Promise<HandoffSendOutcome> => {
       // O modelo do Manager lido agora (o último escolhido, inclusive em
       // Configurações); sem o IPC, o que a tela conhece.
       const manager = await window.api
@@ -3184,7 +3186,7 @@ export function App(): JSX.Element {
           const conv = createConversation(
             folder,
             undefined,
-            handoffConversationFields(slug, titulo, manager, { projectCwd: folder, prompts: names })
+            handoffConversationFields(slug, titulo, manager, { projectCwd: folder, prompts: names }, fastMode)
           )
           // O estado novo só chega a convsRef no próximo render, e o connect
           // persiste convsRef ANTES do startAgent (o lease exige a linha da
@@ -4587,9 +4589,8 @@ export function App(): JSX.Element {
           slug={activePlanning.planningSlug}
           managerBusy={busyIds.has(activePlanning.id)}
           onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
-          onSend={(prompts, titulo, names) =>
-            startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names)
-          }
+          onSend={(prompts, titulo, names, options) => startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names, options?.fastMode)}
+          fastModeDefault={inheritedFastMode(conversations, activePlanning.cwd, activePlanning)}
           conversationExists={(id) => convsRef.current.some((c) => c.id === id)}
           onOpenConversation={selectConversation}
         />
@@ -4633,12 +4634,14 @@ export function App(): JSX.Element {
         centralColors={centralColors}
       />
 
+      <ProjectIconsContext.Provider value={projectIcons}>
       <div className="main-area">
         <header className="topbar">
           <div className="topbar-left">
           <div className="project readonly" title={active?.cwd || ''}>
             <span className="project-label">Projeto</span>
             <span className="project-path">
+              {active && !activeCentral && <ProjectNameIcon cwd={active.cwd} />}
               {activeCentral ? CENTRAL_TITLE : active ? basename(active.cwd) : 'Nenhuma conversa'}
             </span>
           </div>
@@ -4882,6 +4885,7 @@ export function App(): JSX.Element {
           </DeliveryCenterProvider>
         </OfficeErrorBoundary>
       </div>
+      </ProjectIconsContext.Provider>
 
       {planningDialogFor && (
         <NewPlanningDialog

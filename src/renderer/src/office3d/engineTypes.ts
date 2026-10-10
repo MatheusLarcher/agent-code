@@ -44,6 +44,8 @@ export const PROJECTOR_KEY = 'projector:'
 export const TV_PLAN_KEY = `${PROJECTOR_KEY}plano:`
 /** Chave de pick da estante de Memórias: o clique abre o painel de Memórias (o foco nela). */
 export const MEMORY_SHELF_KEY = 'memory-shelf'
+/** Chave de pick dos papéis de memória na mesa: `${MEMORY_PAPERS_KEY}${dono}`; o clique abre a lista (sem foco de câmera). */
+export const MEMORY_PAPERS_KEY = 'memory-papers:'
 /** Chave de pick do kanban da parede (o fundo; papel e pilha têm as chaves deles): o clique foca o quadro. */
 export const BOARD_KEY = 'office-board'
 
@@ -87,6 +89,8 @@ export interface EngineCallbacks {
   onHover?(key: string | null): void
   /** Clique num papel ou na pilha do kanban de uma sala (ou `engine.board.open`). */
   onBoardOpen?(open: BoardOpen): void
+  /** Clique nos papéis de memória da mesa de `ownerKey` (o agente dono): a lista das memórias que ele leu. */
+  onMemoryPapers?(ownerKey: string): void
   /** Os dados do Quadro real mudaram (a janela do cartão acompanha). */
   onBoardChange?(): void
   /** Os projetos no escritório (o filtro do HUD) ou o filtro em vigor mudaram (null = Todos). */

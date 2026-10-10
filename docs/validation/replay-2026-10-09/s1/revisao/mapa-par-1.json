@@ -1,0 +1,16 @@
+{
+  "labels": {
+    "A": "novo",
+    "B": "hoje"
+  },
+  "keys": {
+    "f1": {
+      "label": "A",
+      "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo"
+    },
+    "f2": {
+      "label": "B",
+      "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo"
+    }
+  }
+}

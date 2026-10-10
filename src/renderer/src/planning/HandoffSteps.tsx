@@ -8,6 +8,7 @@ import { handoffEstimate, handoffEstimateDetail, handoffEstimateLabel } from './
 import { firstLine, HandoffBlockers, OutsideHandoffs, PendingHandoffs, SentHandoffs } from './HandoffLists'
 import type { HandoffIssue } from './handoffReadiness'
 import { StaleBadge } from './HandoffStale'
+import type { HandoffFastModeOption } from './useHandoffFastMode'
 
 export interface Draft {
   /** O arquivo em _handoff/ com o texto `saved`. */
@@ -217,8 +218,10 @@ export function PromptsStep(props: {
   onSend: () => void
   /** Os prompts antigos: incluídos de propósito, continuam com o selo. */
   stale?: ReadonlySet<string>
+  /** A opção de Fast mode da implementação ("Leitura guiada" ligada); ausente, não aparece. */
+  fastMode?: HandoffFastModeOption | null
 }): JSX.Element {
-  const { drafts, working } = props
+  const { drafts, working, fastMode } = props
   const blocked = props.blockers.length > 0 && !props.override
   return (
     <>
@@ -280,6 +283,23 @@ export function PromptsStep(props: {
         })}
         <OutsideHandoffs outside={props.outside} disabled={working !== null} onInclude={props.onInclude} stale={props.stale} />
       </div>
+      {fastMode && (
+        <label
+          className="pl-handoff-fast"
+          title={fastMode.available ? undefined : 'O modelo do Agent Manager (o da implementação) não tem Fast mode.'}
+        >
+          <input
+            type="checkbox"
+            checked={fastMode.on}
+            disabled={!fastMode.available || working !== null}
+            onChange={(e) => fastMode.onChange(e.target.checked)}
+          />
+          <span>
+            <strong>Fast mode</strong> na implementação — mesmo modelo e esforço, respostas mais rápidas; o uso custa
+            mais.
+          </span>
+        </label>
+      )}
       <div className="modal-actions">
         <button type="button" className="btn ghost" disabled={working === 'send'} onClick={props.onCheckPlan}>
           Conferir o plano

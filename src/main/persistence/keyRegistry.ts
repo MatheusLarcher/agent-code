@@ -38,6 +38,10 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.board.requirePlan': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.board.po.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.board.po.model': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.handoff.ciclo': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.handoff.leituraGuiada': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.skillCatalog.tiered': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.skillCatalog.overrides': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.planning.model': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.planning.effort': { scope: 'device', source: 'main-kv', store: 'local' },
   // Marcador one-shot: o esforço do Manager já está no formato em que o

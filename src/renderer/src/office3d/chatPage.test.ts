@@ -131,7 +131,8 @@ describe('auxiliares', () => {
 
   it('turnHead: principal com o projeto; subagente com a tarefa e o papel; trabalhando pelo feed', () => {
     const f = feed({ conversations: [conv('a', { title: 'Carrinho' })], busyIds: new Set(['a']), tracks: { a: { T: track('T', { subagentType: 'Explore', label: 'Explore: achar o webhook' }) } } })
-    expect(turnHead(f, model())).toEqual({ title: 'Carrinho', who: 'alpha', busy: true })
+    const cwd = f.conversations[0].cwd
+    expect(turnHead(f, model())).toEqual({ title: 'Carrinho', who: 'alpha', busy: true, cwd })
     expect(turnHead(f, model({ key: 'track:T', role: 'subagente', trackId: 'T' }))).toEqual({ title: 'Explore: achar o webhook', who: 'explorador', busy: true })
   })
 })

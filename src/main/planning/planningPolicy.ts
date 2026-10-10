@@ -107,7 +107,8 @@ export const MANAGER_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /** Servidores MCP cujas ferramentas o Manager pode chamar (ver MANAGER_INHERITED_SERVERS). */
-const MANAGER_ALLOWED_MCP_PREFIXES: readonly string[] = ['mcp__planning__', 'mcp__memory__']
+// mcp__skills__ só existe com o catálogo de skills em níveis (só lê o catálogo).
+const MANAGER_ALLOWED_MCP_PREFIXES: readonly string[] = ['mcp__planning__', 'mcp__memory__', 'mcp__skills__']
 
 /**
  * `null` = a ferramenta está na allowlist do Agent Manager (ou a sessão não é o

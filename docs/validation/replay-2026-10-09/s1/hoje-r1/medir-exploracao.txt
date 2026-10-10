@@ -1,0 +1,32 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 1 | sem edição: 1 | edição delegada a executor: 0
+handoff: 1 pedidos | p50 64s, 9 chamadas, 8 Read, 7 arquivos, 2 buscas, 7690 tokens de saída
+pedido comum: 0 pedidos | p50 0s, 0 chamadas, 0 Read, 0 arquivos, 0 buscas, 0 tokens de saída
+  H claude-opus-5-5 @ xhigh            1 pedidos (1 handoff) | p50 64s, 9 chamadas, 7690 tokens saída, 7.0 s/chamada
+segundos de modelo por chamada: p50 7.0 | p90 7.0
+
+métrica (até o 1º Edit)      p50        p75        p90        máx
+secs                               64         64         64         64
+calls                               9          9          9          9
+model                              63         63         63         63
+toolSecs                            1          1          1          1
+agentSecs                           0          0          0          0
+reads                               8          8          8          8
+grep                                1          1          1          1
+glob                                1          1          1          1
+bash                                0          0          0          0
+agents                              0          0          0          0
+files                               7          7          7          7
+ctxFirst                        55106      55106      55106      55106
+ctxAtEdit                       71618      71618      71618      71618
+tokensSum                      597788     597788     597788     597788
+outTokens                        7690       7690       7690       7690
+thinkingChars                     432        432        432        432
+
+chamadas ao modelo com UMA ferramenta só (leitura em série): 3/9 (33%)
+tempo até o 1º Edit: modelo 98% | ferramentas 2% (inclui espera de permissão e subagentes)
+
+por projeto: projeto | pedidos com edição | p50 segs | p50 chamadas | p50 Reads
+  D--agent-code-replay-s1-agent-code          1       64        9        8
+
+15 mais lentos até o 1º Edit:
+  2026-10-09T18:16 D--agent-code-replay-s    64s   9 chamadas   8 Read   2 busca  0 subag.     0s em subag. | # Handoff — Commit no fim do fluxo de code review Projeto: `D:\agent-code-replay\s1\agent-

@@ -20,6 +20,7 @@ import { activePc, loadPcs, namePcIfUnnamed, otherPcs, pcConfig, pcLabel, remove
 import { isSubagentEvent, reduce, STATE_ONLY, syncQueued } from './reducer'
 import { createStore, type Store } from './store'
 import type { BridgeEvent, ChatMsg, ConvSummary, FileAttachment, ImageAttachment, ModelOption, SearchResult, StateResponse, ToastTipo } from './types'
+import { setVocabulary } from '../voice/vocabulary'
 
 export const CENTRAL_CONV_ID = 'central'
 /** Avisos do escritório na ponte (officeCallsBridge): fase 2, o chat ignora. */
@@ -223,6 +224,8 @@ export class RemoteClient {
       throw err
     }
     this.failures = 0
+    // PC antigo não manda a lista: o celular segue com a última que guardou.
+    if (Array.isArray(data.vocabulary)) setVocabulary(data.vocabulary)
     const conversations = Array.isArray(data.conversations) ? data.conversations : []
     this.store.set((s) => {
       const cur = conversations.find((c) => c.id === s.convId) ?? null

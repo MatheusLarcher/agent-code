@@ -12,10 +12,11 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { devUserHome } from './devDataDir'
+import { directoryDigest, skillNames, VALID_SKILL_DIRECTORY } from './skillDirs'
+import { bundledSkillSources, kitSkillNames, kitsDigest, type SkillKitId } from './skillKits'
 
 const MANIFEST_NAME = '.agent-code-managed.json'
 const BUNDLED_MANIFEST_NAME = '.agent-code-bundled.json'
@@ -29,8 +30,6 @@ const LEGACY_IMPORTED_MANIFEST_NAME = '.agent-code-imported.json'
 function importedManifestName(machine: string): string {
   return `.agent-code-imported.${machine.replace(/[^A-Za-z0-9_-]/g, '_') || 'local'}.json`
 }
-const VALID_SKILL_DIRECTORY = /^[\p{L}\p{N}][\p{L}\p{N}._:-]*$/u
-
 interface ManagedManifest {
   version: 1
   skills: string[]
@@ -42,52 +41,12 @@ export interface SkillSyncResult {
   errors: string[]
 }
 
-function skillNames(root: string): string[] {
-  try {
-    return readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-      .map((entry) => entry.name)
-      .filter((name) => VALID_SKILL_DIRECTORY.test(name))
-      .filter((name) => !name.endsWith('.agent-code-new'))
-      .filter((name) => existsSync(join(root, name, 'SKILL.md')))
-      .sort((a, b) => a.localeCompare(b))
-  } catch {
-    return []
-  }
-}
-
-function directoryDigest(root: string): string {
-  const hash = createHash('sha256')
-  const visit = (directory: string): void => {
-    const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
-    for (const entry of entries) {
-      const path = join(directory, entry.name)
-      const key = relative(root, path).replaceAll('\\', '/')
-      if (entry.isDirectory()) {
-        hash.update(`d:${key}\0`)
-        visit(path)
-      } else if (entry.isSymbolicLink()) {
-        hash.update(`l:${key}:${readlinkSync(path)}\0`)
-      } else if (entry.isFile()) {
-        hash.update(`f:${key}:`)
-        hash.update(readFileSync(path))
-        hash.update('\0')
-      }
-    }
-  }
-  try {
-    visit(root)
-    return hash.digest('hex')
-  } catch {
-    return ''
-  }
-}
-
 /** Content version of the bundled skill source. Sessions compare it before each
  * user dispatch so a newly installed versioned skill can be materialized without
- * restarting the application. */
-export function managedSkillsFilesystemVersion(appRoot: string): string {
-  return directoryDigest(join(appRoot, '.agents', 'skills'))
+ * restarting the application. Active kits enter the version, so flipping a kit's
+ * switch also triggers a re-sync; without kits it is the plain digest of before. */
+export function managedSkillsFilesystemVersion(appRoot: string, kits: readonly SkillKitId[] = []): string {
+  return [directoryDigest(join(appRoot, '.agents', 'skills')), ...kitsDigest(appRoot, kits)].join('|')
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -427,9 +386,17 @@ export function ensureNativeSkillRoot(cacheDir: string, skillsDir: string = join
  * Materialize bundled skills in the selected cache and expose them through the
  * native Claude Code user-level skill directory. External cache skills are
  * retained; real user directories in the global skill root are never replaced.
+ * `kits`: the skill kits switched on (skillKits.ts); a kit switched off has its
+ * skills removed like any discontinued bundled skill.
  */
-export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: string = devUserHome() ?? homedir()): SkillSyncResult {
-  const bundledRoot = join(appRoot, '.agents', 'skills')
+export function syncCacheSkills(
+  appRoot: string,
+  cacheDir: string,
+  userHome: string = devUserHome() ?? homedir(),
+  kits: readonly SkillKitId[] = []
+): SkillSyncResult {
+  const kitOwned = kitSkillNames(appRoot)
+  const sources = bundledSkillSources(appRoot, kits, kitOwned)
   const skillsDir = join(cacheDir, 'skills')
   const errors: string[] = []
   mkdirSync(skillsDir, { recursive: true })
@@ -438,9 +405,15 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
   // by comparing their recorded target.
   errors.push(...exposeCacheSkills(skillsDir, userHome).errors)
 
-  const bundled = skillNames(bundledRoot)
+  const previouslyBundled = readManaged(skillsDir, BUNDLED_MANIFEST_NAME)
+  // A kit never takes over a skill of the same name the user already had in the
+  // cache: adopting it would overwrite it now and delete it when the kit is off.
+  for (const name of kitOwned) {
+    if (sources.has(name) && !previouslyBundled.has(name) && existsSync(join(skillsDir, name))) sources.delete(name)
+  }
+  const bundled = [...sources.keys()].sort((a, b) => a.localeCompare(b))
   const bundledSet = new Set(bundled)
-  for (const stale of readManaged(skillsDir, BUNDLED_MANIFEST_NAME)) {
+  for (const stale of previouslyBundled) {
     if (bundledSet.has(stale)) continue
     const target = safeSkillPath(skillsDir, stale)
     if (!target) {
@@ -453,9 +426,9 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
       errors.push(`Não foi possível remover a skill descontinuada ${stale}: ${String(error)}`)
     }
   }
-  for (const name of bundled) {
+  for (const [name, source] of sources) {
     try {
-      replaceDirectory(join(bundledRoot, name), join(skillsDir, name))
+      replaceDirectory(source, join(skillsDir, name))
     } catch (error) {
       errors.push(`Não foi possível sincronizar a skill ${name}: ${String(error)}`)
     }
@@ -465,7 +438,7 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
   } catch (error) {
     errors.push(`Não foi possível salvar o manifesto de skills empacotadas: ${String(error)}`)
   }
-  errors.push(...seedCacheSkills(appRoot, skillsDir))
+  errors.push(...seedCacheSkills(appRoot, skillsDir, kitOwned))
 
   const exposed = exposeCacheSkills(skillsDir, userHome)
   return { ...exposed, errors: [...errors, ...exposed.errors] }
@@ -473,9 +446,14 @@ export function syncCacheSkills(appRoot: string, cacheDir: string, userHome: str
 
 /** Copy the build machine's installed skills (`<appRoot>/.agents/seed-skills`, scripts/stage-skills.mjs)
  * into a cache once: never overwrites, and a seeded skill the user deletes is not brought back. */
-export function seedCacheSkills(appRoot: string, skillsDir: string): string[] {
+export function seedCacheSkills(
+  appRoot: string,
+  skillsDir: string,
+  kitOwned: ReadonlySet<string> = kitSkillNames(appRoot)
+): string[] {
   const seedRoot = join(appRoot, '.agents', 'seed-skills')
-  const seeds = skillNames(seedRoot)
+  // A kit skill only exists while its switch is on: never seed it.
+  const seeds = skillNames(seedRoot).filter((name) => !kitOwned.has(name))
   if (seeds.length === 0) return []
   const errors: string[] = []
   const seeded = readManaged(skillsDir, SEEDED_MANIFEST_NAME)

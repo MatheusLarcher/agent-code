@@ -1,0 +1,13 @@
+Gere agora o handoff deste planejamento para a conversa de implementação.
+
+Grave com mcp__planning__plan_handoff_write UM OU MAIS prompts autocontidos — um arquivo por prompt, na ordem em que devem ser executados. Divida em mais de um só se o trabalho não couber numa conversa: cada prompt vai numa mensagem, e o seguinte só roda quando o anterior terminar.
+
+Cada prompt precisa trazer: o objetivo; as etapas do roteiro na ordem, com os cards de cada uma; os requisitos; as decisões com o porquê; as sugestões com a fonte; as ambiguidades resolvidas; riscos e critérios de aceite; e a instrução de declarar as etapas como plano (TodoWrite/TaskCreate), cada item começando pelo id da etapa entre colchetes, [id-da-etapa] (ex.: "[pagamento] Integrar o checkout"), e consultar D:\dados\agent-code\planning\app\checkout sem replanejar. A conversa de implementação só verá esse texto e os cards.
+
+Etapas e estimativas: em cada chamada de mcp__planning__plan_handoff_write, informe em "etapas" os ids das etapas do roteiro que aquele prompt cobre, na ordem. No texto do prompt, traga a tabela etapa → estimativa (minutos de trabalho do agente, como estão no roteiro) e o total do prompt.
+
+Cada prompt também exige da implementação, sem exceção: ao começar cada etapa, registrar a própria estimativa com mcp__entregas__entrega_estimar e escrever "Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"; ao concluir, consultar mcp__entregas__entrega_tempo e escrever "levou Y min de trabalho (dentro/fora do prazo)" e, se passou, o motivo. O prazo é a estimativa do plano; a do agente não o muda, e o tempo que vale é o medido pelo app.
+
+Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou. Única exceção: etapa sem estimativa — estime-a antes com mcp__planning__plan_roteiro_set mandando a lista INTEIRA de etapas (o plan_roteiro_set substitui o roteiro todo: etapa que ficar de fora é apagada), iguais ao que estão, mudando só a estimativa que faltava, para a tabela bater com o roteiro.
+
+Atenção: 2 ambiguidades continuam abertas e o usuário decidiu enviar mesmo assim. Em cada prompt, diga qual leitura seguir (a sua recomendação) e marque-a como pendente de confirmação do usuário.

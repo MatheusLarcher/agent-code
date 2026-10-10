@@ -257,6 +257,33 @@
 .o3d-chat.pl-chat-float .composer-row {
   background: color-mix(in srgb, var(--bg-3) min(100%, max(calc(var(--pl-chat-fill) + 10%), 50%)), transparent);
 }
+/* Com a transparência do controle, o que tinha fundo opaco próprio dentro do chat
+   (faixa "trabalhando", sua mensagem, a fila e, na Central, o pedido, os cartões
+   de quem trabalha e as linhas-resumo) segue a mesma opacidade do painel. */
+.o3d-chat .working-banner {
+  background: color-mix(in srgb, color-mix(in srgb, var(--accent) 12%, var(--bg-2)) var(--pl-chat-fill), transparent);
+}
+.o3d-chat .working-banner.stalled {
+  background: color-mix(in srgb, color-mix(in srgb, var(--warn) 12%, var(--bg-2)) var(--pl-chat-fill), transparent);
+}
+.o3d-chat .msg.user .bubble {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #33261f var(--pl-chat-fill), transparent),
+    color-mix(in srgb, #2b231e var(--pl-chat-fill), transparent)
+  );
+}
+.o3d-chat .queue-item,
+.o3d-chat .central-ask,
+.o3d-chat .central-act {
+  background: color-mix(in srgb, var(--bg-2) var(--pl-chat-fill), transparent);
+}
+.o3d-chat .msg.assistant:not(.narration):not(.chat-step > .msg) > .bubble,
+.o3d-chat .central-bubble,
+.o3d-chat .central-run,
+.o3d-chat .central-opt {
+  background: color-mix(in srgb, var(--bg-3) var(--pl-chat-fill), transparent);
+}
 .o3d-chat-head { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
 .o3d-chat-dot {
   flex: none;
@@ -321,7 +348,12 @@
 .o3d-chat.minimized .central-hint { display: none; }
 /* Regra à parte: um seletor que o motor não entenda derrubaria a lista inteira. */
 .o3d-chat .central-head:not(:has(.central-head-rail > *)) { display: none; }
-.o3d-chat.minimized .central-feed { flex: none; height: calc(5 * var(--pl-chat-line)); padding: 2px 14px; gap: 6px; }
+.o3d-chat.minimized .central-feed { flex: none; height: calc(2 * var(--pl-chat-line)); padding: 2px 14px; gap: 6px; }
+/* Minimizado no Escritório: só uma ponta do chat (2 linhas da conversa, mais
+   estreito), para a cena ficar à vista; o Planejamento segue com as 5 linhas. */
+.o3d-chat.pl-chat-float.minimized { width: clamp(320px, 36%, 520px); }
+.o3d-chat.pl-chat-float.minimized .message-list-wrap { height: calc(2 * var(--pl-chat-line)); }
+.o3d-chat.pl-chat-float.minimized .composer-card-refs { max-height: calc(2 * var(--pl-chat-line) + 24px); }
 .o3d-chat.minimized .central-bubble { padding: 3px 12px; }
 /* Cabeçalho do chat flutuante: o espaço entre o título, a barrinha de consumo (UsageMiniBar) e a transparência. */
 .office3d-workspace .pl-chat-float .chat-header { gap: 8px; }

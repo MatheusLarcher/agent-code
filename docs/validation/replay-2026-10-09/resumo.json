@@ -1,0 +1,447 @@
+{
+  "tasks": {
+    "s1": {
+      "rows": [
+        {
+          "t": "s1",
+          "side": "hoje",
+          "n": 1,
+          "exists": true,
+          "reviewed": true,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": true,
+          "newFailures": 0,
+          "ref": "18/19",
+          "refBehavior": 0,
+          "refName": 1,
+          "notas": {
+            "atende": 5,
+            "bugs": 5,
+            "bordas": 5,
+            "regras": 4,
+            "justificativa": "Mesmo diff de Composer.tsx e do teste que A (hash a4a5754). SKILL.md ganha 'Step 5 — Commit' com os mesmos gates (diff não vazio, nenhum achado confirmado aberto, checks do projeto passam no tree final), stage por caminho, proibição de add -A/commit -a, sem segredos, sem push/--amend/--no-verify, sem trailer, relato com git show --stat. Trata explicitamente a borda do subagente revisor (critico pré-carrega a skill) e proíbe inferir --commit por fraseado. Regras 4: deixou docs/ARQUITETURA.md:1799 e docs/REFERENCIA.md:252 desatualizados — ambos ainda descrevem o botão chamando props.onSend('/code-review', [], []), assinatura que já estava errada e agora também com a string antiga."
+          },
+          "diff": {
+            "files": 3,
+            "add": 45,
+            "del": 7,
+            "tests": [
+              "src/renderer/src/components/ChatPanel.comment.test.tsx"
+            ],
+            "outside": {
+              "stash": 0,
+              "worktrees": 0,
+              "branches": 1
+            }
+          },
+          "model": "claude-opus-5-5@xhigh",
+          "secsTotal": 492,
+          "calls": 59,
+          "secsFirstEdit": 64,
+          "callsFirstEdit": 9,
+          "nudges": 0
+        },
+        {
+          "t": "s1",
+          "side": "hoje",
+          "n": 2,
+          "exists": true,
+          "reviewed": true,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": true,
+          "newFailures": 0,
+          "ref": "18/19",
+          "refBehavior": 1,
+          "refName": 0,
+          "notas": {
+            "atende": 5,
+            "bugs": 5,
+            "bordas": 5,
+            "regras": 5,
+            "justificativa": "Mesma mudança no Composer.tsx e no teste (sem renomear o `it`). Step 5 da skill é mais preciso nas bordas: whitespace/line-ending-only conta como vazio (não recusa diff trivial legítimo), achados incertos de high+ não bloqueiam mas são listados, roda TODOS os checks do projeto e proíbe afrouxar/editar check, proíbe `git commit -a`/stash/reset/checkout/clean, reporta hook que rejeitou e o hash final. Ponto fraco menor: 'If the project declares no checks, say so... don't commit silently' fica ambíguo se commita ou não nesse caso (A é mais claro: roda os scripts evidentes do package.json). Docs atualizadas e deixa explícito que '/code-review' digitado continua só revisando."
+          },
+          "diff": {
+            "files": 5,
+            "add": 48,
+            "del": 7,
+            "tests": [
+              "src/renderer/src/components/ChatPanel.comment.test.tsx"
+            ],
+            "outside": {
+              "stash": 0,
+              "worktrees": 0,
+              "branches": 1
+            }
+          },
+          "model": "claude-opus-5-5@xhigh",
+          "secsTotal": 465,
+          "calls": 43,
+          "secsFirstEdit": 25,
+          "callsFirstEdit": 6,
+          "nudges": 0
+        },
+        {
+          "t": "s1",
+          "side": "novo",
+          "n": 1,
+          "exists": true,
+          "reviewed": true,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": true,
+          "newFailures": 0,
+          "ref": "18/19",
+          "refBehavior": 0,
+          "refName": 1,
+          "notas": {
+            "atende": 5,
+            "bugs": 5,
+            "bordas": 5,
+            "regras": 5,
+            "justificativa": "Botão passa a enviar '/code-review --fix --commit' (Composer.tsx:1297) e a skill ganha a flag --commit em .agents/skills/code-review/SKILL.md com gates (há diff, nenhum achado confirmado em aberto, checks do AGENTS.md/CLAUDE.md passaram), stage por caminho explícito (sem add -A), sem .env/segredos, sem push/--amend/--no-verify, sem Co-Authored-By salvo attribution.commit, e relato do hash. A SKILL.md é sincronizada ao cache por digest (skillManager.syncCacheSkills), logo a mudança chega ao agente. Teste ChatPanel.comment.test.tsx atualizado (title e string). Docs ARQUITETURA.md/REFERENCIA.md atualizados, inclusive corrigindo a assinatura errada de 3 args; a afirmação sobre o subagente critico pré-carregar a skill confere com specialists.ts:157. Sem push, mas o pedido só falou em commit."
+          },
+          "diff": {
+            "files": 5,
+            "add": 39,
+            "del": 9,
+            "tests": [
+              "src/renderer/src/components/ChatPanel.comment.test.tsx"
+            ],
+            "outside": {
+              "stash": 0,
+              "worktrees": 0,
+              "branches": 1
+            }
+          },
+          "model": "claude-opus-5-5@xhigh",
+          "secsTotal": 418,
+          "calls": 33,
+          "secsFirstEdit": 47,
+          "callsFirstEdit": 5,
+          "nudges": 0
+        },
+        {
+          "t": "s1",
+          "side": "novo",
+          "n": 2,
+          "exists": true,
+          "reviewed": true,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": true,
+          "newFailures": 0,
+          "ref": "18/19",
+          "refBehavior": 1,
+          "refName": 0,
+          "notas": {
+            "atende": 5,
+            "bugs": 4,
+            "bordas": 4,
+            "regras": 4,
+            "justificativa": "Botão passa a enviar '/code-review --fix --commit' (Composer.tsx:1297) e a skill ganha Step 5 com gates (algo a commitar, sem achado aberto, checks do AGENTS.md/CLAUDE.md passam), stage por caminho explícito, Conventional Commits, sem push/--amend/--no-verify, e a regra 'sem --commit nunca commita' protege o subagente critico que pré-carrega a skill. Docs ARQUITETURA/REFERENCIA atualizadas. Bug/borda: gate 1 do Step 5 manda dizer 'nada a commitar' quando o diff é 'trivial (see Rules)' — um typo de uma linha é diff válido e o pedido diz 'commit sempre no final'; só vazio/whitespace deveria contar como nada. Regras: renomeou o título do `it` em ChatPanel.comment.test.tsx (aparece como teste sumido, mas as asserções continuam e foram atualizadas); nenhum teste novo, porém a mudança é em markdown de skill. Composer.tsx já tinha 1314 linhas antes (não é culpa do patch)."
+          },
+          "diff": {
+            "files": 5,
+            "add": 45,
+            "del": 9,
+            "tests": [
+              "src/renderer/src/components/ChatPanel.comment.test.tsx"
+            ],
+            "outside": {
+              "stash": 0,
+              "worktrees": 0,
+              "branches": 1
+            }
+          },
+          "model": "claude-opus-5-5@xhigh",
+          "secsTotal": 155,
+          "calls": 14,
+          "secsFirstEdit": 69,
+          "callsFirstEdit": 6,
+          "nudges": 0
+        }
+      ],
+      "verdict": {
+        "passHoje": 0,
+        "passNovo": 0,
+        "criteria": {
+          "atende": {
+            "hoje": 5,
+            "novo": 5
+          },
+          "bugs": {
+            "hoje": 5,
+            "novo": 4.5
+          },
+          "bordas": {
+            "hoje": 5,
+            "novo": 4.5
+          },
+          "regras": {
+            "hoje": 4.5,
+            "novo": 4.5
+          }
+        },
+        "approved": false,
+        "reasons": [
+          "novo passou no avaliador de código em 0/2 (precisa 2/2)",
+          "nota média de \"bugs\" do novo abaixo da do hoje",
+          "nota média de \"bordas\" do novo abaixo da do hoje"
+        ]
+      }
+    },
+    "s2": {
+      "rows": [
+        {
+          "t": "s2",
+          "side": "hoje",
+          "n": 1,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s2",
+          "side": "hoje",
+          "n": 2,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s2",
+          "side": "novo",
+          "n": 1,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s2",
+          "side": "novo",
+          "n": 2,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        }
+      ],
+      "verdict": {
+        "passHoje": 0,
+        "passNovo": 0,
+        "criteria": {
+          "atende": {
+            "hoje": null,
+            "novo": null
+          },
+          "bugs": {
+            "hoje": null,
+            "novo": null
+          },
+          "bordas": {
+            "hoje": null,
+            "novo": null
+          },
+          "regras": {
+            "hoje": null,
+            "novo": null
+          }
+        },
+        "approved": false,
+        "incomplete": true,
+        "reasons": [
+          "incompleta: hoje r1 sem avaliação, hoje r2 sem avaliação, novo r1 sem avaliação, novo r2 sem avaliação"
+        ]
+      }
+    },
+    "s3": {
+      "rows": [
+        {
+          "t": "s3",
+          "side": "hoje",
+          "n": 1,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s3",
+          "side": "hoje",
+          "n": 2,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s3",
+          "side": "novo",
+          "n": 1,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        },
+        {
+          "t": "s3",
+          "side": "novo",
+          "n": 2,
+          "exists": false,
+          "reviewed": false,
+          "code": false,
+          "timedOut": true,
+          "error": null,
+          "typecheck": null,
+          "newFailures": null,
+          "ref": "—",
+          "refBehavior": 0,
+          "refName": 0,
+          "notas": null,
+          "diff": null,
+          "model": "—",
+          "secsTotal": null,
+          "calls": null,
+          "secsFirstEdit": null,
+          "callsFirstEdit": null,
+          "nudges": null
+        }
+      ],
+      "verdict": {
+        "passHoje": 0,
+        "passNovo": 0,
+        "criteria": {
+          "atende": {
+            "hoje": null,
+            "novo": null
+          },
+          "bugs": {
+            "hoje": null,
+            "novo": null
+          },
+          "bordas": {
+            "hoje": null,
+            "novo": null
+          },
+          "regras": {
+            "hoje": null,
+            "novo": null
+          }
+        },
+        "approved": false,
+        "incomplete": true,
+        "reasons": [
+          "incompleta: hoje r1 sem avaliação, hoje r2 sem avaliação, novo r1 sem avaliação, novo r2 sem avaliação"
+        ]
+      }
+    }
+  },
+  "approved": false
+}

@@ -44,6 +44,7 @@ import {
   managerHandoffRequest,
   newHandoffsSince,
   pendingHandoffs,
+  readHandoffConfig,
   safe,
   saveHandoffSession,
   type HandoffSendOutcome
@@ -63,6 +64,7 @@ import {
   type HandoffWork
 } from './HandoffSteps'
 import { useOpenedPlan } from './planningPlanContext'
+import { useHandoffFastMode } from './useHandoffFastMode'
 import { isSamePlan } from './usePlanning'
 
 export interface HandoffActions {
@@ -73,8 +75,11 @@ export interface HandoffActions {
   /** Manda um texto ao Agent Manager pelo caminho normal de envio. */
   onAskManager: (text: string) => void
   /** Cria a conversa de implementação e envia os prompts na ordem (ver
-   *  HandoffSendOutcome). `names`: o arquivo de _handoff/ de cada prompt. */
-  onSend: (prompts: string[], titulo: string, names: string[]) => Promise<HandoffSendOutcome>
+   *  HandoffSendOutcome). `names`: o arquivo de _handoff/ de cada prompt.
+   *  `options`: só com a opção de Fast mode na tela ("Leitura guiada"). */
+  onSend: (prompts: string[], titulo: string, names: string[], options?: { fastMode: boolean }) => Promise<HandoffSendOutcome>
+  /** O Fast mode das conversas do projeto (inheritedFastMode): o valor inicial da opção. */
+  fastModeDefault?: boolean
   /** A conversa ainda existe? Sem isso, todas contam como existentes. */
   conversationExists?: (id: string) => boolean
   /** Ativa a conversa no chat principal. */
@@ -114,6 +119,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const waitingRef = useRef<{ requestedAt: number; before: Set<string> } | null>(session?.waiting ?? null)
   // _handoff/ e enviados.json como estão no disco (a fonte da verdade).
   const [listing, setListing] = useState<Listing | null>(null)
+  const fast = useHandoffFastMode(props.fastModeDefault ?? false)
 
   const { blockers, warnings } = useMemo(() => handoffReadiness(plan), [plan])
   const titulo = plan.roteiro.titulo.trim() || slug
@@ -246,14 +252,15 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
 
   const askManager = async (): Promise<void> => {
     setWorking('ask')
-    const before = await list()
+    // Os interruptores do handoff valem na hora do pedido (desligados = o pedido de antes).
+    const [before, guidance] = await Promise.all([list(), readHandoffConfig(window.api)])
     setWorking(null)
     if (!before) return
     waitingRef.current = { requestedAt: Date.now(), before: new Set(before.map((h) => h.name)) }
     saveHandoffSession(projectCwd, slug, { step: 'waiting', waiting: waitingRef.current, drafts }) // fechou no list(): reabre em "Gerar"
     setFound([])
     setStep('waiting')
-    onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0))
+    onAskManager(managerHandoffRequest(plan.dir, override ? blockers.length : 0, plan.media?.length ?? 0, guidance))
   }
 
   // O rascunho automático cobre o roteiro inteiro: declara todas as etapas. Com
@@ -335,7 +342,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     const names = drafts.map((d, i) => written.get(i)?.name ?? d.name)
     let outcome: HandoffSendOutcome
     try {
-      outcome = await onSend(prompts, titulo, names)
+      outcome = await (fast.sendOptions ? onSend(prompts, titulo, names, fast.sendOptions) : onSend(prompts, titulo, names))
     } catch (err) {
       notify('erro', `Não consegui enviar para a implementação: ${errText(err)}`)
       setWorking(null)
@@ -459,6 +466,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             onCheckPlan={() => setStep('review')}
             onAskManager={() => void askManager()}
             onSend={() => void send()}
+            fastMode={fast.option}
           />
         )}
       </div>

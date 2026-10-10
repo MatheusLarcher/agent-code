@@ -1,0 +1,130 @@
+[
+  {
+    "at": 1791533173660,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"Get-ChildItem -Force \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\agent-code\\\" | Select-Object Mode, Length, LastWriteTime, Name | Format-Table -AutoSize; Get-ChildItem -Force \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\" | Select-Object Mode, Name | Format-Table -AutoSize\",\"descript…"
+  },
+  {
+    "at": 1791533182712,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"Get-ChildItem -Force -Recurse -Depth 2 \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\userData\\\",\\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\.agent-code\\\",\\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\agent-code\\\\backups\\\" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match…"
+  },
+  {
+    "at": 1791533191782,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"$j = Get-Content -Raw \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\userData\\\\storage-bootstrap.json\\\" | ConvertFrom-Json; $j.PSObject.Properties | ForEach-Object { $v = $_.Value; if ($v -is [string] -and $v -match '(postgres|password|secret|key)') { $v = '<redacted>' }; \\\"{0} = {1}\\\" -…"
+  },
+  {
+    "at": 1791533200848,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"$j = Get-Content -Raw \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\userData\\\\storage-bootstrap.json\\\" | ConvertFrom-Json; \\\"backend=\\\" + $j.backend; Get-Content \\\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\.agent-code\\\\location.json\\\"; Get-Content \\\"D:\\\\agent-code-replay\\\\runs\\\\fumac…"
+  },
+  {
+    "at": 1791533225044,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"Get-ChildItem -Force \\\"D:\\\\agent-code-replay\\\\explore\\\" | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200\",\"description\":\"List files in the explore folder\"}"
+  },
+  {
+    "at": 1791533246172,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "deny",
+    "tool": "PowerShell",
+    "reason": "comando que escreve fora da rodada: D:\\agent-code-replay\\explore\\conversations.sql",
+    "input": "{\"command\":\"New-Item -ItemType Directory -Force \\\"$env:TEMP\\\\po-explore\\\" | Out-Null; @'\\n// Lista as mensagens de uma conversa do dump COPY (só leitura).\\n// Uso: node conv.mjs <sql> <convId> [deISO] [ateISO] [maxChars]\\nimport fs from 'node:fs'\\nimport readline from 'node:readline'\\nconst [sql, co…"
+  },
+  {
+    "at": 1791533255238,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "PowerShell",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"$env:TEMP; $env:LOCALAPPDATA; $env:USERPROFILE\",\"description\":\"Show temp, local app data and profile paths\"}"
+  },
+  {
+    "at": 1791533267314,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Write",
+    "reason": "escrita dentro da rodada",
+    "input": "{\"file_path\":\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\scratch\\\\po-explore\\\\conv.mjs\",\"content\":\"// Lista as mensagens de uma conversa do dump COPY (só leitura).\\n// Uso: node conv.mjs <sql> <convId> [deISO] [ateISO] [maxChars] [kinds,separados,por,virgula]\\nimport fs from 'node:fs'\\nimport read…"
+  },
+  {
+    "at": 1791533273365,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"\\\" \\\"\\\" 100 user 2>&1 | head -80\",\"timeout\":300000,\"description\":\"List user messages of the Cadastro conversation from the dump\"}"
+  },
+  {
+    "at": 1791533282431,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T12:40:00Z\\\" \\\"\\\" 400 user 2>&1 | tail -60\",\"timeout\":300000,\"description\":\"List later user messages of the Cadastro conversation\"}"
+  },
+  {
+    "at": 1791533291482,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T13:50:00Z\\\" \\\"2026-09-29T16:10:00Z\\\" 300 user,assistant-text,status,provider-switch,system 2>&1 | tail -n +3 | head -300\",\"timeout\":300000,…"
+  },
+  {
+    "at": 1791533297542,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T13:50:00Z\\\" \\\"2026-09-29T16:10:00Z\\\" 100000 assistant-text 2>&1 | grep -n -i -E \\\"posso|faço o setup|setup assim|atualizar a VPS|quer que e…"
+  },
+  {
+    "at": 1791533309614,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T14:03:00Z\\\" \\\"2026-09-29T14:07:10Z\\\" 100000 user,assistant-text 2>&1 | tail -n +3\",\"timeout\":300000,\"description\":\"Print full assistant rep…"
+  },
+  {
+    "at": 1791533324708,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/conv.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T14:08:00Z\\\" \\\"2026-09-29T14:55:00Z\\\" 100000 assistant-text 2>&1 | tail -n +3 | awk '/^--- assistant-text 2026-09-29T14:54/{p=1} p'; echo \\\"…"
+  },
+  {
+    "at": 1791533339807,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Write",
+    "reason": "escrita dentro da rodada",
+    "input": "{\"file_path\":\"D:\\\\agent-code-replay\\\\runs\\\\fumaca-t2-hoje\\\\scratch\\\\po-explore\\\\turns.mjs\",\"content\":\"// Resume os turnos de uma conversa do dump COPY (só leitura): por mensagem do\\n// usuário, quantas ações (tool-use) vieram até a próxima mensagem do usuário.\\n// Uso: node turns.mjs <sql> <convId> …"
+  },
+  {
+    "at": 1791533345844,
+    "conv": "cmv0ojvxj8r8le",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"node /d/agent-code-replay/runs/fumaca-t2-hoje/scratch/po-explore/turns.mjs /d/agent-code-replay/explore/conversations.sql cmued62agtb72r \\\"2026-09-29T13:50:00Z\\\" \\\"2026-09-29T16:10:00Z\\\" 2>&1\",\"timeout\":600000,\"description\":\"Summarize turns and tool-call counts in the window\"}"
+  }
+]

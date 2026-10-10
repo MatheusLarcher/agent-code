@@ -4,12 +4,15 @@
  * e o lançamento da conversa de implementação. Puras e testáveis sem o App.
  */
 import type { AgentCodeApi } from '@shared/api'
-import type {
-  PlanningFailure,
-  PlanningHandoffDto,
-  PlanningHandoffSentDto,
-  PlanningHandoffSentMark,
-  PlanningResult
+import { handoffGuidanceRules, type HandoffGuidance } from '@shared/handoffGuidance'
+import {
+  DEFAULT_CONFIG,
+  type HandoffConfig,
+  type PlanningFailure,
+  type PlanningHandoffDto,
+  type PlanningHandoffSentDto,
+  type PlanningHandoffSentMark,
+  type PlanningResult
 } from '@shared/ipc'
 
 export function errText(err: unknown): string {
@@ -44,8 +47,16 @@ export const HANDOFF_CLOCK_SLACK_MS = 2_000
  * o renderer não a monta. Com mídia no plano (`mediaCount` > 0), o Manager é
  * instruído a pôr em cada prompt o caminho absoluto + tipo das mídias que ele
  * usa — a conversa de implementação não vê o plano, só o texto.
+ *
+ * `guidance`: os interruptores do handoff (AppConfig.handoff). Desligados ou
+ * ausentes, o pedido é exatamente o de antes deles (golden em __golden__/).
  */
-export function managerHandoffRequest(planDir: string, openAmbiguities = 0, mediaCount = 0): string {
+export function managerHandoffRequest(
+  planDir: string,
+  openAmbiguities = 0,
+  mediaCount = 0,
+  guidance: HandoffGuidance = {}
+): string {
   const lines = [
     'Gere agora o handoff deste planejamento para a conversa de implementação.',
     '',
@@ -65,6 +76,7 @@ export function managerHandoffRequest(planDir: string, openAmbiguities = 0, medi
       'mcp__entregas__entrega_estimar e escrever "Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"; ' +
       'ao concluir, consultar mcp__entregas__entrega_tempo e escrever "levou Y min de trabalho (dentro/fora do prazo)" e, se passou, o motivo. ' +
       'O prazo é a estimativa do plano; a do agente não o muda, e o tempo que vale é o medido pelo app.',
+    ...handoffGuidanceRules(guidance).flatMap((rule) => ['', rule]),
     '',
     'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou. Única exceção: etapa ' +
       'sem estimativa — estime-a antes com mcp__planning__plan_roteiro_set mandando a lista INTEIRA de etapas (o plan_roteiro_set substitui ' +
@@ -88,6 +100,17 @@ export function managerHandoffRequest(planDir: string, openAmbiguities = 0, medi
     )
   }
   return lines.join('\n')
+}
+
+/** Os interruptores do handoff lidos agora (o último valor das Configurações).
+ *  Config ilegível ou sem o grupo: o padrão. Nunca lança. */
+export async function readHandoffConfig(api: Partial<Pick<AgentCodeApi, 'getConfig'>> | undefined): Promise<HandoffConfig> {
+  try {
+    const config = await api?.getConfig?.()
+    return { ...DEFAULT_CONFIG.handoff, ...(config?.handoff ?? {}) }
+  } catch {
+    return { ...DEFAULT_CONFIG.handoff }
+  }
 }
 
 /**

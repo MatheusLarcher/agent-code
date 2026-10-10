@@ -1,0 +1,32 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 1 | sem edição: 1 | edição delegada a executor: 0
+handoff: 1 pedidos | p50 160s, 18 chamadas, 18 Read, 18 arquivos, 5 buscas, 12923 tokens de saída
+pedido comum: 0 pedidos | p50 0s, 0 chamadas, 0 Read, 0 arquivos, 0 buscas, 0 tokens de saída
+  H claude-opus-5-5 @ max              1 pedidos (1 handoff) | p50 160s, 18 chamadas, 12923 tokens saída, 6.6 s/chamada
+segundos de modelo por chamada: p50 6.6 | p90 6.6
+
+métrica (até o 1º Edit)      p50        p75        p90        máx
+secs                              160        160        160        160
+calls                              18         18         18         18
+model                             119        119        119        119
+toolSecs                           41         41         41         41
+agentSecs                           0          0          0          0
+reads                              18         18         18         18
+grep                                4          4          4          4
+glob                                1          1          1          1
+bash                                0          0          0          0
+agents                              0          0          0          0
+files                              18         18         18         18
+ctxFirst                        62144      62144      62144      62144
+ctxAtEdit                      154583     154583     154583     154583
+tokensSum                     2253615    2253615    2253615    2253615
+outTokens                       12923      12923      12923      12923
+thinkingChars                       0          0          0          0
+
+chamadas ao modelo com UMA ferramenta só (leitura em série): 7/18 (39%)
+tempo até o 1º Edit: modelo 74% | ferramentas 26% (inclui espera de permissão e subagentes)
+
+por projeto: projeto | pedidos com edição | p50 segs | p50 chamadas | p50 Reads
+  D--agent-code-replay-t2-agent-code          1      160       18       18
+
+15 mais lentos até o 1º Edit:
+  2026-10-09T08:05 D--agent-code-replay-t   160s  18 chamadas  18 Read   5 busca  0 subag.     0s em subag. | # Handoff — PO do quadro: pergunta de próximo passo, veredito atrasado e digest de turno l

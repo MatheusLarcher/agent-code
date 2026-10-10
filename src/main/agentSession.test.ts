@@ -11,7 +11,8 @@ import { join } from 'node:path'
 const configState = vi.hoisted(() => ({
   windowsControlEnabled: false as unknown,
   chromeControlEnabled: false as unknown,
-  ollama: { enabled: false, apiKey: '' }
+  ollama: { enabled: false, apiKey: '' },
+  skillCatalog: undefined as { tiered: boolean; overrides: Record<string, never> } | undefined
 }))
 const codexState = vi.hoisted(() => ({ connected: true }))
 const cacheState = vi.hoisted(() => ({
@@ -29,7 +30,8 @@ vi.mock('./config', () => ({
     chromeControlEnabled: configState.chromeControlEnabled,
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
-    ollama: configState.ollama
+    ollama: configState.ollama,
+    ...(configState.skillCatalog ? { skillCatalog: configState.skillCatalog } : {})
   })
 }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => codexState.connected }))
@@ -201,6 +203,7 @@ beforeEach(() => {
   configState.windowsControlEnabled = false
   configState.chromeControlEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
+  configState.skillCatalog = undefined
   codexState.connected = true
   cacheState.dir = 'C:\\test\\agent-code'
   cacheState.memoriesDir = 'C:\\test\\agent-code\\memories'
@@ -1297,6 +1300,47 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(dispatched).toContain('/modelar')
     expect(dispatched).toContain('Description: editar qualquer arquivo STL ou 3MF')
     expect(dispatched).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
+  })
+
+  it('catálogo em níveis: lista nativa sem as baixas, crítica inteira no prompt, busca MCP e /nome de baixa reescrito', async () => {
+    configState.skillCatalog = { tiered: true, overrides: {} }
+    const project = await mkdtemp(join(tmpdir(), 'agent-session-tiers-'))
+    cacheState.dir = join(project, 'cache')
+    cacheState.skillsDir = join(project, 'cache', 'skills')
+    for (const [name, body] of [
+      ['verification-before-completion', 'LEI_DE_FERRO'],
+      ['modelar', 'corpo da média'],
+      ['click-path-audit', 'corpo da baixa']
+    ]) {
+      await mkdir(join(project, '.agents', 'skills', name), { recursive: true })
+      await writeFile(join(project, '.agents', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: desc ${name}\n---\n${body}`, 'utf8')
+    }
+    const { s } = makeSession({ cwd: project, model: 'gpt-6-sol', skillRuntime: { appRoot: project, userHome: join(project, 'home') } })
+    await s.start()
+
+    const options = optionsOfLastQuery()
+    expect(options.skills).toEqual(expect.arrayContaining(['verification-before-completion', 'modelar', 'loop']))
+    expect(options.skills).not.toContain('click-path-audit')
+    expect((options.systemPrompt as { append: string }).append).toContain('LEI_DE_FERRO')
+    expect((options.mcpServers as Record<string, unknown>).skills).toBeDefined()
+    expect(await gate(s, 'mcp__skills__skills_buscar', { texto: 'x' })).toMatchObject({ behavior: 'allow' })
+
+    const reloadSkills = vi.fn(async () => ({
+      skills: ['verification-before-completion', 'modelar'].map((name) => ({ name, description: 'd', argumentHint: '' }))
+    }))
+    ;(s as unknown as { q: { reloadSkills: typeof reloadSkills } }).q = { reloadSkills }
+    await s.send('/click-path-audit o botão não salva')
+    const dispatched = String(pushedMessages(s).at(-1)?.message.content)
+    expect(dispatched).toContain('Depuração: click-path-audit')
+    expect(dispatched).not.toContain('desc click-path-audit')
+    expect(dispatched).toMatch(/Leia e siga a skill click-path-audit: abra \S+click-path-audit[\\/]SKILL\.md com Read/)
+    expect(dispatched).toContain('o botão não salva')
+  })
+
+  it('catálogo desligado: um servidor "skills" do usuário não ganha liberação automática', async () => {
+    const { s, ask } = makeSession()
+    void gate(s, 'mcp__skills__apagar_tudo', {})
+    await vi.waitFor(() => expect(ask).toHaveBeenCalled())
   })
 
   it('nega escrita direta na pasta de memórias mesmo com "Permitir tudo"', async () => {

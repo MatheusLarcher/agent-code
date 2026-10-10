@@ -186,6 +186,8 @@ export interface TurnHead {
   /** Principal: o projeto; os outros: o papel ("executor", "explorador"…). */
   who: string
   busy: boolean
+  /** Principal: a pasta do projeto (o ícone ao lado do nome). */
+  cwd?: string
 }
 
 export function turnHead(feed: OfficeFeed | null, model: OfficeCharacterModel): TurnHead {
@@ -193,11 +195,13 @@ export function turnHead(feed: OfficeFeed | null, model: OfficeCharacterModel): 
   if (track) return { title: track.label, who: whoLabel(track.subagentType ?? model.role), busy: track.status === 'running' }
   const conv = feed?.conversations.find((c) => c.id === model.convId)
   const principal = model.role === 'principal'
-  return {
+  const head: TurnHead = {
     title: (principal ? conv?.title : model.label) || conv?.title || model.label,
     who: principal && conv ? roomName(conv.cwd) : whoLabel(model.role),
     busy: principal ? !!feed?.busyIds.has(model.convId) : model.active
   }
+  if (principal && conv) head.cwd = conv.cwd
+  return head
 }
 
 /** O chat encolhido do personagem: as últimas `max` linhas do turno, lidas do fim (sem nada, o rótulo dele). */

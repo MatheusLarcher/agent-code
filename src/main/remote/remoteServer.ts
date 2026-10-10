@@ -58,6 +58,8 @@ export interface RemoteServerDeps {
   saveToken?: (token: string) => void | Promise<void>
   /** Transcribe phone audio (WebM/Ogg Opus, WAV…) on the PC with the configured local engine. */
   transcribe?: (audioBase64: string, mimeType: string) => Promise<string>
+  /** Vocabulário de reforço do ditado: vai ao celular, que corrige com ele a transcrição feita no aparelho. */
+  vocabulary?: () => readonly string[]
   /** Synthesize raw answer text on the PC (local Kokoro, configured voice and speed). */
   tts?: (text: string, opts?: { treated?: boolean }) => Promise<{ base64: string; mimeType: string }>
   /** Split a raw answer into treated, playable pieces (the phone plays them in sequence). */
@@ -511,6 +513,15 @@ export class RemoteServer {
     }
   }
 
+  /** A lista do ditado; a ponte não cai por ela (sem lista, o celular segue com a última que guardou). */
+  private vocabulary(): readonly string[] {
+    try {
+      return this.deps.vocabulary?.() ?? []
+    } catch {
+      return []
+    }
+  }
+
   private serveState(res: ServerResponse): void {
     // O resumo de cada conversa (sem as mensagens); as perguntas vêm das que estão à mão.
     const conversations = this.store.summaries()
@@ -522,6 +533,7 @@ export class RemoteServer {
       JSON.stringify({
         conversations,
         voiceReady,
+        vocabulary: this.vocabulary(),
         skipPerms: this.store.global('skipPerms') ?? false,
         models: this.store.global('models') ?? [],
         modelEffort: this.store.global('modelEffort') ?? {},

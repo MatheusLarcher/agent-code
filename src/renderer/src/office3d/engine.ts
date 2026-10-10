@@ -15,8 +15,8 @@
  * QUIP_TICK_MS anda sem feed as falas, a energia, a TV e o hover atrasado. Ponteiro em pointerInput.ts:
  * clique foca o agente ou a TV (a chave PROJECTOR_KEY…: a pose frontal `tvPose`, engineTv.ts), duplo
  * clique abre a conversa, hover vai a `onHover`. `onFocus` diz se foi o usuário (`byUser`). `flyToAgent`/
- * `follow` voam sem abrir a tela (FOLLOW_GRACE_MS). Kanban = o Quadro real (`board`). Filtro do HUD:
- * `setProjectFilter`, `filter.current`/`filter.onChange` e `onProjects`. */
+ * `follow` voam sem abrir a tela (FOLLOW_GRACE_MS). Kanban = o Quadro real (`board`). Papéis de memória
+ * da mesa: `onMemoryPapers`. Filtro do HUD: `setProjectFilter`, `filter.current`/`filter.onChange` e `onProjects`. */
 import { PerspectiveCamera, Vector3 } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
@@ -29,7 +29,7 @@ import { EngineFilter } from './engineFilter'
 import { GpuWarmup } from './engineGpuWarmup'
 import { EnginePower } from './enginePower'
 import { focusKeyFor, focusPoseFor, wireTv } from './engineTv'
-import { createDefaultRenderer, listener, observeResize, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
+import { createDefaultRenderer, listener, MEMORY_PAPERS_KEY, observeResize, type EngineCallbacks, type EngineOptions, type RendererLike } from './engineTypes'
 import { diffEvents, snapshotOf, type OfficeSnapshot } from './events'
 import { clampDt, isTypingTarget, MoveKeys, moveDelta } from './input'
 import { buildingBounds, EMPTY_LAYOUT, layoutOffice, type Office3DLayout } from './layout'
@@ -154,6 +154,7 @@ export class Office3DEngine {
         camera()
       },
       click: (key) => {
+        if (key?.startsWith(MEMORY_PAPERS_KEY)) return this.cb.onMemoryPapers?.(key.slice(MEMORY_PAPERS_KEY.length)) // a lista, sem foco nem voo
         this.userCamAt = this.now()
         if (key) this.focus(key)
         else this.leaveFocus(true, true)

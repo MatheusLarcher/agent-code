@@ -1,0 +1,32 @@
+/* Configurações → Skills (SkillCatalogSection.tsx). */
+.skill-tier-table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.skill-tier-table td {
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+.skill-tier-table td:first-child {
+  width: 100%;
+}
+.skill-tier-table select {
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.skill-tier-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.skill-tier-badge.on {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  color: var(--accent);
+}

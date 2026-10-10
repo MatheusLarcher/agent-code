@@ -97,6 +97,22 @@ describe('config com o banco offline e voltando', () => {
     expect(kv.get('config.typesafe.enabled')).toBe('true')
   })
 
+  it('interruptores do handoff: cada um persiste na sua chave e volta na releitura', async () => {
+    const kv = fakeKv()
+    const { initializeConfigPersistence, updateConfig, reloadConfigPersistence, loadConfig } = await import('./config')
+    await initializeConfigPersistence()
+    // Banco sem os campos (config de antes deles): o boot grava o padrão.
+    expect(kv.get('config.handoff.ciclo')).toBe('false')
+    expect(kv.get('config.handoff.leituraGuiada')).toBe('false')
+
+    await updateConfig({ handoff: { leituraGuiada: true } as AppConfig['handoff'] })
+    expect(kv.get('config.handoff.leituraGuiada')).toBe('true')
+    expect(kv.get('config.handoff.ciclo')).toBe('false')
+    await updateConfig({ handoff: { ciclo: false } as AppConfig['handoff'] })
+    await reloadConfigPersistence()
+    expect(loadConfig().handoff).toEqual({ ciclo: false, leituraGuiada: true })
+  })
+
   it('updateConfig com o banco fora falha em vez de gravar contra o padrão', async () => {
     kvFacade.readPersistedKvMany.mockRejectedValue(new Error('Storage autoritativo offline.'))
     const { updateConfig } = await import('./config')

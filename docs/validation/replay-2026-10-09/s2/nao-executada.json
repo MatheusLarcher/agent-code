@@ -1,0 +1,33 @@
+{
+  "task": "s2",
+  "status": "nao-executada",
+  "cause": "infraestrutura: memoria comprometida livre abaixo do minimo de 6 GB; espera adicional limitada atingiu o corte sem plano congelado",
+  "waitingSince": "2026-10-09T19:29:21.032Z",
+  "inspectionAt": "2026-10-09T19:45:25Z",
+  "additionalWaitCutoff": "2026-10-09T19:55:25Z",
+  "memoryAtCutoff": {
+    "freeVirtualMemoryKb": 4305232,
+    "freeCommitGb": 4.1057891845703125,
+    "minimumCommitGb": 6
+  },
+  "ownWaitingChainStoppedAt": "2026-10-09T19:56:47.480Z",
+  "planFrozen": false,
+  "partialPlanFound": false,
+  "roundsExpected": 4,
+  "roundsExecuted": 0,
+  "reviewsExpected": 2,
+  "reviewsPerformed": 0,
+  "approved": false,
+  "missingEvidence": ["plano congelado", "4 rounds com run/log/diff/eval/timing", "2 revisoes cegas"],
+  "preservedBaseline": "baseline.json",
+  "preservedPlanLog": "plan.log",
+  "privateWaitingLog": "D:/agent-code-replay/preservado/interrupcao-memoria/cadeia-s1.log",
+  "privateCleanupInventory": "D:/agent-code-replay/preservado/interrupcao-memoria/cleanup-observado.json",
+  "cleanup": {
+    "discardableCopyRemoved": true,
+    "observedPlanProfileRemoved": true,
+    "documentsAndBaselinePreserved": true,
+    "userAppUnchanged": true
+  },
+  "note": "Deadline revisado autorizado, mas nenhum round iniciado. Ausencia nao aprova; thresholds e classificacoes historicas nao foram alterados. Nenhum transcript ou dump de banco publicado."
+}

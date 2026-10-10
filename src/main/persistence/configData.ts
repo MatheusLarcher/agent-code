@@ -10,7 +10,12 @@ import {
   isWhisperModelId,
   normalizeVoiceSpeed,
   PLANNING_MODELS,
+  SKILL_CATEGORIES,
+  SKILL_TIERS,
   type AppConfig,
+  type SkillCatalogConfig,
+  type SkillCategory,
+  type SkillTier,
   type EffortChoice,
   type EffortLevel,
   type PlanningConfig,
@@ -53,6 +58,23 @@ export function normalizeAllowedAutoModels(value: unknown): string[] {
   if (!value.every((item): item is string => typeof item === 'string' && item.trim().length > 0)) return []
   // Modelo aposentado na lista vira o substituto (GPT-5.6 → GPT-6).
   return [...new Set(value.map(currentModelId))]
+}
+
+/**
+ * Os ajustes por skill (`skillCatalog.overrides`) lidos do banco: entrada com
+ * nível ou categoria fora das listas é descartada, em vez de lançar — cada campo
+ * é aplicado sozinho no boot, e lançar ali derrubaria a abertura do app.
+ */
+export function normalizeSkillOverrides(value: unknown): SkillCatalogConfig['overrides'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: SkillCatalogConfig['overrides'] = {}
+  for (const [name, choice] of Object.entries(value as Record<string, unknown>)) {
+    const c = choice as { tier?: unknown; category?: unknown } | null
+    if (!name.trim() || !c || typeof c !== 'object') continue
+    if (!SKILL_TIERS.includes(c.tier as SkillTier) || !SKILL_CATEGORIES.includes(c.category as SkillCategory)) continue
+    out[name] = { tier: c.tier as SkillTier, category: c.category as SkillCategory }
+  }
+  return out
 }
 
 const partialConfigSchema = z
@@ -98,6 +120,19 @@ const partialConfigSchema = z
       })
       .strict()
       .optional(),
+    handoff: z.object({ ciclo: z.boolean().optional(), leituraGuiada: z.boolean().optional() }).strict().optional(),
+    skillCatalog: z
+      .object({
+        tiered: z.boolean().optional(),
+        overrides: z
+          .record(
+            z.string().min(1),
+            z.object({ tier: z.enum(SKILL_TIERS as [SkillTier, ...SkillTier[]]), category: z.enum(SKILL_CATEGORIES) }).strict()
+          )
+          .optional()
+      })
+      .strict()
+      .optional(),
     typesafe: z
       .object({
         enabled: z.boolean().optional(),
@@ -122,6 +157,8 @@ export function defaultAppConfig(): AppConfig {
     memorista: { ...DEFAULT_CONFIG.memorista },
     planning: { ...DEFAULT_CONFIG.planning },
     board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } },
+    handoff: { ...DEFAULT_CONFIG.handoff },
+    skillCatalog: { tiered: DEFAULT_CONFIG.skillCatalog.tiered, overrides: {} },
     // A lista é copiada: o spread raso dividiria o array com DEFAULT_CONFIG.
     typesafe: { ...DEFAULT_CONFIG.typesafe, allowedAutoModels: [...DEFAULT_CONFIG.typesafe.allowedAutoModels] }
   }
@@ -149,6 +186,12 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
       ...current.board,
       ...(parsed.data.board ?? {}),
       po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) }
+    },
+    handoff: { ...current.handoff, ...(parsed.data.handoff ?? {}) },
+    // `overrides` é o mapa inteiro de ajustes (o editor grava todos de uma vez).
+    skillCatalog: {
+      tiered: parsed.data.skillCatalog?.tiered ?? current.skillCatalog.tiered,
+      overrides: { ...(parsed.data.skillCatalog?.overrides ?? current.skillCatalog.overrides) }
     },
     typesafe: (() => {
       const typesafe = { ...current.typesafe, ...(parsed.data.typesafe ?? {}) }

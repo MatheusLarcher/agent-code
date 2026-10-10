@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { AgentCrew } from './AgentCrew'
 import { CrewChip } from './CrewChip'
@@ -16,6 +16,9 @@ import type { CrewMember } from '../crew'
  */
 
 afterEach(cleanup)
+
+// `mockups/` é ignorada pelo git: num clone limpo ela não existe.
+mkdirSync(resolve(process.cwd(), 'mockups'), { recursive: true })
 
 const T = Date.now()
 const s = (n: number): number => T - n * 1000

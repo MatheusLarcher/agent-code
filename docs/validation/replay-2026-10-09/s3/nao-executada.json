@@ -1,0 +1,39 @@
+{
+  "task": "s3",
+  "status": "nao-executada",
+  "cause": "infraestrutura: cadeia serial bloqueada em plan s2 por memoria comprometida livre abaixo do minimo de 6 GB; corte de espera adicional atingido",
+  "waitingSince": "2026-10-09T19:29:21.032Z",
+  "inspectionAt": "2026-10-09T19:45:25Z",
+  "additionalWaitCutoff": "2026-10-09T19:55:25Z",
+  "memoryAtCutoff": {
+    "freeVirtualMemoryKb": 4305232,
+    "freeCommitGb": 4.1057891845703125,
+    "minimumCommitGb": 6
+  },
+  "ownWaitingChainStoppedAt": "2026-10-09T19:56:47.480Z",
+  "planStarted": false,
+  "planFrozen": false,
+  "partialPlanFound": false,
+  "roundsExpected": 4,
+  "roundsExecuted": 0,
+  "reviewsExpected": 2,
+  "reviewsPerformed": 0,
+  "approved": false,
+  "missingEvidence": ["plano congelado", "4 rounds com run/log/diff/eval/timing", "2 revisoes cegas"],
+  "preservedBaseline": "baseline.json",
+  "baselineReference": {
+    "passed": 53,
+    "total": 54,
+    "failedTest": "src/renderer/src/App.test.tsx > App — fila de mensagens (multi-sessao) enviar com a tarefa rodando ENFILEIRA (nao cancela) e despacha no fim do turno",
+    "note": "Falha ja registrada na propria referencia antes de qualquer round s3. Nao corrigida nem reclassificada por este executor; ver ID exato em baseline.json."
+  },
+  "privateWaitingLog": "D:/agent-code-replay/preservado/interrupcao-memoria/cadeia-s1.log",
+  "privateCleanupInventory": "D:/agent-code-replay/preservado/interrupcao-memoria/cleanup-observado.json",
+  "cleanup": {
+    "discardableCopyRemoved": true,
+    "observedProfiles": 0,
+    "documentsAndBaselinePreserved": true,
+    "userAppUnchanged": true
+  },
+  "note": "Nenhum round iniciado e nenhuma revisao feita. Ausencia nao aprova; thresholds e classificacoes historicas nao foram alterados. Nenhum transcript ou dump de banco publicado."
+}

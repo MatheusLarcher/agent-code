@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type R
 import { Composer } from '../components/Composer'
 import { Markdown } from '../components/Markdown'
 import { IconArrowLeft } from '../components/Icons'
+import { ProjectNameIcon } from '../components/projectIcons'
 import type { PickedElement } from '@shared/ipc'
 import { PO_CHAT_QUICK, quickAboutCard, sourcesSentence, type PoChatMessage, type PoChatOption, type PoChatSource } from '@shared/poChat'
 import type { PoChatState, PoChatVerifying } from './usePoChat'
@@ -217,7 +218,10 @@ export function PoChatPanel(props: PoChatPanelProps): JSX.Element {
         </button>
         <span className="central-orb small" aria-hidden="true" />
         <h1>{PO_CHAT_TITLE}</h1>
-        <span className="po-chat-project central-faint">{props.projectName}</span>
+        <span className="po-chat-project central-faint">
+          <ProjectNameIcon cwd={props.projectCwd} />
+          {props.projectName}
+        </span>
       </header>
 
       <div className="central-feed" ref={feedRef}>

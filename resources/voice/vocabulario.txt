@@ -1,0 +1,231 @@
+# Vocabulário de reforço da transcrição (Parakeet, ditado por voz).
+#
+# Termos que o usuário fala e o modelo tende a errar (inglês técnico, nomes de
+# projetos e ferramentas). Levantados das conversas com
+#   node scripts/voice/vocab-candidates.mjs
+# e curados à mão: só a grafia correta, um termo por linha (pode ter espaço ou
+# hífen). A grafia daqui é a que aparece no texto: "github" ou "git hub"
+# transcritos viram "GitHub"; "back end" vira "backend".
+# Vai embutido no app (src/main/voice/hotwords.ts) e é carregado sempre que o
+# Parakeet inicia. Linhas com # são comentário.
+
+# --- desenvolvimento
+backend
+frontend
+build
+builds
+deploy
+commit
+commits
+push
+pull
+branch
+release
+stash
+refactor
+debug
+bug
+bugs
+fix
+feature
+typecheck
+script
+scripts
+setup
+config
+configs
+settings
+cache
+log
+logs
+timeout
+fallback
+retry
+queue
+worker
+schema
+upsert
+storage
+backup
+localhost
+localStorage
+IndexedDB
+dev
+end-to-end
+benchmark
+open source
+toolchain
+hooks
+handoff
+deliverable
+
+# --- interface
+layout
+mockup
+mockups
+design
+frontend-design
+preview
+dropdown
+hover
+toggle
+scroll
+splash
+card
+cards
+board
+kanban
+sprint
+landing page
+post-it
+viewer
+composer
+renderer
+terminal
+browser
+screenshot
+print
+prints
+render
+renders
+F5
+
+# --- agentes e IA
+agent
+agents
+Agent Code
+subagent
+subagente
+skill
+skills
+prompt
+prompts
+token
+tokens
+review
+code review
+brainstorming
+superpowers
+brag
+brag-slim
+graphify
+Hyperframes
+executor
+handoffs
+Product Owner
+PO
+LLM
+GPT
+Claude
+Claude Code
+Anthropic
+OpenAI
+Codex
+DeepSeek
+Opus
+Sonnet
+Haiku
+Whisper
+Kokoro
+Parakeet
+MCP
+SDK
+TTS
+STT
+
+# --- linguagens, libs e ferramentas
+TypeScript
+JavaScript
+Node
+Python
+React
+Three.js
+Electron
+Vite
+Vitest
+Playwright
+Capacitor
+shadcn
+NumPy
+trimesh
+shapely
+ffmpeg
+npm
+npx
+Git
+GitHub
+PowerShell
+bash
+Docker
+ngrok
+Cloudflare
+PostgreSQL
+Postgres
+SQLite
+JSON
+HTML
+CSS
+CSV
+PDF
+SVG
+MP4
+API
+CLI
+IDE
+IPC
+UI
+UX
+VPS
+APK
+exe
+app
+apps
+web
+online
+desktop
+Android
+Windows
+OneDrive
+Google
+Chrome
+Chromium
+Mapbox
+Snapdragon
+GPU
+CPU
+NPU
+RAM
+WASD
+
+# --- 3D e impressão 3D
+Blender
+OpenSCAD
+Tinkercad
+Fusion
+Bambu Lab
+STL
+3MF
+PETG
+PLA
+PTFE
+spool
+drybox
+respooler
+rewinder
+watertight
+BMCU
+AMS
+
+# --- eletrônica
+Arduino
+ESP32
+ESP8266
+
+# --- projetos e marcas
+Larcher Tech
+Forgia
+Gambetto
+LancheHub
+Typesafe
+Meshy
+JARVIS

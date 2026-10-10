@@ -21,7 +21,8 @@ const srv = new RemoteServer({
     spoken.push({ text, treated: opts?.treated })
     return { base64: 'UklGRg==', mimeType: 'audio/wav' }
   },
-  ttsParts: (text) => text.split('|')
+  ttsParts: (text) => text.split('|'),
+  vocabulary: () => ['GitHub', 'backend']
 })
 let base = ''
 let tok = ''
@@ -59,6 +60,10 @@ afterAll(async () => {
 describe('RemoteServer — voz local do celular', () => {
   it('/api/state liga a voz sem depender de chave', async () => {
     expect((await call('/api/state')).json.voiceReady).toBe(true)
+  })
+
+  it('/api/state leva o vocabulário do ditado ao celular', async () => {
+    expect((await call('/api/state')).json.vocabulary).toEqual(['GitHub', 'backend'])
   })
 
   it('/api/transcribe repassa WebM/Opus com o mime do celular e devolve o texto', async () => {

@@ -18,6 +18,8 @@ export interface ModelOption {
 export interface StateResponse {
   conversations: ConvSummary[]
   voiceReady?: boolean
+  /** Vocabulário de reforço do ditado (um termo por item). PCs antigos não mandam. */
+  vocabulary?: string[]
   skipPerms?: boolean
   models?: ModelOption[]
   modelEffort?: Record<string, string[]>

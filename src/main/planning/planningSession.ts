@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
+import type { HandoffGuidance } from '../../shared/handoffGuidance'
 import type { StartAgentOptions } from '../../shared/ipc'
 import { MEDIA_DIR } from '../../shared/planningMedia'
 import { ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from '../handoffTracking/entregaTools'
@@ -31,24 +32,33 @@ export type PlanningSessionRole = Pick<StartAgentOptions, 'cwd' | 'planning' | '
 
 /** Servidores da sessão comum que o Manager herda. O resto (browser, android,
  *  windows, tasks) é de quem executa, não de quem planeja. O 'app' do Manager
- *  só tem o app_chamar_usuario (a sessão o monta sem o app_restart). */
-const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory', 'app']
+ *  só tem o app_chamar_usuario (a sessão o monta sem o app_restart). O 'skills'
+ *  (busca no catálogo) só existe com o catálogo de skills em níveis ligado. */
+const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory', 'app', 'skills']
 
 export interface PlanningSessionSetup {
   projectCwd: string
   slug: string
   /** Blocos de memória já montados pela sessão (hint e catálogo); vazios são ignorados. */
   memoryBlocks: readonly string[]
+  /** Os interruptores do handoff (AppConfig.handoff) na subida da sessão. */
+  guidance?: HandoffGuidance
   /** Injetável para teste; ausente, o servidor `planning` real. */
   createServer?: (ctx: PlanningToolContext) => McpServerConfig
 }
 
 /** O system prompt (append) do Manager: as instruções dele e, depois, a memória. */
-export function buildPlanningAppend(projectCwd: string, slug: string, memoryBlocks: readonly string[]): string {
+export function buildPlanningAppend(
+  projectCwd: string,
+  slug: string,
+  memoryBlocks: readonly string[],
+  guidance?: HandoffGuidance
+): string {
   const hint = buildPlanningHint({
     slug,
     planDir: planDirPath(projectCwd, slug),
-    sandboxDir: planningSandboxDir(projectCwd, slug)
+    sandboxDir: planningSandboxDir(projectCwd, slug),
+    guidance
   })
   return [hint, ...memoryBlocks.filter((block) => block.trim())].join('\n\n')
 }
@@ -79,7 +89,7 @@ export function applyPlanningSessionOptions(options: Options, setup: PlanningSes
   options.mcpServers = servers
   options.strictMcpConfig = true
 
-  const append = buildPlanningAppend(projectCwd, slug, setup.memoryBlocks)
+  const append = buildPlanningAppend(projectCwd, slug, setup.memoryBlocks, setup.guidance)
   const prompt = options.systemPrompt
   options.systemPrompt =
     prompt && typeof prompt === 'object' && !Array.isArray(prompt) && prompt.type === 'preset'

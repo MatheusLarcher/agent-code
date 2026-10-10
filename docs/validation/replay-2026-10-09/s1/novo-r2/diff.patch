@@ -1,0 +1,122 @@
+diff --git a/.agents/skills/code-review/SKILL.md b/.agents/skills/code-review/SKILL.md
+index 5377025..c9849b1 100644
+--- a/.agents/skills/code-review/SKILL.md
++++ b/.agents/skills/code-review/SKILL.md
+@@ -5,8 +5,9 @@ description: >-
+   at a given effort level (low/medium: fewer, high-confidence findings; high→max: broader
+   coverage, may include uncertain findings; ultra: deep multi-agent review in the cloud).
+   Pass --comment to post findings as inline PR comments, or --fix to apply the findings to
+-  the working tree after the review. Triggers: "revisar código", "revisar antes de commitar",
+-  "code review", "/code-review".
++  the working tree after the review; add --commit to also create a local commit of the
++  reviewed diff once no findings remain open and the project's checks pass. Triggers:
++  "revisar código", "revisar antes de commitar", "code review", "/code-review".
+ ---
+ 
+ # Code Review
+@@ -64,9 +65,44 @@ user commit unaware that open findings exist.
+ - `--fix`: after reporting, apply fixes for the confirmed findings directly to the working
+   tree, then re-run the affected checks (typecheck/tests) to confirm the fix didn't break
+   anything. Do not silently fix — tell the user what was changed and why.
++- `--commit`: after the review (and the fixes, if `--fix` was also passed), commit the reviewed
++  diff locally — see Step 5. It applies **only** when `--commit` is literally in this
++  invocation's arguments; never infer it from the conversation ("revisar antes de commitar" is
++  a request to review, not `--commit`).
++
++## Step 5 — Commit (only with `--commit`)
++
++Runs last, after Step 3 and `--fix`. Check the gates in order. At the first one that fails,
++**do not commit**: tell the user which gate failed and why, then stop — they decide what's next.
++
++1. **There is something to commit.** If the diff is empty or trivial (see Rules), say there was
++   nothing to commit.
++2. **No open findings.** Every confirmed finding was fixed. If any remains open — including
++   because `--fix` wasn't passed — list them and say no commit was made.
++3. **The project's pre-commit checks pass** after the fixes. Take them from the reviewed
++   project's AGENTS.md/CLAUDE.md (e.g. typecheck, tests, build) and run all of them. If none
++   are documented, run the evident ones (e.g. the `typecheck`/`test` scripts in package.json)
++   and name them in the reply. Any failure — a failing pre-commit hook included — means no
++   commit: report the failing command and the relevant part of its output.
++
++When every gate passes:
++
++- **What goes in**: the whole reviewed diff (the original work plus your fixes), not only the
++  fixes. Stage by explicit path — `git add -- <paths>` with just the files in the review scope —
++  and commit those same paths (`git commit -m "<message>" -- <paths>`), so nothing else that
++  happened to be staged rides along. Never `git add -A` / `git add .` (other agents may be
++  editing the same tree), and never stage `.env` files, credentials or secrets.
++- **Message**: Conventional Commits (`type(scope): summary`), in the language of the repo's
++  history (check `git log --oneline -10`), following any commit rules in the project's
++  AGENTS.md/CLAUDE.md. No `Co-Authored-By` trailer unless the project's `.claude/settings.json`
++  sets `attribution.commit`.
++- **Where**: the current branch. No new branch, no push, no `--amend`, no `--no-verify`.
++- Finish by showing what was committed: `git log -1 --stat`.
+ 
+ ## Rules
+ 
+ - Never invent findings to pad the list — an empty result is a valid, good outcome.
+ - Don't flag style/formatting preferences already enforced by lint/prettier.
+ - If the diff is empty or trivial (e.g. a one-line typo fix), say so and skip the full pass.
++- Without `--commit`, never stage or commit anything — not even after `--fix`. The commit is the
++  user's call.
+diff --git a/docs/ARQUITETURA.md b/docs/ARQUITETURA.md
+index fc9722e..f1754d0 100644
+--- a/docs/ARQUITETURA.md
++++ b/docs/ARQUITETURA.md
+@@ -1796,7 +1796,7 @@ O toggle **💰 Econômico** deixou de instruir o agente a pular typecheck/teste
+ Com o toggle **desligado**, nenhuma das duas skills é sugerida e o comportamento é o de sempre. A exclusividade com o toggle **Loop** não mudou.
+ - **`adversarial-review`** foi **adaptada** para spawnar **subagentes Claude nativos** (ferramenta Agent) em vez do CLI externo `codex exec --skip-git-repo-check` do upstream — funciona neste setup e sem o risco de rodar outro agente autônomo com trava desligada. As lentes (Skeptic/Architect/Minimalist), o dimensionamento e o formato de veredito ficam em `references/`.
+ - **`planejar`** é **própria deste projeto** (escrita à mão, **não** vem do `npx skills add` nem entra no `skills-lock.json`). Para tarefas **complexas** de código (tela/painel do zero, refatoração multi-arquivo, fluxo completo), ela obriga o agente a **planejar antes de codar**: cria `EXECUTION_PLAN.md` em `.claude/` (nunca na raiz — evita ir pro `git status` por engano) com o prompt original + tarefas atômicas em checkboxes, executa **uma por vez**, valida cada uma no terminal (checks do projeto, ex. `npm run typecheck`/`npm test`) **e** rodando o app (Passo 3.5 — UI ou backend) antes de marcar `[x]`, comita por tarefa (Passo 3.7), roda a skill **`code-review`** sobre o diff acumulado antes do commit final (Passo 5 — corrige o que ela achar antes de seguir; se o usuário pedir pra comitar antes da revisão, avisa explicitamente em vez de comitar calado), e fecha com auditoria contra o pedido original. A `description` dispara **auto-invocação** em tarefas complexas mesmo sem o usuário citá-la; tarefas **simples** são resolvidas direto, sem plano.
+-- **`code-review`** é **própria deste projeto** também (escrita à mão). Revisa o diff atual (por padrão `git diff` + arquivos novos relevantes) em duas frentes — **bugs de correção** (lógica, edge cases, tipos, race conditions) e **reuse/simplificação/eficiência** — com esforço configurável (`low`/`medium` = passe único, achados de alta confiança; `high`→`max` = subagentes paralelos revisando de ângulos diferentes; `ultra` = redireciona para o `/code-review ultra` multi-agente na nuvem, faturado, não é disparado pela skill). Reporta via `ReportFindings` (achados verificados, lista vazia é um resultado válido) e aceita `--fix` para aplicar as correções confirmadas. No app, o **composer tem um atalho** — botão de escudo (`IconShieldCheck`, ao lado do enviar) que chama `props.onSend('/code-review', [], [])` diretamente, sem precisar digitar.
++- **`code-review`** é **própria deste projeto** também (escrita à mão). Revisa o diff atual (por padrão `git diff` + arquivos novos relevantes) em duas frentes — **bugs de correção** (lógica, edge cases, tipos, race conditions) e **reuse/simplificação/eficiência** — com esforço configurável (`low`/`medium` = passe único, achados de alta confiança; `high`→`max` = subagentes paralelos revisando de ângulos diferentes; `ultra` = redireciona para o `/code-review ultra` multi-agente na nuvem, faturado, não é disparado pela skill). Reporta via `ReportFindings` (achados verificados, lista vazia é um resultado válido), aceita `--fix` para aplicar as correções confirmadas e `--commit` para criar **um commit local** do diff revisado (Step 5) — só se o diff não for vazio/trivial, nenhum achado confirmado ficou em aberto e os checks que o AGENTS.md/CLAUDE.md do projeto exige passaram; senão não commita e diz o motivo. Stage por caminho explícito (nunca `git add -A`, nunca `.env`), Conventional Commits no idioma do histórico, sem push. **Sem `--commit` a skill nunca commita** — é o que protege o subagente `critico`, que a pré-carrega. No app, o **composer tem um atalho** — botão de escudo (`IconShieldCheck`, ao lado do enviar) que chama `props.onSend('/code-review --fix --commit', [], [], [])` diretamente, sem precisar digitar: um clique revisa, corrige, roda os checks e commita.
+ 
+ ---
+ 
+diff --git a/docs/REFERENCIA.md b/docs/REFERENCIA.md
+index 03c8a55..70b9b28 100644
+--- a/docs/REFERENCIA.md
++++ b/docs/REFERENCIA.md
+@@ -249,7 +249,7 @@ Importável pelos três processos (somente tipos + constantes).
+ | `MessageList.tsx` | Renderiza as mensagens com **janela** (`PAGE`=40; carrega +40 ao rolar ao topo, ancorando o scroll — estilo Gemini) e **markdown** (`Markdown`: `react-markdown` + `remark-gfm`; links `target="_blank"`). Bolhas de usuário/assistente (com **miniaturas de imagens**), narração vs. resposta, *thinking*, sistema, erros, e o `ToolCard`. **Falha na bolha do usuário:** quando `UserMessage.error` está setado, a bolha fica com contorno vermelho e mostra a linha de erro + botão **"↻ Tentar de novo"** (`onRetry(msgId)`, desabilitado enquanto `busy`). (`describeTool`): skill em acento, **`+N`/`−N`** verde/vermelho, nome de arquivo, badge. **Download:** chip "⬇️ Baixar" em `Write` entregável (`isDownloadableFile`) e `DownloadChip` para cada `[[download:PATH]]` no texto do assistente (`parseDownloads` limpa o marcador). **Voz:** botão **"Ouvir/Parar"** (`IconSpeaker`/`IconStopSmall`) no rodapé de cada resposta final → `tts.onToggleSpeak`. **Pergunta (`AskUserQuestion`):** não é pintada como erro — a resposta volta sempre como `deny` (`is_error`), então o card ignora o `tool-error` e usa badge **"respondido"** (ou **"sem resposta"** no timeout), verbo **"Pergunta"**. Cards não comprimem (`flex-shrink: 0`). Auto-scroll só perto do fim. |
+ | `VigiaChip.tsx` | A **pergunta do vigia ao usuário**, entre o histórico e o composer (âmbar, sem pulso). Nasce **aberto e com o campo focado**: é pergunta, não aviso a ser buscado. Mostra a dúvida, os **atalhos de resposta** (quando o vigia soube listá-los), uma caixa de texto (Enter envia, Shift+Enter quebra linha) e **Dispensar**/**Responder** — resposta vazia não envia. Uma resposta só: clicar escolhe, digitar desfaz a escolha, escolher apaga o digitado. A resposta sobe por `onAnswer` e o `App.tsx` a manda pelo caminho normal de envio, **com a pergunta junto** (o agente nunca viu a dúvida, que é do vigia para o usuário): com o agente ocupado entra na fila e chega na próxima chamada ao modelo, sem interromper o turno. Não é modal. |
+ | `VigiaChip.test.tsx` | Pergunta e campo aparecem sem precisar abrir; sem opções só o campo de texto; clicar numa opção e responder entrega o texto dela; digitar desfaz a escolha e escolher apaga o digitado; sem escolha nem texto o botão fica travado; responder entrega o texto digitado; Enter envia e Shift+Enter não; resposta em branco não envia e deixa o botão desabilitado; dispensar não manda nada ao agente. |
+-| `Composer.tsx` | Caixa de texto com auto-crescimento, *chips* de elementos da página, **botão `@`** (referenciar arquivo/pasta/projeto), **anexo de imagens** (botão, colar ou arrastar → `ImageAttachment[]` base64) **e de qualquer arquivo** (não-imagem → card por tipo, salvo em disco pelo main e referenciado por caminho), **microfone / ditado** (grava com **pré-rolo rotativo** por `MediaRecorder`, cortado nas **pausas** por um **VAD local** — `../vad.ts`, sem biblioteca; **silêncio nunca é enviado e o início da 1ª palavra não é mais cortado**: um rolo curto está sempre gravando; sem fala detectada, é descartado/recomeçado (`shouldRotatePreroll`) a cada `VAD_PREROLL_MS`; quando a fala começa no meio de um rolo, ele segue até a pausa natural em vez de reiniciar; transcreve cada segmento somando o texto; ao parar, `stopRecording` (exportada, testada em `Composer.recording.test.ts` com fakes) só desliga o microfone **depois** do evento `'stop'` real do `MediaRecorder` disparar — matar a faixa antes cortava a cauda do áudio (a última frase); enquanto grava mostra uma **forma de onda rolando estilo WhatsApp** — ponto vermelho + cronômetro `rec-time` + faixa `rec-wave` de `WAVE_BARS` barras que rolam da direita p/ a esquerda — alimentada pelo pico de RMS a cada `WAVE_SAMPLE_MS`, junto do VAD no mesmo `runMeter` via Web Audio `AnalyserNode`, sem re-render por frame; setinha → menu de escolha do microfone, `deviceId` persistido em `localStorage`), **atalho de revisão** (botão de escudo — `IconShieldCheck` — que chama `props.onSend('/code-review', [], [])` direto, sem digitar), e **enviar** (↑) + **parar** (■). Enter envia/enfileira, Shift+Enter quebra linha. **Rascunho por conversa, salvo só ao perder o foco (não a cada tecla):** `value` local sincroniza com `props.draft` ao trocar de `convId` — o efeito de troca faz *flush* do texto da conversa que está **saindo** (`flushDraft(convIdRef.current, ...)`) antes de carregar o rascunho da nova; `onDraftChange(convId, text)` (com o **id explícito**, nunca "a ativa agora") só é chamado no `onBlur` do campo, na troca de conversa, no `submit()` (limpa caixa **e** grava o rascunho vazio, senão o texto enviado ressuscitaria) e num listener de `window blur` (rede de segurança — Alt+Tab/fechar o app). Salvar a cada tecla cascateava um re-render do `App` inteiro por letra; testes em `Composer.draft.test.tsx`. **Pasta do projeto sumiu (`projectMissing`):** o campo fica **read-only** (não `disabled`, para captar o clique), botões `@`/anexo/mic/enviar desabilitados, e qualquer interação (clique/foco/colar/arrastar) mostra o toast de erro e tira o foco — não dá para digitar. |
++| `Composer.tsx` | Caixa de texto com auto-crescimento, *chips* de elementos da página, **botão `@`** (referenciar arquivo/pasta/projeto), **anexo de imagens** (botão, colar ou arrastar → `ImageAttachment[]` base64) **e de qualquer arquivo** (não-imagem → card por tipo, salvo em disco pelo main e referenciado por caminho), **microfone / ditado** (grava com **pré-rolo rotativo** por `MediaRecorder`, cortado nas **pausas** por um **VAD local** — `../vad.ts`, sem biblioteca; **silêncio nunca é enviado e o início da 1ª palavra não é mais cortado**: um rolo curto está sempre gravando; sem fala detectada, é descartado/recomeçado (`shouldRotatePreroll`) a cada `VAD_PREROLL_MS`; quando a fala começa no meio de um rolo, ele segue até a pausa natural em vez de reiniciar; transcreve cada segmento somando o texto; ao parar, `stopRecording` (exportada, testada em `Composer.recording.test.ts` com fakes) só desliga o microfone **depois** do evento `'stop'` real do `MediaRecorder` disparar — matar a faixa antes cortava a cauda do áudio (a última frase); enquanto grava mostra uma **forma de onda rolando estilo WhatsApp** — ponto vermelho + cronômetro `rec-time` + faixa `rec-wave` de `WAVE_BARS` barras que rolam da direita p/ a esquerda — alimentada pelo pico de RMS a cada `WAVE_SAMPLE_MS`, junto do VAD no mesmo `runMeter` via Web Audio `AnalyserNode`, sem re-render por frame; setinha → menu de escolha do microfone, `deviceId` persistido em `localStorage`), **atalho de revisão** (botão de escudo — `IconShieldCheck` — que chama `props.onSend('/code-review --fix --commit', [], [], [])` direto, sem digitar: revisa, corrige, roda os checks do projeto e cria um commit local; a skill não commita se algo falhar), e **enviar** (↑) + **parar** (■). Enter envia/enfileira, Shift+Enter quebra linha. **Rascunho por conversa, salvo só ao perder o foco (não a cada tecla):** `value` local sincroniza com `props.draft` ao trocar de `convId` — o efeito de troca faz *flush* do texto da conversa que está **saindo** (`flushDraft(convIdRef.current, ...)`) antes de carregar o rascunho da nova; `onDraftChange(convId, text)` (com o **id explícito**, nunca "a ativa agora") só é chamado no `onBlur` do campo, na troca de conversa, no `submit()` (limpa caixa **e** grava o rascunho vazio, senão o texto enviado ressuscitaria) e num listener de `window blur` (rede de segurança — Alt+Tab/fechar o app). Salvar a cada tecla cascateava um re-render do `App` inteiro por letra; testes em `Composer.draft.test.tsx`. **Pasta do projeto sumiu (`projectMissing`):** o campo fica **read-only** (não `disabled`, para captar o clique), botões `@`/anexo/mic/enviar desabilitados, e qualquer interação (clique/foco/colar/arrastar) mostra o toast de erro e tira o foco — não dá para digitar. |
+ | `Icons.tsx` | **Ícones SVG de linha** (currentColor) usados na topbar, abas, composer e navegador — substituem emojis/símbolos. Inclui `IconMic`, `IconSpeaker`, `IconStopSmall`, `IconChevronDown` (voz no chat; também a seta do `EffortPicker`), `IconHelp` (tooltip do popover de esforço). |
+ | `BrowserTabs.tsx` | **Barra de abas** do preview: cada aba com `TabIcon` + nome (`tabName`) + "×"; trocar/fechar via `window.api`. O **"+"** chama `onRequestNewTab` (abre o `NewTabModal` na raiz do app). |
+ | `TabIcon.tsx` | Ícones em linha (currentColor) por tipo de aba: globo (web), robô (android), telefone (iphone). |
+diff --git a/src/renderer/src/components/ChatPanel.comment.test.tsx b/src/renderer/src/components/ChatPanel.comment.test.tsx
+index 8a35da7..cc82d5b 100644
+--- a/src/renderer/src/components/ChatPanel.comment.test.tsx
++++ b/src/renderer/src/components/ChatPanel.comment.test.tsx
+@@ -311,11 +311,11 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
+     expect(firstP(container).classList.contains('qc-pending')).toBe(true)
+   })
+ 
+-  it('o botão de revisão (/code-review) não leva o trecho; ele continua no campo', () => {
++  it('o botão de revisão (/code-review --fix --commit) não leva o trecho; ele continua no campo', () => {
+     const { container, onSend } = renderPanel()
+     commentOn(firstP(container))
+-    fireEvent.click(screen.getByTitle(/Revisar código/))
+-    expect(onSend).toHaveBeenCalledWith('/code-review', [], [], [])
++    fireEvent.click(screen.getByTitle(/Revisar, corrigir e commitar/))
++    expect(onSend).toHaveBeenCalledWith('/code-review --fix --commit', [], [], [])
+     expect(tokens()).toHaveLength(1)
+   })
+ 
+diff --git a/src/renderer/src/components/Composer.tsx b/src/renderer/src/components/Composer.tsx
+index eff81a9..a4a5754 100644
+--- a/src/renderer/src/components/Composer.tsx
++++ b/src/renderer/src/components/Composer.tsx
+@@ -1294,9 +1294,9 @@ export function Composer(props: Props): JSX.Element {
+         )}
+         <button
+           className="ref-btn"
+-          onClick={() => props.onSend('/code-review', [], [], [])}
++          onClick={() => props.onSend('/code-review --fix --commit', [], [], [])}
+           disabled={props.disabled || blocked}
+-          title="Revisar código (chama a skill code-review)"
++          title="Revisar, corrigir e commitar (skill code-review)"
+         >
+           <IconShieldCheck />
+         </button>

@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { HANDOFF_CYCLE_RULE, HANDOFF_FILES_RULE } from '../../shared/handoffGuidance'
 import { planningSandboxDir } from './planningPolicy'
 import { buildPlanningHint, PLANNING_CONTENT_IS_DATA } from './planningPrompt'
 import { PLANNING_TOOL_NAMES } from './planningTools'
@@ -126,6 +127,27 @@ describe('buildPlanningHint', () => {
     expect(media).toMatch(/Nunca copie arquivos para midia\/ com Write ou Bash/)
     // O handoff leva as mídias por caminho absoluto + tipo.
     expect(hint).toMatch(/Inclua as mídias relevantes com o tipo e o caminho absoluto/)
+  })
+
+  it('interruptores desligados = sem eles (o golden da seção está em planningPrompt.golden.test.ts)', () => {
+    const off = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: false, leituraGuiada: false } })
+    expect(off).toBe(hint)
+  })
+
+  it('ciclo ligado: a seção ### Handoff exige o mesmo ciclo do pedido de handoff', () => {
+    const on = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: true, leituraGuiada: false } })
+    const section = on.slice(on.indexOf('### Handoff'))
+    expect(section).toContain(HANDOFF_CYCLE_RULE)
+    // Só a seção de handoff muda.
+    expect(on.slice(0, on.indexOf('### Handoff'))).toBe(hint.slice(0, hint.indexOf('### Handoff')))
+    expect(section).not.toContain(HANDOFF_FILES_RULE)
+  })
+
+  it('leitura guiada ligada: a seção ### Handoff exige a mesma seção Arquivos do pedido', () => {
+    const on = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: false, leituraGuiada: true } })
+    const section = on.slice(on.indexOf('### Handoff'))
+    expect(section).toContain(HANDOFF_FILES_RULE)
+    expect(section).not.toContain(HANDOFF_CYCLE_RULE)
   })
 
   it('recusa slug inválido', () => {

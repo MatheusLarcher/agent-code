@@ -1,0 +1,42 @@
+{
+  "par": 1,
+  "labels": {
+    "A": "novo",
+    "B": "hoje"
+  },
+  "comparacao": "Empate técnico na implementação (código e teste idênticos, skills equivalentes); A leva por manter os docs do projeto coerentes com o novo comportamento do botão, enquanto B os deixou desatualizados.",
+  "novo": {
+    "label": "A",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 5,
+      "justificativa": "Botão passa a enviar '/code-review --fix --commit' (Composer.tsx:1297) e a skill ganha a flag --commit em .agents/skills/code-review/SKILL.md com gates (há diff, nenhum achado confirmado em aberto, checks do AGENTS.md/CLAUDE.md passaram), stage por caminho explícito (sem add -A), sem .env/segredos, sem push/--amend/--no-verify, sem Co-Authored-By salvo attribution.commit, e relato do hash. A SKILL.md é sincronizada ao cache por digest (skillManager.syncCacheSkills), logo a mudança chega ao agente. Teste ChatPanel.comment.test.tsx atualizado (title e string). Docs ARQUITETURA.md/REFERENCIA.md atualizados, inclusive corrigindo a assinatura errada de 3 args; a afirmação sobre o subagente critico pré-carregar a skill confere com specialists.ts:157. Sem push, mas o pedido só falou em commit."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo",
+        "tipo": "nome",
+        "motivo": "A falha ocorre em ChatPanel.comment.test.tsx:318, getByTitle(/Revisar código/): A renomeou o title do botão para 'Revisar, corrigir e commitar (skill code-review)'. Em seguida também falharia por CODE_REVIEW_PROMPT não ser exportado de Composer.tsx (A envia a string '/code-review --fix --commit'). O comportamento pedido (revisar, corrigir, commitar ao final) existe; o 'push' que a referência exige não faz parte do pedido. O teste 'sumido' é o mesmo teste renomeado por A, não removido."
+      }
+    ]
+  },
+  "hoje": {
+    "label": "B",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 4,
+      "justificativa": "Mesmo diff de Composer.tsx e do teste que A (hash a4a5754). SKILL.md ganha 'Step 5 — Commit' com os mesmos gates (diff não vazio, nenhum achado confirmado aberto, checks do projeto passam no tree final), stage por caminho, proibição de add -A/commit -a, sem segredos, sem push/--amend/--no-verify, sem trailer, relato com git show --stat. Trata explicitamente a borda do subagente revisor (critico pré-carrega a skill) e proíbe inferir --commit por fraseado. Regras 4: deixou docs/ARQUITETURA.md:1799 e docs/REFERENCIA.md:252 desatualizados — ambos ainda descrevem o botão chamando props.onSend('/code-review', [], []), assinatura que já estava errada e agora também com a string antiga."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/components/ChatPanel.comment.test.tsx > ChatPanel — \"Comentar\" põe o trecho inline no campo (chat principal) o botão de revisão (/code-review) não leva o trecho; ele continua no campo",
+        "tipo": "nome",
+        "motivo": "Diff de Composer.tsx e do teste idêntico ao de A: mesma causa — title renomeado (linha 318) e constante CODE_REVIEW_PROMPT inexistente, com a mesma funcionalidade entregue via '/code-review --fix --commit' + Step 5 da skill. O teste que sumiu foi apenas renomeado."
+      }
+    ]
+  }
+}

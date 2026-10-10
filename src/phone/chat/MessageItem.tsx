@@ -42,10 +42,12 @@ function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolea
 }
 
 /** Texto do agente sem balão (o trilho do turno já diz de quem é). Novo e sem Markdown: entra palavra a palavra. */
-function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, resolveRef, fresh }: {
+function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak, resolveRef, fresh }: {
   id: string
   text: string
   answer: boolean
+  /** Texto completo (não mais em streaming). */
+  done: boolean
   voiceReady: boolean
   speaking: boolean
   onSpeak: (id: string, text: string) => void
@@ -62,8 +64,8 @@ function AssistantBubble({ id, text, answer, voiceReady, speaking, onSpeak, reso
           <Icon name="download" size={15} /> Baixar {basename(path)}
         </button>
       ))}
-      {/* "Ouvir": só na resposta final, e só quando o PC oferece voz (sintetizada lá). */}
-      {answer && voiceReady && parsed.clean && (
+      {/* "Ouvir": na resposta final e na narração pronta, só quando o PC oferece voz (sintetizada lá). */}
+      {(answer || done) && voiceReady && parsed.clean && (
         <button type="button" className={`msg-speak${speaking ? ' active' : ''}`} onClick={() => onSpeak(id, parsed.clean)}>
           <Icon name={speaking ? 'stop' : 'speaker'} size={15} /> {speaking ? 'Parar' : 'Ouvir'}
         </button>
@@ -104,6 +106,7 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
           id={m.id}
           text={m.text}
           answer={!!m.answer}
+          done={!!m.final}
           voiceReady={voiceReady}
           speaking={speakingId === m.id}
           onSpeak={onSpeak}

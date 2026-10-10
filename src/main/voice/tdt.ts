@@ -34,12 +34,20 @@ export function argmax(xs: ArrayLike<number>): number {
   return best
 }
 
+/** Shallow-fusion hook (hotwords.ts): picks the token in place of the plain
+ *  argmax and follows what was emitted. One per decoded window. */
+export interface TokenBias {
+  choose(tokenLogits: ArrayLike<number>, blank: number): number
+  emitted(token: number): void
+}
+
 export async function tdtGreedyDecode<S>(
   frames: number,
   blank: number,
   initialState: S,
   step: JointStep<S>,
-  maxTokensPerStep = 10
+  maxTokensPerStep = 10,
+  bias?: TokenBias
 ): Promise<{ tokens: number[]; frames: number[] }> {
   const tokens: number[] = []
   const at: number[] = []
@@ -48,9 +56,10 @@ export async function tdtGreedyDecode<S>(
   let emitted = 0
   while (t < frames) {
     const out = await step(t, tokens.length ? tokens[tokens.length - 1] : blank, state)
-    const token = argmax(out.tokenLogits)
+    const token = bias ? bias.choose(out.tokenLogits, blank) : argmax(out.tokenLogits)
     const duration = argmax(out.durationLogits)
     if (token !== blank) {
+      bias?.emitted(token)
       state = out.state
       tokens.push(token)
       at.push(t)

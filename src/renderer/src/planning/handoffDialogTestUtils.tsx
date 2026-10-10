@@ -26,6 +26,7 @@ export function renderDialog(
     managerBusy?: boolean
     onSend?: () => Promise<HandoffSendOutcome>
     conversationExists?: (id: string) => boolean
+    fastModeDefault?: boolean
   } = {}
 ) {
   const onAskManager = vi.fn()
@@ -42,6 +43,7 @@ export function renderDialog(
         onAskManager={onAskManager}
         onSend={onSend}
         conversationExists={over.conversationExists}
+        fastModeDefault={over.fastModeDefault}
         onOpenConversation={onOpenConversation}
         onClose={onClose}
       />

@@ -18,6 +18,7 @@ import { ChatStepRow } from '../components/ChatStep'
 import { buildChatRows } from '../components/chatSteps'
 import { useChatDisplay } from '../components/chatDisplay'
 import type { QuoteListApi } from '../components/quoteComment/quoteBlocks'
+import { ProjectNameIcon } from '../components/projectIcons'
 import { ToolCard } from '../components/ToolCard'
 import type { UIMessage } from '../types'
 import type { ToolUseMessage, TurnHead } from './chatPage'
@@ -94,7 +95,12 @@ export function TurnHeader({ head, color, children }: { head: TurnHead; color: s
       <span className="o3d-turn-title" title={head.title}>
         {head.title || 'Conversa'}
       </span>
-      {head.who && <span className="o3d-chat-project">{head.who}</span>}
+      {head.who && (
+        <span className="o3d-chat-project">
+          {head.cwd !== undefined && <ProjectNameIcon cwd={head.cwd} />}
+          {head.who}
+        </span>
+      )}
       <span className={`tool-badge ${head.busy ? 'run' : 'ok'}`}>{head.busy ? 'trabalhando…' : 'parado'}</span>
       {children}
     </div>

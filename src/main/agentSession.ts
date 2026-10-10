@@ -60,20 +60,10 @@ import { selectMemoriesWithTypeSafe, typeSafeMemorySelectionActive, type MemoryS
 import { TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { forgetUsedMemories, recordUsedMemories } from './memoria/memoriasUsadas'
 import { homedir, hostname } from 'node:os'
-import {
-  createSkillCatalogSnapshot,
-  discoverSkills,
-  renderSkillCatalogUpdate,
-  skillCatalogFilesystemVersion,
-  type SkillCatalogSnapshot
-} from './skillDiscovery'
 import { readSessionTasks, watchSessionTasks } from './sessionTasks'
-import {
-  ensureNativeSkillRoot,
-  exposeCacheSkills,
-  managedSkillsFilesystemVersion,
-  syncCacheSkills
-} from './skillManager'
+import { ensureNativeSkillRoot } from './skillManager'
+import { SessionSkillCatalog, type SkillRuntimePaths } from './skills/sessionSkillCatalog'
+import { SKILLS_MCP_SERVER } from './skills/skillTools'
 import { randomUUID } from 'node:crypto'
 import {
   DEFAULT_CONFIG,
@@ -583,12 +573,7 @@ function trackOf(message: unknown, parentToolUseId: string | null): TrackInfo {
   }
 }
 
-const EMPTY_SKILL_CATALOG = createSkillCatalogSnapshot([])
-
-export interface SkillRuntimePaths {
-  appRoot: string
-  userHome?: string
-}
+export type { SkillRuntimePaths }
 
 export interface AgentContinuationState {
   approvedTools: string[]
@@ -680,30 +665,14 @@ export class AgentSession {
   private memoryCatalogVersion = ''
   /** Content signature checked before materializing a replacement catalog. */
   private memoryFilesystemVersion = ''
-  /** Version of the authoritative skill catalog already loaded into this
-   *  session. Recomputed before every user dispatch so installs/removals become
-   *  available without reopening the conversation. */
-  private skillCatalogVersion = ''
-  /** Version successfully reloaded by the SDK's native Skill registry. Kept
-   *  separate so a transient reload failure is retried without duplicating the
-   *  catalog update already delivered to the model. */
-  private nativeSkillRegistryVersion = ''
+  /** Skills desta sessão: kit no cache, catálogo, registro nativo e níveis. */
+  private readonly skills: SessionSkillCatalog
   /** Signature of the last projects-on-this-machine list delivered to the
    *  model. Recomputed before every user dispatch; unchanged since last turn
    *  means nothing is re-sent (same "only when it changes" rule as memory/skills). */
   private projectsCatalogVersion = ''
   /** A última lista de assuntos das outras conversas entregue ao modelo. */
   private crossTopicsVersion = ''
-  /** The catalog actually announced for `nativeSkillRegistryVersion` — the
-   *  discovered snapshot minus whatever the SDK refused to load. */
-  private nativeConfirmedSnapshot: SkillCatalogSnapshot | null = null
-  /** Cheap metadata-only signature checked before parsing any frontmatter. */
-  private skillFilesystemVersion = ''
-  /** Content signature of the versioned `.agents/skills` source already copied
-   * into the active cache for this session. */
-  private managedSkillSourceVersion = ''
-  /** A content-level managed skill change still awaiting SDK confirmation. */
-  private managedSkillReloadPending = false
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
@@ -955,7 +924,7 @@ export class AgentSession {
     private readonly onPermissionExpire: (id: string) => void,
     private readonly sessionStore?: SessionStore,
     private readonly onTurnDurable?: (sessionId: string, mirrorFailed: boolean) => Promise<void>,
-    private readonly skillRuntime?: SkillRuntimePaths,
+    skillRuntime?: SkillRuntimePaths,
     /** Called after the SDK has emitted the terminal result for a turn. */
     private readonly onTurnComplete?: () => void | Promise<void>,
     /** Persists `llm_calls` for the token-usage tree (see
@@ -976,6 +945,7 @@ export class AgentSession {
       convId: opts.convId, pc: hostname(), model: opts.model ?? '',
       provider: isOpenAIModel(opts.model) ? 'gpt' : isOllamaModel(opts.model) ? 'ollama' : 'claude'
     }, contextHistoryRepository, onContextChanged, () => this.disposed ? null : this.q)
+    this.skills = new SessionSkillCatalog(opts.cwd, skillRuntime, () => this.q)
     // Native class fields run before constructor parameter properties are assigned.
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
     // Um handoff retomado (app reiniciado, conversa reaberta) já teve o 1º turno.
@@ -1080,7 +1050,7 @@ export class AgentSession {
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
-    this.synchronizeManagedSkills(cacheInfo.dir, cacheInfo.skillsDir)
+    this.skills.syncManaged(cacheInfo.dir, cacheInfo.skillsDir)
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
     // The CLI (driven via SDK) only discovers skills under <cwd>/.claude/skills and
@@ -1101,16 +1071,12 @@ export class AgentSession {
     const memorySnapshot = memorySelectorActive ? null : this.readMemoryCatalogSnapshot(memoriesDir)
     this.memoryFilesystemVersion = memorySnapshot?.filesystemVersion ?? ''
     this.memoryCatalogVersion = memorySnapshot?.version ?? ''
-    this.skillFilesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, this.skillRuntime?.userHome)
-    const skillSnapshot = this.readSkillCatalogSnapshot()
-    // The authoritative filesystem catalog is injected with the first user
-    // dispatch, only after reloadSkills() confirms the same names.
-    this.skillCatalogVersion = ''
-    // The filesystem catalog and the CLI's native Skill registry are separate
-    // states. Never mark the native registry as loaded before reloadSkills()
-    // has actually confirmed it for this SDK process.
-    this.nativeSkillRegistryVersion = ''
-    const skillRoots = [...new Set(skillSnapshot.skills.map((skill) => skill.root))]
+    // Catálogo de skills (skills/sessionSkillCatalog.ts); em níveis, críticas e o servidor `skills`.
+    const skillStart = this.skills.start(cfg)
+    const criticalSkills = skillStart.critical
+    if (criticalSkills.warning) this.emit({ kind: 'status', id: nextId(), text: criticalSkills.warning })
+    if (skillStart.mcpServer) mcpServers[SKILLS_MCP_SERVER] = skillStart.mcpServer
+    const skillRoots = skillStart.roots
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
     append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}\n\n${APP_PRINT_HINT}`
@@ -1122,6 +1088,7 @@ export class AgentSession {
     append += secretsHint.text
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     append += `\n\n${CHROME_CONTROL_HINT}`
+    if (criticalSkills.text) append += `\n\n${criticalSkills.text}`
 
     // Conversa nascida de um handoff do planejamento: de onde veio, onde está o
     // plano e que o roteiro vira o plano dela. `null` em qualquer outra sessão.
@@ -1244,7 +1211,7 @@ export class AgentSession {
       additionalDirectories: [
         ...new Set([memoriesDir, cacheSkillsDir, ...planningDirs, ...nativeSkillDirs, ...skillRoots])
       ],
-      skills: 'all',
+      skills: skillStart.sdkSkills,
       // Resume a previous SDK session (loads its history) when continuing an old chat.
       ...(this.opts.resume ? { resume: this.opts.resume } : {}),
       ...(this.sessionStore
@@ -1397,7 +1364,8 @@ export class AgentSession {
         projectCwd: this.opts.cwd,
         slug: this.opts.planning.slug,
         // O chamado também vale no Manager (o 'app' dele só tem o app_chamar_usuario).
-        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT]
+        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT, criticalSkills.text],
+        guidance: loadConfig().handoff
       })
     }
 
@@ -1571,7 +1539,9 @@ export class AgentSession {
     // retomada pelo banco) espera por ele lá.
     this.quotaRejected = false
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
-    const skillCatalogUpdate = await this.refreshSkillsIfChanged()
+    const skillCatalogUpdate = await this.skills.refresh()
+    // `/nome` de skill de nível baixo (com a lista já atualizada): o CLI não a carrega.
+    if (messageKind === 'normal') text = this.skills.rewriteCommand(text)
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
     if (messageKind === 'normal' && !this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { question: text })
     const othersUpdate = messageKind === 'normal' ? await this.crossConversationContext() : ''
@@ -1998,27 +1968,6 @@ export class AgentSession {
 
   // ---- internals ----
 
-  private synchronizeManagedSkills(cacheDir: string, cacheSkillsDir: string): boolean {
-    const runtime = this.skillRuntime
-    if (!runtime) return false
-    const sourceVersion = managedSkillsFilesystemVersion(runtime.appRoot)
-    const sourceChanged = sourceVersion !== this.managedSkillSourceVersion
-    const result = sourceChanged
-      ? syncCacheSkills(runtime.appRoot, cacheDir, runtime.userHome)
-      : exposeCacheSkills(cacheSkillsDir, runtime.userHome)
-    if (result.errors.length === 0) {
-      this.managedSkillSourceVersion = sourceVersion
-      if (sourceChanged) this.managedSkillReloadPending = true
-      return this.managedSkillReloadPending
-    }
-    console.warn('[skills] managed skill synchronization failed:', result.errors.join('\n'))
-    return this.managedSkillReloadPending
-  }
-
-  private readSkillCatalogSnapshot(): SkillCatalogSnapshot {
-    return createSkillCatalogSnapshot(discoverSkills(this.opts.cwd, this.skillRuntime?.userHome))
-  }
-
   private readMemoryCatalogSnapshot(memoriesDir: string = getCacheInfo().memoriesDir): MemoryCatalogSnapshot {
     return createMemoryCatalogSnapshot(memoriesDir)
   }
@@ -2104,34 +2053,6 @@ export class AgentSession {
     return renderMemoryCatalogUpdate(snapshot)
   }
 
-  private async refreshSkillsIfChanged(): Promise<string> {
-    const cacheInfo = getCacheInfo()
-    const managedChanged = this.synchronizeManagedSkills(cacheInfo.dir, cacheInfo.skillsDir)
-    const filesystemVersion = skillCatalogFilesystemVersion(this.opts.cwd, this.skillRuntime?.userHome)
-    if (
-      !managedChanged &&
-      this.skillCatalogVersion !== '' &&
-      filesystemVersion === this.skillFilesystemVersion &&
-      this.nativeSkillRegistryVersion === this.skillCatalogVersion
-    ) return ''
-
-    const snapshot = this.readSkillCatalogSnapshot()
-    const confirmed = await this.reloadNativeSkillsIfNeeded(snapshot, managedChanged)
-    if (!confirmed) {
-      if (this.skillCatalogVersion === '') {
-        this.skillCatalogVersion = EMPTY_SKILL_CATALOG.version
-        return renderSkillCatalogUpdate(EMPTY_SKILL_CATALOG)
-      }
-      return ''
-    }
-
-    this.skillFilesystemVersion = filesystemVersion
-    if (confirmed.version === this.skillCatalogVersion) return ''
-
-    this.skillCatalogVersion = confirmed.version
-    return renderSkillCatalogUpdate(confirmed)
-  }
-
   /**
    * The list of every project folder with at least one conversation on this
    * machine (name + absolute path) — so the model knows these are real local
@@ -2181,59 +2102,6 @@ ${lines}
     if (topicsBlock === this.crossTopicsVersion) topicsBlock = ''
     else this.crossTopicsVersion = topicsBlock
     return renderCrossConversation(workingNow, topicsBlock)
-  }
-
-  /**
-   * Reload the CLI's native Skill registry and return the catalog to announce:
-   * exactly the discovered skills the SDK confirmed as invocable.
-   *
-   * A skill the SDK did not load (e.g. one that only exists in `~/.claude/skills`,
-   * a root the SDK-driven CLI does not scan) is dropped from the announcement
-   * and logged — it must NOT poison the rest. The previous all-or-nothing rule
-   * announced "no skills available" whenever a single expected name was missing,
-   * which hid every working skill from the model (measured: one stray user
-   * skill silenced the whole managed kit).
-   *
-   * Returns null only when the reload itself fails or the session has no query.
-   */
-  private async reloadNativeSkillsIfNeeded(
-    snapshot: SkillCatalogSnapshot,
-    force: boolean = false
-  ): Promise<SkillCatalogSnapshot | null> {
-    const q = this.q
-    if (!q) return null
-    if (!force && snapshot.version === this.nativeSkillRegistryVersion && this.nativeConfirmedSnapshot) {
-      return this.nativeConfirmedSnapshot
-    }
-    try {
-      const response = await q.reloadSkills()
-      const loaded = new Set(response.skills.map((skill) => skill.name))
-      const missing = snapshot.skills.map((skill) => skill.name).filter((name) => !loaded.has(name))
-      let confirmed = snapshot
-      // Retry on the next dispatch only for skills the CLI is known to scan
-      // (project .claude/skills, or the managed cache exposed through the native
-      // root) — an omission there is usually a race with a file still being
-      // written. A skill that lives only in ~/.claude/skills is never going to
-      // load through the SDK, so retrying would just spam reloadSkills().
-      let retry = false
-      if (missing.length > 0) {
-        console.warn(`[skills] native registry omitted expected skills: ${missing.join(', ')}`)
-        const cacheSkillsDir = getCacheInfo().skillsDir
-        retry = snapshot.skills.some(
-          (skill) =>
-            !loaded.has(skill.name) &&
-            (skill.source === 'project-claude' || existsSync(join(cacheSkillsDir, skill.name, 'SKILL.md')))
-        )
-        confirmed = createSkillCatalogSnapshot(snapshot.skills.filter((skill) => loaded.has(skill.name)))
-      }
-      this.nativeSkillRegistryVersion = snapshot.version
-      this.nativeConfirmedSnapshot = confirmed
-      this.managedSkillReloadPending = retry
-      return confirmed
-    } catch (error) {
-      console.warn('[skills] native reload failed; catalog remains unchanged:', error)
-      return null
-    }
   }
 
   private handlePermission(
@@ -2336,7 +2204,7 @@ ${lines}
     // writes, and they only touch the user's own memory store — prompting for
     // each one would just train the user to click through. The vault switch in
     // Configurações, not this gate, is what authorizes reading a secret.
-    if (toolName.startsWith('mcp__memory__')) {
+    if (toolName.startsWith('mcp__memory__') || this.skills.ownsTool(toolName)) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     // O registro de tarefas é contabilidade interna do time de agentes: só
@@ -2433,6 +2301,7 @@ ${lines}
       case 'system':
         if (message.subtype === 'init') {
           this.restartInitializing = false
+          if (Array.isArray(message.skills)) this.skills.rememberNative(message.skills)
           // O processo do CLI acabou de subir: só conhece as tarefas em background que
           // ele mesmo lançar, e essas chegam pelo `background_tasks_changed`. Vale
           // também para a conversa retomada — antes ela ficava "background

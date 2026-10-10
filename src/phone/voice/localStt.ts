@@ -9,6 +9,7 @@
  * (window.Capacitor.nativePromise / addListener) — porta do www/localStt.js.
  */
 import { createStore } from '../core/store'
+import { applyVocabulary } from './vocabulary'
 
 const PLUGIN = 'ParakeetStt'
 const PREF_PC = 'agentRemote.voice.usePc'
@@ -142,7 +143,8 @@ export function floatsToBase64(f32: Float32Array): string {
 async function transcribeLocal(blob: Blob): Promise<string> {
   const pcm = await toPcm16k(blob)
   const r = await call<{ text?: string }>('transcribe', { pcm: floatsToBase64(pcm) })
-  return String(r?.text || '').trim()
+  // A mesma grafia do vocabulário que o PC aplica ("git hub" → "GitHub").
+  return applyVocabulary(String(r?.text || '').trim())
 }
 
 export interface DictationRoute {

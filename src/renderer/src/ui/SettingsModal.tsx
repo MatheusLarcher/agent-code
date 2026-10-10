@@ -18,6 +18,8 @@ import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { ChromeControlSection } from './ChromeControlSection'
 import { VoiceSettingsSection } from './VoiceSettingsSection'
+import { HandoffSettingsSection } from './HandoffSettingsSection'
+import { SkillCatalogSection } from './SkillCatalogSection'
 import { AndroidToolchainSection } from './AndroidToolchainSection'
 import { ipcErrorMessage } from '../ipcError'
 import {
@@ -50,7 +52,7 @@ interface Props {
   onToggleWindowsControl: (on: boolean) => void
 }
 
-type Tab = 'geral' | 'modelos' | 'voz' | 'android' | 'dados'
+type Tab = 'geral' | 'modelos' | 'skills' | 'voz' | 'android' | 'dados'
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K]
@@ -59,6 +61,7 @@ type DeepPartial<T> = {
 const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'geral', label: 'Geral', hint: 'Permissões do agente', icon: <IconSliders size={16} /> },
   { id: 'modelos', label: 'Modelos e contas', hint: 'Claude, ChatGPT, Ollama', icon: <IconKey size={16} /> },
+  { id: 'skills', label: 'Skills', hint: 'Catálogo em níveis', icon: <IconSparkStar size={16} /> },
   { id: 'voz', label: 'Voz', hint: 'Ditado e leitura', icon: <IconMic size={16} /> },
   { id: 'android', label: 'Android', hint: 'SDK e emulador', icon: <IconSmartphone size={16} /> },
   { id: 'dados', label: 'Dados', hint: 'Pasta, cofre, banco e backups', icon: <IconDatabase size={16} /> }
@@ -572,6 +575,8 @@ export function SettingsModal({
                   )}
                 </section>
 
+                <HandoffSettingsSection cfg={cfg} setCfg={setCfg} patchConfig={patchConfig} />
+
                 <section
                   ref={typeSafeSectionRef}
                   className={`settings-section settings-switch-section ${cfg.typesafe.enabled ? 'on' : ''} ${focus === 'typesafe' ? 'settings-highlight' : ''}`}
@@ -779,6 +784,12 @@ export function SettingsModal({
                   </section>
                 </fieldset>
               </>
+            )}
+
+            {tab === 'skills' && (
+              <fieldset className="settings-fieldset" disabled={!ready}>
+                <SkillCatalogSection cfg={cfg} setCfg={setCfg} patchConfig={patchConfig} />
+              </fieldset>
             )}
 
             {tab === 'voz' && (

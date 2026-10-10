@@ -17,7 +17,7 @@
  * Quem volta à vista sincroniza sem animar o atraso; sem `updateView`, tudo à vista e completo.
  * `animate` passa os cérebros e anima o que está À VISTA sem alocar e diz o ritmo (`rate`). A TV da
  * sala de reunião (projectors.ts) acende com o navegador/Android e quem testa vai até ela. O kanban
- * (board/boards.ts) é o Quadro real de um projeto; `pick` devolve também `card:`, `pile:` e `tab:`; `dispose()` libera tudo.
+ * (board/boards.ts) é o Quadro real de um projeto; `pick` devolve também `card:`, `pile:`, `tab:` e `memory-papers:`; `dispose()` libera tudo.
  */
 import { Color, Fog, Frustum, Matrix4, Mesh, Raycaster, Scene, Sphere, Vector2, Vector3, type Camera, type DirectionalLight, type Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -133,7 +133,7 @@ export class OfficeScene {
       for (const v of this.charList) if (!v.culled && Math.hypot(v.brain.x - x, v.brain.z - z) < TV_GLANCE_M) v.glance(x, y, z)
     }
     this.boards = new Boards(this.kit)
-    this.errands = new OfficeErrands(this.scene, this.crowd)
+    this.errands = new OfficeErrands(this.scene, this.crowd, () => this.onDirty())
   }
 
   /** Leitura da energia (motor: feed e tique). `t` = relógio da cena (s); `now` = epoch ms. */
@@ -198,7 +198,7 @@ export class OfficeScene {
     const convProject = new Map(layout.characters.map((c) => [c.model.convId, c.projectId ? (projects.get(c.projectId) ?? null) : null]))
     this.projectors.projectOf = (convId) => convProject.get(convId) ?? null
     this.projectors.feed(feed, layout.characters.map((c) => ({ ...c.model, roomId: c.roomId, projectId: c.projectId })), life?.wallNow ?? Date.now())
-    this.errands.feed(feed, layout, this.rooms.get(OFFICE_ID)?.zone('plaza').lod ?? null)
+    this.errands.feed(feed, layout, this.rooms) // a estante, o pulso e os papéis de memória das mesas
     this.kit.sky.draw(new Date().getHours())
     this.fitShadow(layout.rooms)
     this.applyFocus()
@@ -448,7 +448,7 @@ export class OfficeScene {
     for (const v of this.chars.values()) if (v.group.visible) targets.push(v.group)
     for (const r of this.rooms.values()) for (const s of this.allScreens(r)) if (s.mesh.userData.charKey && !s.lod.culled) targets.push(s.mesh)
     this.projectors.pickTargets(targets)
-    for (const r of this.rooms.values()) targets.push(...r.pickables)
+    for (const r of this.rooms.values()) for (const p of r.pickables) if (p.visible) targets.push(p)
     this.boards.pickTargets(targets)
     for (const h of this.raycaster.intersectObjects(targets, true)) {
       const key = h.object.userData.charKey as string | undefined

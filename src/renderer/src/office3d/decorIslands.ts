@@ -9,7 +9,7 @@
  *
  * Estático vai para a fusão da zona. Por ilha ficam à parte: as 6 telas (uma
  * Mesh por mesa: textura própria), as cadeiras do mockup (chairModel.ts; InstancedMesh de 6 — escondidas
- * no foco do monitor e afastadas na hora de sentar/levantar) e a pilha de papéis.
+ * no foco do monitor e afastadas na hora de sentar/levantar), a pilha de papéis e os papéis de memória.
  */
 import { Group, InstancedMesh, Matrix4, Mesh, Object3D, type BufferGeometry } from 'three'
 import { MONITOR_SCREEN_FRONT } from './cameraRig'
@@ -34,6 +34,7 @@ import {
   SEAT_FRONT,
   type Placed
 } from './officePlan'
+import { createMemoryPapers, type MemoryPapers } from './memoryPapers'
 import { createPaperPiles, type PaperPiles } from './paperPile'
 import { tagLod } from './roomLod'
 import { rng } from './textures'
@@ -44,6 +45,8 @@ export interface IslandParts {
   /** As telas das 6 mesas da ilha, na ordem do índice global. */
   screens: Mesh[]
   piles: PaperPiles
+  /** Os papéis de memória de cada mesa (memoryPapers.ts) e os alvos de clique deles. */
+  memos: MemoryPapers
   /** Põe a cadeira da mesa local `i` recuada `pull` m (0 = no lugar) ou escondida. */
   chair(i: number, pull: number, hidden: boolean): void
   /** Geometrias próprias (a cadeira em duas peças), liberadas no dispose. */
@@ -151,9 +154,11 @@ export function buildIsland(kit: Kit, island: number, desks: readonly DeskLayout
   const state = desks.map(() => ({ pull: 0, hidden: false }))
 
   const piles = createPaperPiles(kit, { desks }, zone)
+  const memos = createMemoryPapers(kit, { desks }, zone)
   return {
     screens,
     piles,
+    memos,
     geos: [geo.top, geo.base],
     chair(i, pull, hidden) {
       const s = state[i]

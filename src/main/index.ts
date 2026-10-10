@@ -63,6 +63,7 @@ import {
 } from './config'
 import { registerVoiceIpc, speak, speechParts, stopVoice, transcribe as transcribeVoice } from './voiceService'
 import { registerVoiceComponentIpc } from './voiceComponents'
+import { BUNDLED_VOCABULARY } from './voice/hotwords'
 import { registerAndroidToolchainIpc } from './android/androidToolchainIpc'
 import { claudeAuthProbe, isAuthenticated, logoutClaude } from './auth'
 import { claudeAuthExpiry, claudeConnectedForCard } from './authExpiry'
@@ -73,7 +74,8 @@ import {
   accountSwitchDepsFor,
   conversationAccount,
   forgetConversationAccount,
-  observerEnvFor,
+  markAccountExhausted,
+  observerAccountFor,
   queryAccountUsage,
   queryAllAccountsUsage,
   recordSessionRateLimit,
@@ -83,7 +85,7 @@ import {
   storableSessionAccount
 } from './accounts'
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
-import { setClaudeObserverEnvResolver } from './observerQuery'
+import { setClaudeObserverAccounts } from './observerQuery'
 import { registerOutboxIpc } from './outboxIpc'
 import { registerCentralIpc, type CentralIpcHandle } from './central/centralIpc'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
@@ -178,6 +180,10 @@ import { decodeWithNativeImage } from './projectColorImage'
 import { resolveProjectIdentity } from './persistence/projectIdentity'
 import { isSandboxProjectPath } from '../shared/projectColor'
 import { syncCacheSkills } from './skillManager'
+import { activeSkillKits, skillKitRoot } from './skillKits'
+import { skillNames as skillNamesIn } from './skillDirs'
+import { skillTierRows } from './skills/skillTiers'
+import { devUserHome } from './devDataDir'
 import { autoModelCandidates, resolveAutoStart, type AutoLivePair, type AutoStartDecision } from './typesafe'
 import { typeSafePause, TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { typeSafeConfigured } from './typesafe/client'
@@ -199,6 +205,7 @@ import type {
   ProjectTree,
   ResolvedPastedRef,
   SkillInfo,
+  SkillTierRow,
   PermissionResponse,
   RemoteStatePayload,
   StartAgentOptions,
@@ -876,7 +883,14 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   // real com a vazia faria parecer que ela mudou.
   await ensureConfigLoaded()
   const before = loadConfig().typesafe
+  const kitsBefore = activeSkillKits(loadConfig()).join()
   const next = await updateConfig(patch)
+  // Kit de skills ligado/desligado: o menu "/" e as sessões novas veem na hora;
+  // as abertas ressincronizam no próximo envio (agentSession).
+  if (activeSkillKits(next).join() !== kitsBefore) {
+    const skillSync = syncCacheSkills(app.getAppPath(), getCacheInfo().dir, undefined, activeSkillKits(next))
+    for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+  }
   // Chave nova salva ou Modo Automático religado: sai da pausa na hora.
   if (patch.typesafe && (next.typesafe.apiKey !== before.apiKey || (next.typesafe.enabled && !before.enabled))) {
     typeSafePause.reset()
@@ -1231,6 +1245,8 @@ const remote = new RemoteServer({
   // Voice runs on the PC with the local engines: the phone records/plays, we
   // transcribe (Parakeet) and synthesize (Kokoro, configured voice/speed).
   transcribe: (audioBase64, mimeType) => transcribeVoice(audioBase64, mimeType),
+  // O celular transcreve no aparelho e corrige o texto com a mesma lista.
+  vocabulary: () => (process.env.AGENT_CODE_VOICE_HOTWORDS === '0' ? [] : BUNDLED_VOCABULARY),
   tts: (text, opts) => speak(text, { treat: !opts?.treated }),
   ttsParts: (text) => speechParts(text)
 })
@@ -1556,8 +1572,11 @@ export function registerIpc(): void {
     return { ok }
   })
   // Observadores (Vigia, Memorista, PO, título, curador) rodam na conta Claude
-  // da conversa que acompanham.
-  setClaudeObserverEnvResolver((convId, model) => observerEnvFor(convId, model))
+  // da conversa que acompanham; estourada, seguem para a próxima com folga.
+  setClaudeObserverAccounts({
+    pick: (convId, model, exclude) => observerAccountFor(convId, model, exclude),
+    markExhausted: markAccountExhausted
+  })
   // Contas Claude: o login de cada conta usa o mesmo navegador do sistema.
   configureAccountLogin({
     openUrl: (url) => {
@@ -1629,7 +1648,7 @@ export function registerIpc(): void {
     } else {
       storageLifecycle.updateSqliteLocation(info)
     }
-    const skillSync = syncCacheSkills(app.getAppPath(), info.dir)
+    const skillSync = syncCacheSkills(app.getAppPath(), info.dir, undefined, activeSkillKits(loadConfig()))
     for (const error of skillSync.errors) console.error(`[skills] ${error}`)
     void relocateLocalLeftovers(info.dir, info.localDir).then(logLeftoverRelocation)
     const enabled = loadConfig().windowsControlEnabled === true
@@ -1915,6 +1934,15 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle(Channels.projectDir, (_e, root: unknown, rel: unknown): Promise<ProjectDirListing> => listProjectDir(root, rel))
+
+  // Configurações → Skills: as skills do disco com nível e categoria (catálogo em níveis).
+  ipcMain.handle(Channels.skillTierList, (): SkillTierRow[] =>
+    skillTierRows(
+      discoverSkills('', devUserHome() ?? homedir()),
+      loadConfig().skillCatalog.overrides,
+      new Set(skillNamesIn(skillKitRoot(app.getAppPath(), 'ecc')))
+    )
+  )
 
   // Sidebar: the project's own icon, if the folder happens to have one. Null is
   // the normal answer (the sidebar keeps the folder glyph), never an error.
@@ -2332,7 +2360,9 @@ export function registerIpc(): void {
         }
         await verifyMirroredSession(resumeMarker, sessionStore, convId, sessionId, opts.cwd)
       },
-      { appRoot: app.getAppPath() },
+      // Na cópia isolada de desenvolvimento, a sessão descobre as skills na mesma
+      // "home" em que o sync as expõe (devUserHome); no app instalado é a do usuário.
+      { appRoot: app.getAppPath(), ...(devUserHome() ? { userHome: devUserHome()! } : {}) },
       sessionComplete,
       // Grava cada chamada de LLM em `llm_calls` (árvore de consumo de tokens),
       // pelo repositório ativo.
@@ -3084,10 +3114,6 @@ app.whenReady().then(async () => {
     `boot electron: ${Math.round(process.uptime() * 1000) - (Date.now() - bootStarted)}ms; ` +
       `boot store: ${storeReadyAt - bootStarted}ms; boot janela: ${Date.now() - bootStarted}ms`
   )
-  // Sincrono e recursivo em disco (e a pasta de dados pode estar no OneDrive):
-  // fora do caminho da janela, onde só atrasava a primeira pintura.
-  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir)
-  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
   try {
     await bootStage('storage', () =>
       storageLifecycle.initialize({
@@ -3106,6 +3132,11 @@ app.whenReady().then(async () => {
   const storageAvailable = storageLifecycle.canMutate()
   // Do SQLite local: carrega com o banco fora do ar também.
   await bootStage('config', () => initializeConfigPersistence())
+  // Sincrono e recursivo em disco (e a pasta de dados pode estar no OneDrive):
+  // fora do caminho da janela, onde só atrasava a primeira pintura. Depois da
+  // config: os kits de skills (skillKits.ts) seguem os interruptores dela.
+  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir, undefined, activeSkillKits(loadConfig()))
+  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
   if (storageAvailable) {
     await bootStage('codex-auth', () => initializeCodexAuthPersistence())
     // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do

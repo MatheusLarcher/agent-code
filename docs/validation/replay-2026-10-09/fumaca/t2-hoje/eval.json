@@ -1,0 +1,160 @@
+{
+  "typecheck": {
+    "ok": true,
+    "errors": 0,
+    "ms": 5408,
+    "tail": ""
+  },
+  "suite": {
+    "total": 3481,
+    "failedTotal": 2,
+    "newFailures": [],
+    "flakyOnlyUnderLoad": [],
+    "ms": 82834
+  },
+  "reference": {
+    "total": 104,
+    "passed": 71,
+    "failed": [
+      {
+        "id": "src/main/board/boardService.latePo.test.ts > BoardService — veredito do PO que chega depois do teto de espera o CONCLUIR que chega NO MEIO da reabertura (depois da leitura, antes da escrita dela) espera e grava por cima",
+        "message": "s> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/board/boardService.latePo.test.ts:220:33\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poApply.test.ts > (arquivo não carregou)",
+        "message": "Cannot find module './poApply' imported from D:/agent-code-replay/t2/agent-code/src/main/po/poApply.test.ts"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest do fechamento — o caso das 14:54 (turno longo) o material do teste é o de um turno longo de verdade",
+        "message": "de/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poDigest.test.ts:131:40\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest do fechamento — o caso das 14:54 (turno longo) leva o INÍCIO (a prova de que o EXE foi testado) e o FIM real da resposta",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest do fechamento — o caso das 14:54 (turno longo) leva as ÚLTIMAS ações, não as primeiras",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest do fechamento — o caso das 14:54 (turno longo) leva as tarefas [done] e abertas mais recentes do registro, em ordem cronológica",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest do fechamento — o caso das 14:54 (turno longo) o quadro e o pedido vão inteiros, e o digest fica dentro do teto total",
+        "message": "de/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poDigest.test.ts:183:27\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest — teto total o pior caso, com TODOS os tetos estourados, fecha exatamente na conta documentada",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > digest — teto total uma linha de ação enorme é cortada no teto da linha, não estoura o digest",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > pickLedgerTasks — quais tarefas do registro cabem no digest dentro do teto, a lista sai igual — inclusive failed/cancelled e a ordem",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > pickLedgerTasks — quais tarefas do registro cabem no digest acima do teto: done/abertas mais recentes primeiro; failed/cancelled só com vaga sobrando",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > pickLedgerTasks — quais tarefas do registro cabem no digest é idempotente: aplicar de novo não muda a escolha",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > listConvTasks — o registro inteiro, escolhido antes de chegar ao PO e ao gate lê a conversa SEM limit (a ordem do registro é crescente) e devolve a escolha",
+        "message": "roxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1487:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poDigest.test.ts:260:23\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poDigest.test.ts > listConvTasks — o registro inteiro, escolhido antes de chegar ao PO e ao gate a origem injetada passa pela mesma escolha — o gate recebe o que o digest mostra",
+        "message": "TypeError: (0 , __vite_ssr_import_3__.pickLedgerTasks) is not a function\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poDigest.test.ts:267:27\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poGate.test.ts > Po — gate \"sim\" segue normal e o gate vê o mesmo material do digest, depois do quadro e antes do anúncio",
+        "message": "AssertionError: expected { phase: 'close', …(4) } to deeply equal { phase: 'close', …(5) }\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poGate.test.ts:317:19\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poGate.test.ts > Po — gate \"sim\" a abertura seguinte leva ao gate a resposta do turno ANTERIOR — a que o \"pode fazer\" responde",
+        "message": "pen', agentReply: null }\n(4 matching properties omitted from actual)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poGate.test.ts:346:23\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poLateOpen.test.ts > Po — ANDAMENTO da abertura que chega depois de o cartão ser concluído o CONCLUIR atrasado do fechamento conclui no meio da consulta da abertura; o ANDAMENTO que chega depois não reabre",
+        "message": "'completed', …(1) }\n(17 matching properties omitted from actual)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poLateOpen.test.ts:180:33\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poLateOpen.test.ts > Po — ANDAMENTO da abertura que chega depois de o cartão ser concluído o usuário conclui pelo quadro enquanto a abertura consulta o modelo: o ANDAMENTO que chega depois é descartado",
+        "message": "AssertionError: expected 'in_progress' to be 'completed' // Object.is equality\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poLateOpen.test.ts:195:43\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poNextStep.test.ts > Po — \"pode fazer\" depois do passo proposto (dublê do quadro) o fechamento conclui A e cria B \"a fazer\"; a abertura seguinte põe só B em andamento",
+        "message": "xy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poNextStep.test.ts:148:15\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poNextStep.test.ts > BoardService real — o fechamento que não rebaixou nada não deixa o resumeTurn mexer em A nem B \"pode fazer\" com a abertura do PO respondendo OK: A continua concluída e B continua \"a fazer\"",
+        "message": "xy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///D:/agent-code-replay/t2/agent-code/node_modules/chai/index.js:1700:25)\n    at D:/agent-code-replay/t2/agent-code/src/main/po/poNextStep.test.ts:221:28\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > digest — última resposta do agente resposta longa leva as DUAS pontas — o que foi entregue e a pergunta do fim — dentro do teto",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > digest — última resposta do agente o fechamento aceita a resposta como evidência e proíbe concluir o que espera o usuário",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > pergunta no fim da resposta — bloqueia o pedido ou propõe um passo novo o fechamento distingue os dois tipos, com os dois exemplos reais, e continua exigindo prova",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > pergunta no fim da resposta — bloqueia o pedido ou propõe um passo novo a NOVA do fechamento aceita o passo proposto pelo agente, nunca uma sugestão do próprio PO",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > pergunta no fim da resposta — bloqueia o pedido ou propõe um passo novo a abertura manda a autorização para o cartão \"a fazer\" do passo, nunca para o concluído",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > pergunta no fim da resposta — bloqueia o pedido ou propõe um passo novo caso 1: CONCLUIR no pedido + NOVA do passo viram [complete, create \"a fazer\" aguardando autorização]",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/po/poPrompt.test.ts > digest leva pedido, quadro e as ÚLTIMAS ações — e respeita os tetos",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — cada fase faz a SUA pergunta o fechamento conta \"entregou o pedido e propôs um passo novo\" como sim, olhando a RESPOSTA DO AGENTE",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — cada fase faz a SUA pergunta a abertura conta a autorização do passo proposto como trabalho",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — o que o serviço vê recebe o pedido, o quadro com status legível, as ações e as tarefas do registro",
+        "message": "AssertionError: expected { …(7) } to deeply equal { …(8) }\n    at D:/agent-code-replay/t2/agent-code/src/main/typesafe/boardGate.test.ts:211:26\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — o que o serviço vê leva a resposta do agente inteira quando cabe, e vazia (nunca um marcador) quando não há",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — o que o serviço vê resposta longa: guarda o INÍCIO (a entrega) e o FIM (a pergunta), dentro do teto",
+        "message": ":233:17\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — o que o serviço vê o serviço recebe a resposta nas duas fases",
+        "message": "AssertionError: expected [ undefined, undefined ] to deeply equal [ 'Posso atualizar a VPS?', …(1) ]\n    at D:/agent-code-replay/t2/agent-code/src/main/typesafe/boardGate.test.ts:245:20\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+      },
+      {
+        "id": "src/main/typesafe/boardGate.test.ts > Gate do quadro — o que o serviço vê cada campo no seu teto: o `state` respeita o orçamento documentado e cabe nos 32k tokens do Jev",
+        "message": ":292:38\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/t2/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20"
+      }
+    ],
+    "crashed": false,
+    "ms": 4056
+  },
+  "corePass": true
+}

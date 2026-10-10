@@ -10,6 +10,9 @@ export type SkillSource = 'project-claude' | 'user-claude'
 
 export interface DiscoveredSkill {
   name: string
+  /** O `name` do frontmatter quando difere da pasta ("AI & LLM Security"): é por
+   *  ele que o CLI anuncia a skill no `init.skills`. Ausente = igual à pasta. */
+  displayName?: string
   description: string
   skillFile: string
   root: string
@@ -153,6 +156,7 @@ export function discoverSkills(
         const parsed = parseFrontmatterFields(readFrontmatterPrefix(skillFile))
         byName.set(entry.name, {
           name: entry.name,
+          ...(parsed?.name && parsed.name !== entry.name ? { displayName: parsed.name } : {}),
           description: parsed?.description ?? '',
           skillFile,
           root,
