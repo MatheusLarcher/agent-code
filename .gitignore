@@ -54,3 +54,9 @@ docs/spec/*/_sandbox/
 # Vídeo de divulgação gerado pelo /brag: ~100 MB de mídia e intermediários, e
 # a trilha musical embutida não tem licença de redistribuição documentada.
 docs/brag-output/
+
+# Sobras de validação manual dos agentes e cache do Python
+scripts/agent-activity-validation/
+scripts/chat-context-validation/
+scripts/context-chat-artifacts/
+__pycache__/
