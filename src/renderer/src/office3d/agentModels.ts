@@ -53,6 +53,7 @@ export const ROLE_MODELS: Readonly<Record<string, string>> = {
   memoria: 'memoria',
   po: 'po',
   vigia: 'vigia',
+  scrum: 'scrum',
   subagente: 'subagente'
 }
 /** O avatar do usuário, sempre no agente da Central (resources/office-agents/central.glb). */

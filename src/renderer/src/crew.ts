@@ -1,5 +1,6 @@
 import type { MemoristaProviderDiagnosticMsg, PoProviderDiagnosticMsg } from '@shared/ipc'
 import type { AgentTrack, TrackMap, TrackStep } from './agentTracks'
+import { scrumMember } from './crewScrum'
 
 /**
  * O ELENCO — quem é o time e o que cada um está fazendo agora.
@@ -23,6 +24,7 @@ export type CrewRole =
   | 'memoria'
   | 'po'
   | 'vigia'
+  | 'scrum'
   | 'subagente'
 
 /** Os quatro estados do cartão. `asking` é o único que pede ação do usuário. */
@@ -95,6 +97,7 @@ export function roleName(role: CrewRole): string {
   if (role === 'principal') return 'Principal'
   if (role === 'po') return 'PO'
   if (role === 'vigia') return 'vigia'
+  if (role === 'scrum') return 'Scrum Master'
   if (role === 'subagente') return 'subagente'
   return role
 }
@@ -238,6 +241,8 @@ export interface CrewInput {
   /** Desligado nas Configurações, o cartão `memoria` volta a ser só o do
    *  subagente delegado — não some, porque o papel continua existindo. */
   memoristaEnabled?: boolean
+  /** O Scrum Master (board.scrumMaster.enabled) — desligado, some do elenco. */
+  scrumEnabled?: boolean
   /** Injetável para o teste fixar o "acabou de começar". */
   now?: number
 }
@@ -470,6 +475,7 @@ export function buildCrew(input: CrewInput): CrewMember[] {
 
   if (input.poEnabled) members.push(poMember(input.po))
   if (input.vigiaEnabled) members.push(vigiaMember(input.vigia))
+  if (input.scrumEnabled) members.push(scrumMember())
   return members
 }
 

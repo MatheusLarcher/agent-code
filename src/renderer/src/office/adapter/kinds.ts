@@ -21,5 +21,7 @@ export type DestinationRole =
   | 'entrada'
   /** O console da Central, no centro do escritório. */
   | 'central'
+  /** O lugar do Scrum Master, ao lado do quadro, do outro lado do PO. */
+  | 'scrum'
 
 export type SeatKind = 'principal' | 'especialista' | 'reuniao'

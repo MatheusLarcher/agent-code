@@ -309,11 +309,12 @@ export const STOP_MOTIVO = 'você parou este prompt (Stop) — a fila espera voc
  * turno — ou até o Quadro dizer que todas as etapas ficaram prontas (o
  * reconciliador o conclui). O que já concluiu fica concluído — a hora da
  * conclusão é dado de entrega; a fila o segura pela marca do tracker
- * (HandoffTracker.stoppedByUser), não pelo status.
+ * (HandoffTracker.stoppedByUser), não pelo status. `motivo`: o do Scrum Master.
  */
-export function stopPatch(envio: HandoffEnvio): HandoffEnvioPatch | null {
+export function stopPatch(envio: HandoffEnvio, motivo: string | null = null): HandoffEnvioPatch | null {
   if (!isEnvioSent(envio) || envio.status === 'concluida') return null
-  return envio.status === 'parada' && envio.motivo === STOP_MOTIVO ? null : { status: 'parada', motivo: STOP_MOTIVO }
+  const m = motivo ?? STOP_MOTIVO
+  return envio.status === 'parada' && envio.motivo === m ? null : { status: 'parada', motivo: m }
 }
 
 export function errorPatch(envio: HandoffEnvio, text: string): HandoffEnvioPatch | null {
@@ -329,8 +330,8 @@ export function errorPatch(envio: HandoffEnvio, text: string): HandoffEnvioPatch
  * usuário vale o Stop (a fila espera ele). Só o turno vivo em memória chama
  * isto: sem turno, não há o que encerrar.
  */
-export function sessionEndedPatch(envio: HandoffEnvio, stoppedByUser: boolean): HandoffEnvioPatch | null {
-  if (stoppedByUser) return stopPatch(envio)
+export function sessionEndedPatch(envio: HandoffEnvio, stoppedByUser: boolean, motivo: string | null = null): HandoffEnvioPatch | null {
+  if (stoppedByUser) return stopPatch(envio, motivo)
   if (!isEnvioSent(envio) || !isStallable(envio.status)) return null
   return { status: 'parada', motivo: HANDOFF_SESSION_ENDED_MOTIVO }
 }

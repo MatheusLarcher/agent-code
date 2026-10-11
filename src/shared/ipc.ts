@@ -1384,11 +1384,29 @@ export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
 export interface BoardConfig {
   requirePlan: boolean
   po: { enabled: boolean; model: string }
+  /** O Scrum Master (src/main/scrum): cobra o agente quando a etapa de um envio
+   *  de handoff passa do prazo ou ele trava. Opcional no tipo só para config
+   *  antiga em memória; leia sempre por `scrumMasterConfig`. */
+  scrumMaster?: ScrumMasterConfig
+}
+
+export interface ScrumMasterConfig {
+  enabled: boolean
+  model: string
+  /** Experimental: no 300% com veredito PARAR, o SM pode parar o envio. */
+  podeParar: boolean
 }
 
 /** Modelos oferecidos para o PO. Mesma lista curta do vigia, pelo mesmo motivo:
  *  é um leitor barato, não o modelo que faz o trabalho. */
 export const PO_MODELS = VIGIA_MODELS
+
+export const DEFAULT_SCRUM_MASTER: ScrumMasterConfig = { enabled: true, model: 'claude-sonnet-5-5', podeParar: true }
+
+/** A config do SM com o padrão por baixo (config antiga não tem o bloco). */
+export function scrumMasterConfig(board: Pick<BoardConfig, 'scrumMaster'>): ScrumMasterConfig {
+  return { ...DEFAULT_SCRUM_MASTER, ...(board.scrumMaster ?? {}) }
+}
 
 /**
  * Os interruptores do "Enviar para implementação". Cada um, desligado, volta o
@@ -2054,7 +2072,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Também ligados por padrão: sem a trava o quadro fica vazio nas tarefas em
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
-  board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } },
+  board: {
+    requirePlan: true,
+    po: { enabled: true, model: 'claude-sonnet-5-5' },
+    scrumMaster: { enabled: true, model: 'claude-sonnet-5-5', podeParar: true }
+  },
   // A leitura guiada espera o teste em tarefas reais antes de virar padrão.
   handoff: { leituraGuiada: false },
   // Desligado até o teste de acerto de skill (e o teste final) aprovarem.
@@ -2231,6 +2253,14 @@ export const Channels = {
   poChatApply: 'po-chat:apply',
   /** "Mandar fazer": a proposta aprovada vira um plano "Pedido do PO" na fila do projeto. */
   poChatSend: 'po-chat:send',
+  /** O painel do Scrum Master (shared/scrumPanel.ts): Agora, Histórico, a conversa e o Aprovar/Recusar da declaração. */
+  scrumPanel: 'scrum:panel',
+  scrumHistory: 'scrum:history',
+  scrumChatHistory: 'scrum:chat-history',
+  scrumAsk: 'scrum:ask',
+  scrumDecideDeclaration: 'scrum:decide-declaration',
+  /** Main → renderer: uma linha nova no diário do Scrum Master (ScrumChangedMsg). */
+  scrumChanged: 'scrum:changed',
   /** Main → renderer: o quadro daquele projeto mudou, recarregue. */
   boardChanged: 'board:changed',
   /** Tela de Planejamento (<dataDir>/planning/<projeto>/<slug>/). Toda resposta é PlanningResult. */

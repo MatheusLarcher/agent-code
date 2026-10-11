@@ -184,6 +184,7 @@ function roleFromKey(key: string): string {
   if (key.startsWith('conv:')) return 'principal'
   if (key.startsWith('vigia:')) return 'vigia'
   if (key.startsWith('po:')) return 'po'
+  if (key.startsWith('scrum:')) return 'scrum'
   if (key.startsWith('role:')) return key.slice(key.lastIndexOf(':') + 1)
   return 'subagente'
 }

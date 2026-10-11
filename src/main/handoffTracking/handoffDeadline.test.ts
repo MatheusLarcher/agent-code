@@ -219,6 +219,32 @@ describe('sessionDeadlineNotice — só a conversa de handoff, só o fio princip
       })
     ).resolves.toBeNull()
   })
+
+  it('a cobrança do Scrum Master vem DEPOIS do aviso de prazo, uma vez, e só no fio principal', async () => {
+    const role = { convId: 'c1', handoff: { slug: 'p' } }
+    const positions = new PlanPositions({ load: vi.fn(), now: () => 0 })
+    let pending: string | null = '📋 Scrum Master — etapa 1, 1,5× do prazo: feche.'
+    const takeCharge = vi.fn(() => {
+      const c = pending
+      pending = null
+      return c
+    })
+    const sm = () => ({ takeCharge })
+    await expect(sessionDeadlineNotice(role, 'agent-7', () => tracker('⏱ aviso'), positions, sm)).resolves.toBeNull()
+    expect(takeCharge).not.toHaveBeenCalled()
+    await expect(sessionDeadlineNotice(role, undefined, () => tracker('⏱ aviso'), positions, sm)).resolves.toBe(
+      '⏱ aviso\n\n📋 Scrum Master — etapa 1, 1,5× do prazo: feche.'
+    )
+    await expect(sessionDeadlineNotice(role, undefined, () => tracker(null), positions, sm)).resolves.toBeNull()
+    pending = '📋 sozinha'
+    await expect(sessionDeadlineNotice(role, undefined, () => tracker(null), positions, sm)).resolves.toBe('📋 sozinha')
+    const boom = () => ({
+      takeCharge: () => {
+        throw new Error('sm')
+      }
+    })
+    await expect(sessionDeadlineNotice(role, undefined, () => tracker('⏱ aviso'), positions, boom)).resolves.toBe('⏱ aviso')
+  })
 })
 
 describe('PlanPositions — a posição no plano é lida FORA do caminho quente do hook', () => {

@@ -51,7 +51,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
 })
 
 import { AgentSession } from '../agentSession'
-import { ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from './entregaTools'
+import { ENTREGA_AVISO_DEMORA_TOOL, ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from './entregaTools'
 
 const slug = 'checkout'
 let root = ''
@@ -92,12 +92,12 @@ afterEach(() => {
 })
 
 describe('AgentSession — servidor MCP `entregas`', () => {
-  it('a conversa de handoff sobe com o servidor e as duas ferramentas, junto dos de sempre', async () => {
+  it('a conversa de handoff sobe com o servidor e as três ferramentas, junto dos de sempre', async () => {
     await makeSession({ handoff: { slug } }).start()
     const servers = lastServers()
     expect(Object.keys(servers)).toEqual(expect.arrayContaining(['entregas', 'browser', 'tasks', 'memory']))
     expect(servers.entregas.name).toBe('entregas')
-    expect(Object.keys(servers.entregas.instance?._registeredTools ?? {}).sort()).toEqual(['entrega_estimar', 'entrega_tempo'])
+    expect(Object.keys(servers.entregas.instance?._registeredTools ?? {}).sort()).toEqual(['entrega_aviso_demora', 'entrega_estimar', 'entrega_tempo'])
   })
 
   it('a conversa comum e a do Agent Manager não têm o servidor', async () => {
@@ -110,7 +110,7 @@ describe('AgentSession — servidor MCP `entregas`', () => {
   it('na conversa de handoff as entrega_* passam sem pedir permissão (sem "Permitir tudo")', async () => {
     const ask = vi.fn()
     const g = gate(makeSession({ handoff: { slug } }, ask))
-    for (const tool of [ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL]) {
+    for (const tool of [ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL, ENTREGA_AVISO_DEMORA_TOOL]) {
       const input = { etapa: 'etapa-a', minutos: 10, motivo: 'm' }
       expect(await g(tool, input)).toEqual({ behavior: 'allow', updatedInput: input })
     }

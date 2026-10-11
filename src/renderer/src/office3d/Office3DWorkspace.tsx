@@ -49,7 +49,7 @@ import { ChatPreview, useHoverPreview } from './ChatPreview'
 import { CodeMonitor } from './codeScreen/CodeMonitor'
 import { DEMO_TICK_MS, demoFeed } from './demoFeed'
 import { Office3DEngine, type EngineCallbacks, type EngineOptions } from './engine'
-import { MEMORY_SHELF_KEY, type BoardOpen } from './engineTypes'
+import type { BoardOpen } from './engineTypes'
 import type { ProjectLayout } from './layout'
 import { OfficeChatFloat, type OfficeConversation } from './OfficeChatFloat'
 import { openPoChat, screenComposerOf } from './officePoChat'
@@ -58,7 +58,8 @@ import { isPerfShortcut, PerfHud } from './PerfHud'
 import { useAvatarPreviewKey } from './agentPreview'
 import { setMeetingProbe } from './officeWatch'
 import type { OfficePower } from './power'
-import { OfficeMemoryPanel } from './OfficeMemoryPanel'
+import { OfficeFocusPanel } from './scrum/OfficeScrumPanel'
+import { deskConvOf, focusKeepsChat, panelTakesChat, scrumFocusKey } from './scrum/scrumFocus'
 import { OfficeMemoryPapers } from './MemoryPapersOverlay'
 import { OfficePlanDialog, type PlanProject } from './OfficePlanDialog'
 import { agentCss } from './projectColor'
@@ -188,15 +189,15 @@ export function Office3DWorkspace({
         // o campo com foco num deles (a roda não tira o foco) grava o rascunho antes, no blur.
         const el = document.activeElement
         if (el instanceof HTMLElement && el.closest('.o3d-chat, .o3d-screen-anchor')) el.blur()
-        setFocusKey(key)
+        setFocusKey(scrumFocusKey(engineRef.current, key))
         // A TV (useTvFocus.ts): o conteúdo congela no foco; o chat não troca.
         if (tvFocus.current.onFocus(key)) return
         // O motor fechou a tela sozinho (voo, follow, o agente saiu): o chat fica onde está.
         if (!byUser) return
         // O usuário desfez a seleção: sem mesa, a Central (a conversa ativa não muda).
         if (!key) return setShowCentral(true)
-        // A Central no console: o chat dela vai na tela do console, sem trocar a conversa ativa.
-        if (engineRef.current?.scene.character(key)?.spot === 'central') return
+        // A Central no console (o chat na tela dele) e o SM (o painel dele): sem trocar a conversa ativa.
+        if (focusKeepsChat(engineRef.current, key)) return
         // O PO (ao lado do quadro): o "Fala, PO" do projeto dele no chat flutuante, sem tela de monitor.
         if (openPoChat(engineRef.current, key)) {
           setShowCentral(false)
@@ -280,7 +281,7 @@ export function Office3DWorkspace({
       engine.resume()
       setTick((t) => t + 1)
       const key = engine.focused
-      const focusConv = key ? engine.scene.character(key)?.model.convId : undefined
+      const focusConv = deskConvOf(engine, key)
       setShowCentral(!focusConv)
       if (focusConv && focusConv !== convId) cbs.current.onOpenConversation(focusConv)
     } else {
@@ -467,9 +468,8 @@ export function Office3DWorkspace({
             />
           </div>
         ) : null}
-        {/* O clique na estante de Memórias é um foco nela: o painel (só leitura) dura enquanto ele durar. */}
-        {active && engine && focusKey === MEMORY_SHELF_KEY ? (
-          <OfficeMemoryPanel engine={engine} feed={feed} onClose={closeScreen} onOpenConversation={(id) => cbs.current.onOpenConversation(id)} />
+        {active && engine ? (
+          <OfficeFocusPanel focusKey={focusKey} engine={engine} feed={feed} onClose={closeScreen} onOpenConversation={openCardConversation} onLocate={locate} onSend={onSendToConversation} />
         ) : null}
         {previewed && (
           <div ref={previewRef} className="o3d-preview-anchor" data-key={previewed.key} key={previewed.key}>
@@ -482,7 +482,7 @@ export function Office3DWorkspace({
         ) : null}
         {import.meta.env.DEV && active && hud ? <PerfHud source={readEngine} /> : null}
       </div>
-      {active && (chat || central) && !screenTakesChat && !tvInfo && focusKey !== MEMORY_SHELF_KEY ? (
+      {active && (chat || central) && !screenTakesChat && !tvInfo && !panelTakesChat(focusKey) ? (
         <OfficeChatFloat
           conversation={conversation}
           central={centralShown || convIsCentral}

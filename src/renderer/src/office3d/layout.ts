@@ -55,6 +55,7 @@ import {
   OFFICE_W,
   PLAZA_SPOTS,
   PO_SPOTS,
+  SCRUM_SPOTS,
   SEAT_FRONT,
   STATIONS
 } from './officePlan'
@@ -118,7 +119,7 @@ export interface ProjectLayout {
   agents: number
 }
 
-export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'memory' | 'central' | 'manager' | 'offstage'
+export type CharacterSpot = 'desk' | 'lounge' | 'stand' | 'beside' | 'po' | 'scrum' | 'memory' | 'central' | 'manager' | 'offstage'
 
 export interface CharacterLayout {
   key: string
@@ -326,7 +327,7 @@ function placeCharacters(
   const byKey = new Map<string, CharacterLayout>()
   const besideCount = new Map<string, number>()
   const used = new Set<string>()
-  const counters = { po: 0, memory: 0, plaza: 0 }
+  const counters = { po: 0, scrum: 0, memory: 0, plaza: 0 }
   // Lounge estável como as mesas: quem já tinha lugar fica com ele; os novos pegam os livres (quem tem
   // tarefa primeiro). Lounge cheio: quem tem tarefa toma o lugar do parado mais antigo (que fica de pé).
   const loungeOf = new Map<string, number>()
@@ -420,6 +421,9 @@ function placeCharacters(
       if (p.papel === 'kanban') {
         const s = PO_SPOTS[counters.po++ % PO_SPOTS.length]
         o = base(c, s.x, s.z, s.yaw, 'po')
+      } else if (p.papel === 'scrum') {
+        const s = SCRUM_SPOTS[counters.scrum++ % SCRUM_SPOTS.length]
+        o = base(c, s.x, s.z, s.yaw, 'scrum')
       } else if (p.papel === 'arquivo-memorias') {
         const i = counters.memory++
         o = i < MEMORY_SPOTS_Z.length ? base(c, MEMORY_SPOT_X, MEMORY_SPOTS_Z[i], -Math.PI / 2, 'memory') : base(c, MEMORY_WAIT.x, MEMORY_WAIT.z, -Math.PI / 2, 'memory')

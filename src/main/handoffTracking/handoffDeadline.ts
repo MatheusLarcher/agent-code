@@ -192,3 +192,39 @@ export function withTimeout<T>(work: Promise<T>, ms: number, onTimeout: () => vo
   })
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer))
 }
+
+/** Os campos do aviso no estado da conversa (handoffState.ConvState). */
+export interface NoticeSlot {
+  noticeAt: number
+  noticeCarry: string | null
+  noticeBusy: boolean
+}
+
+/**
+ * O aviso pela fila da conversa (HandoffTracker.deadlineNotice): entre os marcos
+ * não lê (`noticeAt`); com leitura, espera no máximo `timeoutMs` e devolve `null`
+ * — o texto que ficar pronto depois sai na próxima ferramenta (`noticeCarry`).
+ */
+export async function queuedNotice(
+  s: NoticeSlot,
+  now: number,
+  timeoutMs: number,
+  exclusive: (job: () => Promise<string | null>) => Promise<string | null>,
+  read: () => Promise<string | null>
+): Promise<string | null> {
+  if (s.noticeBusy || (s.noticeCarry === null && now < s.noticeAt)) return null
+  let late = false
+  s.noticeBusy = true
+  const job = exclusive(async () => {
+    try {
+      const text = s.noticeCarry ?? (await read())
+      s.noticeCarry = late ? text : null
+      return late ? null : text
+    } finally {
+      s.noticeBusy = false
+    }
+  })
+  return withTimeout(job, timeoutMs, () => {
+    late = true
+  })
+}

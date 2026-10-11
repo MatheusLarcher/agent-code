@@ -76,6 +76,13 @@ export const IconRoleVigia = (p: IconProps): JSX.Element => (
     <path d="M12 17h.01" />
   </Svg>
 )
+/** Scrum Master — o cronômetro de quem cobra o prazo. */
+export const IconRoleScrum = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="13" r="8" />
+    <path d="M12 9v4l2.5 1.5M10 2h4M12 2v3" />
+  </Svg>
+)
 /** Subagente de tipo que não é do nosso cadastro. */
 export const IconRoleSubagente = (p: IconProps): JSX.Element => (
   <Svg {...p}>
@@ -92,6 +99,7 @@ const BY_ROLE: Record<CrewRole, (p: IconProps) => JSX.Element> = {
   memoria: IconRoleMemoria,
   po: IconRolePo,
   vigia: IconRoleVigia,
+  scrum: IconRoleScrum,
   subagente: IconRoleSubagente
 }
 

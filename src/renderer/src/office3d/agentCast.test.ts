@@ -16,9 +16,14 @@ import { AGENTS_DIR as DIR, bindHeight, buildScene, readGlb } from './testGlb'
 
 /** Teto do arquivo de cada avatar (o instalador leva todos). */
 const MAX_BYTES = 4 * 1024 * 1024
+/** Teto próprio de papel que fica fora dos 4 MB. O Scrum Master entra sem o
+ * compress_glb.py, com as texturas de 2048 do Meshy (decisão do usuário de
+ * 11/10): medido 12,1 MB, teto 13 MB de folga. */
+const MAX_BYTES_BY_ROLE: Readonly<Record<string, number>> = { scrum: 13 * 1024 * 1024 }
 
 /** Papel → altura da ficha no bind (m) e se a roupa principal é tingível (a Central não tem máscara). */
 const CAST: ReadonlyArray<{ role: string; height: number; tint: boolean }> = [
+  { role: 'scrum', height: 1.78, tint: true },
   { role: 'executor', height: 1.66, tint: true },
   { role: 'critico', height: 1.78, tint: true },
   { role: 'navegador-de-codigo', height: 1.63, tint: true },
@@ -34,7 +39,7 @@ for (const { role, height, tint } of CAST) {
   const path = join(DIR, `${role}.glb`)
   describe.runIf(existsSync(path))(`avatar ${role}.glb`, () => {
     it('cabe no instalador e tem UMA malha com pele, com os ossos que o app move', () => {
-      expect(statSync(path).size).toBeLessThanOrEqual(MAX_BYTES)
+      expect(statSync(path).size).toBeLessThanOrEqual(MAX_BYTES_BY_ROLE[role] ?? MAX_BYTES)
       const { json, bin } = readGlb(path)
       const { skinned, jointNames } = buildScene(json, bin)
       expect(skinned).toHaveLength(1)

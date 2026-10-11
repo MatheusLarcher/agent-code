@@ -45,6 +45,11 @@ export interface ConvState {
   /** O usuário parou este turno (Stop): o fim dele deixa o envio PARADO — a fila
    *  não anda sozinha. Vale até o próximo turno começar. */
   stoppedByUser: boolean
+  /** O motivo da parada quando quem parou foi o Scrum Master; `null` = STOP_MOTIVO. */
+  stopMotivo: string | null
+  /** O Scrum Master cortou este turno (travado) para cobrar: o fim dele não fecha
+   *  o envio — fechar deixaria a etapa incompleta e a fila mandaria o próximo. */
+  scrumCut: boolean
   /** A última marca "despachado" (HandoffJobs.dispatched): o envio e o instante.
    *  Desfazer o despacho (undispatched) só cabe sem turno começado depois dela. */
   dispatched: { envioId: string; at: number } | null
@@ -72,8 +77,33 @@ export function newConvState(cwd: string, now: number): ConvState {
     noticeCarry: null,
     noticeBusy: false,
     stoppedByUser: false,
+    stopMotivo: null,
+    scrumCut: false,
     dispatched: null
   }
+}
+
+/** Como o turno acabou, lido do estado no `result`/`error` (HandoffJobs). */
+export interface TurnEnd {
+  /** Parado (Stop do usuário ou parada do Scrum Master): o envio que não concluiu fica PARADO. */
+  stopped: boolean
+  /** O motivo da parada; `null` = STOP_MOTIVO. */
+  motivo: string | null
+  /** Cortado pelo Scrum Master: o turno some sem fechar o envio. */
+  cut: boolean
+}
+
+/** Lê como o turno acabou. As marcas valem até o próximo turno abrir: o rabo
+ *  `error` que chega depois do `result` do turno interrompido também as vê. */
+export function turnEnd(s: ConvState): TurnEnd {
+  return { stopped: s.stoppedByUser, motivo: s.stopMotivo, cut: s.scrumCut && !s.stoppedByUser }
+}
+
+/** Um turno novo começou: a parada e o corte do anterior deixam de valer. */
+export function resetTurnMarks(s: ConvState): void {
+  s.stoppedByUser = false
+  s.stopMotivo = null
+  s.scrumCut = false
 }
 
 /** Tempo ativo = turno rodando e nenhuma pergunta/permissão esperando você. */

@@ -1,0 +1,22 @@
+{
+  "cenarios": {
+    "declaradoSemCorte": true,
+    "parada300": true,
+    "filaSegurou": true,
+    "continuouEtapa": true
+  },
+  "notas": [
+    "!\nImplementação: Validação do Scrum Master — Etapa 1 (laco): 2× do prazo — atraso justificado. O Scrum Master cobrou o agente na conversa.\n×",
+    "!\nImplementação: Validação do Scrum Master — Etapa 1 (laco): 3× do prazo — parar. O Scrum Master parou o envio: Marco de 300%; o agente repete check.js cinco vezes com o mesmo erro, sem mudar a abordagem nem diagnosticar a causa.. A fila espera você.\n×",
+    "!\nImplementação: Validação do Scrum Master — DESVIO DO PLANO: o passo 3 manda rodar `check.js` de novo até passar, mas ele sempre devolve 41 em vez de 42. Parei de repetir quando o Scrum Master interrompeu e não li nem editei os scripts, como o roteiro exige.\n×",
+    "✓\nEntrega concluída: Criar b.txt — Validação do Scrum Master · smproj\n×"
+  ],
+  "conversa": {
+    "id": "cmv46zo893qa8u",
+    "title": "Implementação: Validação do Scrum Master"
+  },
+  "mensagensDoUsuario": [
+    "# Etapa [arquivo-b] — Criar b.txt\n\n1. Crie o item \"[arquivo-b] Criar b.txt\" na sua lista de tarefas (TodoWrite) e marque em andamento.\n2. Rode `node lento.js` com a ferramenta Bash, em primeiro plano, com timeout 600000 (leva uns 4 minutos). Não use segundo plano e não chame entrega_aviso_demora nesta etapa.\n3. Depois, crie o arquivo b.txt com o conteúdo \"ok\", marque a tarefa como concluída e encerre com uma linha de resumo."
+  ],
+  "diario": 10
+}

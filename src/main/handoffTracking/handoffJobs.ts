@@ -14,7 +14,7 @@ import * as deadline from './handoffDeadline'
 import { envioEtapasForPo, orphanEtapas, type OrphanEtapa, type PoEnvioEtapa } from './handoffOrphans'
 import { projectCards, syncEnvio } from './handoffReconcile'
 import * as rules from './handoffRules'
-import type { ConvState, SeenSend } from './handoffState'
+import type { ConvState, SeenSend, TurnEnd } from './handoffState'
 
 /**
  * Os jobs do acompanhamento: o que lê e grava no banco. Rodam SEMPRE na fila
@@ -56,9 +56,13 @@ function iso(ms: number): string {
 export class HandoffJobs {
   constructor(private readonly ctx: HandoffJobContext) {}
 
-  async currentEnvio(convId: string): Promise<HandoffEnvio | null> {
+  /** O envio corrente; com `unflushedMs`, já com o tempo ativo ainda não gravado
+   *  distribuído como a próxima gravação o distribuiria (o prazo em tempo real). */
+  async currentEnvio(convId: string, unflushedMs = 0): Promise<HandoffEnvio | null> {
     const repo = this.ctx.repo()
-    return repo ? rules.currentEnvio(await this.load(repo, convId)) : null
+    const current = repo ? rules.currentEnvio(await this.load(repo, convId)) : null
+    if (!current || unflushedMs <= 0) return current
+    return deadline.withTimeAdded(current, rules.timeDistribution(current, unflushedMs, this.ctx.state(convId)?.cardInProgress ?? new Set()))
   }
 
   /**
@@ -103,8 +107,10 @@ export class HandoffJobs {
     await this.writeEnvio(repo, convId, current, rules.turnStartPatch(current, iso(at), pending))
   }
 
-  /** `stopped`: o usuário parou este turno — o envio que não concluiu fica parado. */
-  async result(convId: string, at: number, turnError: string | null, stopped = false): Promise<void> {
+  /** `end.stopped`: o turno foi parado — o envio que não concluiu fica parado (com
+   *  `end.motivo`). `end.cut`: o Scrum Master cortou o turno para cobrar — o envio
+   *  segue em execução (incompleto sem erro, a fila mandaria o próximo). */
+  async result(convId: string, at: number, turnError: string | null, end: Partial<TurnEnd> = {}): Promise<void> {
     // O fechamento de turno do Quadro (que já espera o PO) vem antes: é depois
     // dele que o cartão diz o que ficou feito.
     await this.ctx.board.turnClosed(convId)
@@ -121,34 +127,39 @@ export class HandoffJobs {
     }
     const s = this.ctx.state(convId)
     if (s) s.cardInProgress = new Set(rules.entregasWithCardInProgress(current, cards))
-    if (current.status === 'concluida') return
+    if (current.status === 'concluida' || end.cut) return
     const outcome = rules.turnEndOutcome(current, cards, { now: iso(at), turnError })
     for (const { id, patch } of outcome.entregas) await repo.updateHandoffEntrega(id, patch)
+    const motivo = end.motivo ?? rules.STOP_MOTIVO
     const envio: HandoffEnvioPatch =
-      stopped && outcome.envio.status !== 'concluida' ? { ...outcome.envio, status: 'parada', motivo: rules.STOP_MOTIVO } : outcome.envio
+      end.stopped && outcome.envio.status !== 'concluida' ? { ...outcome.envio, status: 'parada', motivo } : outcome.envio
     await this.writeEnvio(repo, convId, current, envio)
   }
 
-  async error(convId: string, text: string, recoverable: boolean, stopped = false): Promise<void> {
+  async error(convId: string, text: string, recoverable: boolean, end: Partial<TurnEnd> = {}): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo) return
     const current = rules.currentEnvio(await this.load(repo, convId))
     if (!current) return
     // O que o app retoma sozinho não é falha: o status fica (só sai de
     // "aguardando você", porque as pendências morreram com o turno). O rabo
-    // `error` de um turno parado pelo usuário também não: Stop não é erro.
-    const patch = stopped ? rules.stopPatch(current) : recoverable ? rules.permissionPatch(current, false) : rules.errorPatch(current, text)
+    // `error` de um turno parado (Stop não é erro) ou cortado pelo Scrum Master também não.
+    const patch = end.stopped
+      ? rules.stopPatch(current, end.motivo)
+      : recoverable || end.cut
+        ? rules.permissionPatch(current, false)
+        : rules.errorPatch(current, text)
     await this.writeEnvio(repo, convId, current, patch)
   }
 
   /** A sessão morreu com o turno aberto (sem `result`/`error`): o envio corrente para
    *  por inatividade (ou pelo Stop, se o usuário parou) — handoffRules.sessionEndedPatch. */
-  async sessionEnded(convId: string, stoppedByUser: boolean): Promise<void> {
+  async sessionEnded(convId: string, stoppedByUser: boolean, motivo: string | null = null): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo) return
     const current = rules.currentEnvio(await this.load(repo, convId))
     if (!current) return
-    await this.writeEnvio(repo, convId, current, rules.sessionEndedPatch(current, stoppedByUser))
+    await this.writeEnvio(repo, convId, current, rules.sessionEndedPatch(current, stoppedByUser, motivo))
   }
 
   /** O despacho do renderer falhou depois de `dispatched`: o envio volta à fila
@@ -190,12 +201,12 @@ export class HandoffJobs {
   }
 
   /** O Stop pegou o prompt antes de o turno começar (não vem `result`): o envio fica parado. */
-  async stopped(convId: string): Promise<void> {
+  async stopped(convId: string, motivo: string | null = null): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo || this.ctx.state(convId)?.turnRunning) return
     const current = rules.currentEnvio(await this.load(repo, convId))
     if (!current || current.status !== 'enviado') return
-    await this.writeEnvio(repo, convId, current, rules.stopPatch(current))
+    await this.writeEnvio(repo, convId, current, rules.stopPatch(current, motivo))
   }
 
   /** Pergunta aberta ↔ rodando, pelo estado de AGORA (o job pode ter esperado). */

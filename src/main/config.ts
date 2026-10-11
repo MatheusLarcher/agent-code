@@ -1,5 +1,5 @@
 import { safeStorage } from 'electron'
-import type { AppConfig } from '../shared/ipc'
+import { scrumMasterConfig, type AppConfig } from '../shared/ipc'
 import { kvGet } from './store'
 import {
   defaultAppConfig,
@@ -43,6 +43,9 @@ const FIELDS: Field[] = [
   { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
   { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
   { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) },
+  { key: 'config.board.scrumMaster.enabled', get: (c) => scrumMasterConfig(c.board).enabled, patch: (v) => ({ board: { scrumMaster: { enabled: v as boolean } } as AppConfig['board'] }) },
+  { key: 'config.board.scrumMaster.model', get: (c) => scrumMasterConfig(c.board).model, patch: (v) => ({ board: { scrumMaster: { model: v as string } } as AppConfig['board'] }) },
+  { key: 'config.board.scrumMaster.podeParar', get: (c) => scrumMasterConfig(c.board).podeParar, patch: (v) => ({ board: { scrumMaster: { podeParar: v as boolean } } as AppConfig['board'] }) },
   { key: 'config.handoff.leituraGuiada', get: (c) => c.handoff.leituraGuiada, patch: (v) => ({ handoff: { leituraGuiada: v as boolean } as AppConfig['handoff'] }) },
   { key: 'config.skillCatalog.tiered', get: (c) => c.skillCatalog.tiered, patch: (v) => ({ skillCatalog: { tiered: v as boolean } as AppConfig['skillCatalog'] }) },
   // Mapa (não escalar), como a lista do Automático: ajuste ilegível é descartado, não derruba o boot.
@@ -100,7 +103,7 @@ function cloneConfig(config: AppConfig): AppConfig {
     vigia: { ...config.vigia },
     memorista: { ...config.memorista },
     planning: { ...config.planning },
-    board: { ...config.board, po: { ...config.board.po } },
+    board: { ...config.board, po: { ...config.board.po }, scrumMaster: scrumMasterConfig(config.board) },
     handoff: { ...config.handoff },
     skillCatalog: { tiered: config.skillCatalog.tiered, overrides: { ...config.skillCatalog.overrides } },
     typesafe: { ...config.typesafe, allowedAutoModels: [...config.typesafe.allowedAutoModels] }

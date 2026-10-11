@@ -278,7 +278,7 @@ export class Crowd implements BrainWorld, BoardWorld {
     const desk = role === 'fixed' || !own ? null : { x: own.x, z: own.z, yaw: own.yaw, out: own.out }
     const lounge = role !== 'fixed' && c.lounge !== null ? LOUNGE_SEATS[c.lounge] : null
     const monitor = screen ? monitorPosition(screen) : null
-    const style: FixedStyle = m.role === 'po' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : c.spot === 'manager' ? 'manager' : 'idle'
+    const style: FixedStyle = m.role === 'po' || m.role === 'scrum' ? 'board' : m.role === 'memoria' ? 'archive' : c.spot === 'central' ? 'console' : c.spot === 'manager' ? 'manager' : 'idle'
     // A pasta vai para o lado do colega da ilha (o de dentro).
     const side = own ? -own.out : 1
     const projectId = c.projectId

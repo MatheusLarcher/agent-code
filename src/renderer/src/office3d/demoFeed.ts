@@ -471,7 +471,7 @@ export function demoFeed(now?: number): OfficeFeed {
     vigiaAt: {},
     poDiagnostics: {},
     memoristaDiagnostics: {},
-    observersOn: { po: false, vigia: false, memorista: false },
+    observersOn: { po: false, vigia: false, memorista: false, scrum: true },
     stalledSince,
     tracks,
     projectIcons,

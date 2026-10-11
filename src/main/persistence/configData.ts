@@ -10,6 +10,7 @@ import {
   isWhisperModelId,
   normalizeVoiceSpeed,
   PLANNING_MODELS,
+  scrumMasterConfig,
   SKILL_CATEGORIES,
   SKILL_TIERS,
   type AppConfig,
@@ -118,7 +119,11 @@ const partialConfigSchema = z
     board: z
       .object({
         requirePlan: z.boolean().optional(),
-        po: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional()
+        po: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
+        scrumMaster: z
+          .object({ enabled: z.boolean().optional(), model: z.string().min(1).optional(), podeParar: z.boolean().optional() })
+          .strict()
+          .optional()
       })
       .strict()
       .optional(),
@@ -170,7 +175,7 @@ export function defaultAppConfig(): AppConfig {
     vigia: { ...DEFAULT_CONFIG.vigia },
     memorista: { ...DEFAULT_CONFIG.memorista },
     planning: { ...DEFAULT_CONFIG.planning },
-    board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po } },
+    board: { ...DEFAULT_CONFIG.board, po: { ...DEFAULT_CONFIG.board.po }, scrumMaster: scrumMasterConfig(DEFAULT_CONFIG.board) },
     handoff: { ...DEFAULT_CONFIG.handoff },
     skillCatalog: { tiered: DEFAULT_CONFIG.skillCatalog.tiered, overrides: {} },
     // A lista é copiada: o spread raso dividiria o array com DEFAULT_CONFIG.
@@ -199,7 +204,9 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     board: {
       ...current.board,
       ...(parsed.data.board ?? {}),
-      po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) }
+      po: { ...current.board.po, ...(parsed.data.board?.po ?? {}) },
+      // O SM também: gravar só o interruptor não pode apagar o modelo.
+      scrumMaster: { ...scrumMasterConfig(current.board), ...(parsed.data.board?.scrumMaster ?? {}) }
     },
     handoff: { ...current.handoff, ...(parsed.data.handoff ?? {}) },
     // `overrides` é o mapa inteiro de ajustes (o editor grava todos de uma vez).

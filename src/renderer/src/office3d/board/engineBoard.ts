@@ -51,6 +51,7 @@ import { sayAway } from './awaySay'
 import { BoardTray } from './boardTray'
 import { appTrayApi, TRAY_KEY } from './queueTray'
 import { visitPathLength } from './visitPath'
+import { appScrumVisitApi, ScrumVisits } from '../scrum/scrumVisit'
 
 export { AWAY_SAY_MS } from './awaySay'
 export { BOARD_TOAST_MS } from './boardTips'
@@ -71,6 +72,8 @@ export class EngineBoard {
   private readonly local = { x: 0, y: 0 }
   /** A bandeja da fila ao lado do quadro e a entrega da folha pelo PO (boardTray.ts). */
   readonly tray: BoardTray
+  /** A visita do Scrum Master à mesa do agente cobrado (scrum/scrumVisit.ts). */
+  readonly scrum: ScrumVisits
   private readonly tips: BoardTips
   /** Qual projeto a parede mostra (filtro, aba, conversa ativa, visita da coreografia). */
   private readonly choice = new BoardChoice()
@@ -100,6 +103,8 @@ export class EngineBoard {
     this.stage = new BoardStage(this.host(), clock)
     const live = (): boolean => !this.paused && !this.disposed && !document.hidden && !scene.crowd.partyOn && !scene.boardDark()
     this.tray = new BoardTray({ brain: (k) => scene.crowd.brains.get(k), shown: () => scene.boards.shown, view: () => scene.boards.tray, live }, api === undefined ? appTrayApi() : null, clock)
+    const brains = { brain: (k: string) => scene.crowd.brains.get(k), brains: () => scene.crowd.brains.values() }
+    this.scrum = new ScrumVisits({ ...brains, live, say: (k, q) => this.sayHook(k, q) }, api === undefined ? appScrumVisitApi() : null, clock)
     this.seals = new BoardSeals(container, (id) => this.open(id))
     this.board = this.connect(this.api)
     this.scene.boards.onFresh = (id) => this.show(id, false)
@@ -148,6 +153,7 @@ export class EngineBoard {
     this.board = this.connect(on ? demoBoardApi(this.clock) : this.api)
     this.board.setRooms(this.rooms)
     this.tray.setDemo(on)
+    this.scrum.setDemo(on)
   }
 
   /** Cor (CSS) da camisa do agente da conversa — a cor do projeto dela: o alfinete do papel. Fora do feed, a seed. */
@@ -202,6 +208,7 @@ export class EngineBoard {
     let changed = this.stage.tick(now)
     if (sayAway(this.stage, this.scene, this.camera, !this.paused && !this.disposed && !document.hidden && document.hasFocus())) changed = true
     if (this.tray.tick(now)) changed = true
+    if (this.scrum.tick(now)) changed = true
     if (this.seals.tick(now)) changed = true
     if (this.tips.tick(now)) changed = true
     for (const id of this.sync.roomIds) {
@@ -465,6 +472,7 @@ export class EngineBoard {
     this.disposed = true
     this.stage.flush()
     this.tray.dispose()
+    this.scrum.dispose()
     this.seals.dispose()
     this.sync.dispose()
     this.tips.dispose()

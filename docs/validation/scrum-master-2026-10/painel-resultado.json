@@ -1,0 +1,85 @@
+{
+  "checks": {
+    "um SM por sala com quadro na demo, com o avatar": true,
+    "a visita da demo leva o SM à mesa do agente": false,
+    "primeira abertura: clique no SM (scrum:c:/demo/agent-code) abre o painel": true,
+    "o chat flutuante some com o painel aberto": true,
+    "Agora: vazio sem envio em andamento": false,
+    "Histórico: o corte aparece": true,
+    "Histórico: Hoje aberto e Ontem fechado com o resumo": true,
+    "Questionar leva à Conversa com o \"Sobre:\" do corte": true,
+    "pergunta: o SM responde": true,
+    "contestação: o SM responde": true,
+    "Histórico: a marca de contestado com a frase": true,
+    "o selo \"1 contestado\" na aba": true,
+    "fechar e reabrir: ✕ fecha o painel e o chat flutuante volta": true,
+    "fechar e reabrir: clique no SM (scrum:c:/demo/agent-code) abre o painel": true,
+    "fechar e reabrir: a marca de contestado continua": true,
+    "fechar e reabrir: a conversa com o SM continua (4 mensagens)": true,
+    "fechar e reabrir: Esc fecha o painel": true,
+    "depois do F5: o painel começa fechado": true,
+    "depois do F5: clique no SM (scrum:c:/demo/agent-code) abre o painel": true,
+    "depois do F5: a marca de contestado continua": true,
+    "depois do F5: a conversa com o SM continua (4 mensagens)": true,
+    "depois do F5: Esc fecha o painel": true,
+    "erro de leitura: clique no SM (scrum:c:/demo/loja-virtual) abre o painel": true,
+    "diário ilegível: o painel mostra o erro": false,
+    "diário de volta: o Histórico volta": true,
+    "app reiniciado: o painel começa fechado": true,
+    "app reiniciado: clique no SM (scrum:c:/demo/agent-code) abre o painel": true,
+    "app reiniciado: a marca de contestado continua": true,
+    "app reiniciado: a conversa com o SM continua (4 mensagens)": true,
+    "app reiniciado: Esc fecha o painel": true,
+    "app reiniciado (print): clique no SM (scrum:c:/demo/loja-virtual) abre o painel": true
+  },
+  "medidas": {
+    "sms": [
+      {
+        "key": "scrum:c:/demo/agent-code",
+        "avatar": true,
+        "x": 1.45,
+        "z": -6.2,
+        "errand": null
+      },
+      {
+        "key": "scrum:c:/demo/loja-virtual",
+        "avatar": true,
+        "x": 1.45,
+        "z": -5.6,
+        "errand": null
+      },
+      {
+        "key": "scrum:c:/demo/erp-itp",
+        "avatar": true,
+        "x": 1.45,
+        "z": -5,
+        "errand": null
+      }
+    ],
+    "quadro": {
+      "segundos": 20,
+      "personagens": 30,
+      "fps": 1,
+      "frameMs": 327.89,
+      "frameP95": 1016.7,
+      "frameP95max": 1016.7,
+      "workMs": 2.24,
+      "workP95": 3.98,
+      "calls": 262,
+      "triangles": 690198
+    }
+  },
+  "notas": [
+    "prévia ao passar o mouse no SM com o painel aberto: não aparece"
+  ],
+  "respostaPergunta": "SM\n17:39 · Scrum Master\nCortei no marco de 300% (13 min de um prazo de 4 min na etapa 1, laço). O motivo registrado foi que o agente repetiu o check.js cinco vezes com o mesmo erro, sem mudar a abordagem nem diagnosticar a causa. Ou seja, do meu lado a leitura foi de laço travado, não de teste com falha.\n\nO diário não registra que o check.js falhava de propósito, nem que a etapa pedia esse teste. Eu não tinha essa informação como critério, então a decisão pode ter sido equivocada nesse ponto. Repetir uma falha esperada parece, de fora, igual a um laço sem progresso.\n\nNão posso retomar o envio por aqui: isso é feito no painel, com \"Retomar com o aviso\" ou \"Tirar da fila\". Se quiser que falhas intencionais de teste não levem ao corte, a regra fica registrada nesta conversa para quando eu for ajustado, mas não passo a aplicá-la sozinho.",
+  "respostaContestacao": "SM\n17:39 · Scrum Master\nMarquei esta decisão como contestada. A sua frase fica guardada junto dela no diário, para quando eu for ajustado.",
+  "resumo": {
+    "checks": 31,
+    "falharam": [
+      "a visita da demo leva o SM à mesa do agente",
+      "Agora: vazio sem envio em andamento",
+      "diário ilegível: o painel mostra o erro"
+    ]
+  }
+}

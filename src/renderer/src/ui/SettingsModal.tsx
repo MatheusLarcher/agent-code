@@ -19,6 +19,7 @@ import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { ChromeControlSection } from './ChromeControlSection'
 import { VoiceSettingsSection } from './VoiceSettingsSection'
 import { HandoffSettingsSection } from './HandoffSettingsSection'
+import { ScrumMasterSettingsSection } from './ScrumMasterSettingsSection'
 import { SkillCatalogSection } from './SkillCatalogSection'
 import { AndroidToolchainSection } from './AndroidToolchainSection'
 import { ipcErrorMessage } from '../ipcError'
@@ -55,7 +56,11 @@ interface Props {
 type Tab = 'geral' | 'modelos' | 'skills' | 'voz' | 'android' | 'dados'
 
 type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K]
+  [K in keyof T]?: NonNullable<T[K]> extends readonly unknown[]
+    ? T[K]
+    : NonNullable<T[K]> extends object
+      ? DeepPartial<NonNullable<T[K]>>
+      : T[K]
 }
 
 const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
@@ -548,6 +553,8 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
+
+                <ScrumMasterSettingsSection cfg={cfg} setCfg={setCfg} patchConfig={patchConfig} />
 
                 <HandoffSettingsSection cfg={cfg} setCfg={setCfg} patchConfig={patchConfig} />
 

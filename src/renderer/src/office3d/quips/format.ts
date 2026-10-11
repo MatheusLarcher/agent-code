@@ -236,7 +236,7 @@ export const toolLabel = (name: string): string => (name.startsWith('mcp__') ? n
 
 const WHO: Record<string, string> = {
   principal: 'principal', executor: 'executor', critico: 'crítico', 'navegador-de-codigo': 'navegador de código',
-  memoria: 'memorista', po: 'PO', vigia: 'vigia', subagente: 'subagente',
+  memoria: 'memorista', po: 'PO', scrum: 'Scrum Master', vigia: 'vigia', subagente: 'subagente',
   'general-purpose': 'faz-tudo', Explore: 'explorador', Plan: 'planejador'
 }
 

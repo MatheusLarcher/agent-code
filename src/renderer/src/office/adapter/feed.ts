@@ -44,7 +44,8 @@ export interface OfficeFeed {
   vigiaAt: Readonly<Record<string, number>>
   poDiagnostics: Readonly<Record<string, PoProviderDiagnosticMsg>>
   memoristaDiagnostics: Readonly<Record<string, MemoristaProviderDiagnosticMsg>>
-  observersOn: Readonly<{ po: boolean; vigia: boolean; memorista: boolean }>
+  /** `scrum` = board.scrumMaster.enabled; opcional porque os feeds antigos (testes) não trazem — ausente, sem SM. */
+  observersOn: Readonly<{ po: boolean; vigia: boolean; memorista: boolean; scrum?: boolean }>
   stalledSince: Readonly<Record<string, number>>
   tracks: Readonly<Record<string, TrackMap>>
   projectIcons: Readonly<Record<string, string | null>>

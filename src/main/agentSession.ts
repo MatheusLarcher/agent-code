@@ -37,6 +37,8 @@ import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
 import { entregaMcpServerFor, entregaToolAutoAllowed } from './handoffTracking/entregaTools'
 import { sessionDeadlineNotice } from './handoffTracking/handoffDeadlineHook'
+import { activeScrumMaster } from './scrum/scrumRuntime'
+import { noteScrumAgentText } from './scrum/scrumFeed'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
@@ -1568,6 +1570,13 @@ export class AgentSession {
       cancelNote = note
       taskText = text ? `${note}\n\n${text}` : note
     }
+    // O Scrum Master parou este envio (scrum/scrumMaster.ts): a próxima mensagem,
+    // venha de onde vier, leva a nota uma vez — conferir os arquivos antes de seguir.
+    const scrumNote = activeScrumMaster()?.takeStopNote(this.opts.convId) ?? null
+    if (scrumNote) {
+      cancelNote = cancelNote ? `${scrumNote}\n\n${cancelNote}` : scrumNote
+      taskText = taskText ? `${scrumNote}\n\n${taskText}` : scrumNote
+    }
     const outText = taskText
     // Keep only user-owned material in the SDK's persisted user turn. The
     // complete docs outline and bounded relevant-memory excerpts are generated
@@ -1741,11 +1750,34 @@ export class AgentSession {
   }
 
   async interrupt(): Promise<AgentInterruptResult> {
+    const ack = await this.requestInterrupt('O usuário parou o turno.', true)
+    if (!ack) return { stillQueued: [] }
+    return {
+      stillQueued: ack.stillQueued.map((messageId: string) => ({
+        messageId,
+        text: this.submittedMessages.get(messageId)
+      }))
+    }
+  }
+
+  /**
+   * O corte do Scrum Master (scrum/scrumMaster.ts): interrompe o turno SEM as
+   * marcas do Stop do usuário — nada de `canceledPending`, a próxima mensagem (a
+   * cobrança) continua a tarefa em vez de descartá-la. `true`: havia turno e o
+   * pedido saiu (com recibo ou sem ele a tempo).
+   */
+  async interruptForScrum(): Promise<boolean> {
+    return (await this.requestInterrupt('O Scrum Master interrompeu o turno.', false)) !== null
+  }
+
+  /** Pede a interrupção ao CLI e solta as permissões. `null`: não havia turno para
+   *  cancelar. `cancel`: o Stop do usuário (marca `canceledPending`). */
+  private async requestInterrupt(reason: string, cancel: boolean): Promise<{ stillQueued: string[] } | null> {
     this.windowsControlScope.cancel()
     const q = this.q
     if (!q) {
-      this.releasePendingPermissions('O usuário parou o turno.')
-      return { stillQueued: [] }
+      this.releasePendingPermissions(reason)
+      return null
     }
 
     // O pedido sai ANTES do await e ANTES de soltar as permissões, nesta ordem
@@ -1759,7 +1791,7 @@ export class AgentSession {
       (value) => ({ ok: true as const, value: value as { still_queued?: string[] } | undefined }),
       () => ({ ok: false as const, value: undefined }) // fora de turno: não havia o que cancelar
     )
-    this.releasePendingPermissions('O usuário parou o turno.')
+    this.releasePendingPermissions(reason)
 
     let timer: NodeJS.Timeout | undefined
     const ack = await Promise.race([
@@ -1775,8 +1807,8 @@ export class AgentSession {
     // to disregard the canceled request. Vale também quando o recibo não veio a
     // tempo — o pedido de interrupção foi enviado do mesmo jeito; só o `false`
     // (o CLI recusou porque não havia turno) é que não cancela nada.
-    if (ack.ok === false) return { stillQueued: [] }
-    this.canceledPending = true
+    if (ack.ok === false) return null
+    if (cancel) this.canceledPending = true
     const stillQueued = ack.ok === 'timeout' ? [] : ack.value?.still_queued ?? []
     // Nada sobreviveu: acabou aqui. Quando o Stop pega a mensagem ANTES de o
     // turno começar, o SDK a descarta e não emite `result` nenhum — sem isto,
@@ -1784,12 +1816,7 @@ export class AgentSession {
     // o "tem agente ocupado" do relançador. Se o CLI ainda estiver produzindo,
     // o primeiro sinal de vida religa o turno (mesmo autocorretor da tela).
     if (stillQueued.length === 0) this.markTurnIdle()
-    return {
-      stillQueued: stillQueued.map((messageId: string) => ({
-        messageId,
-        text: this.submittedMessages.get(messageId)
-      }))
-    }
+    return { stillQueued }
   }
 
   /** Solta toda permissão/pergunta pendente com uma NEGATIVA. Chamado pelo Stop:
@@ -2457,6 +2484,8 @@ ${lines}
           for (const block of blocks) {
             if (block.type !== 'text' || typeof block.text !== 'string') continue
             for (const line of attentionLines(block.text)) publishHandoffNotice(this.opts.convId, 'atencao', line)
+            // A resposta do agente à cobrança do Scrum Master (scrumFeed.ts: só a primeira conta).
+            noteScrumAgentText(this.opts.convId, block.text)
           }
         }
         this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track, model)

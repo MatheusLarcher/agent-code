@@ -663,7 +663,7 @@ export function App(): JSX.Element {
   const [memoristaDiagnostics, setMemoristaDiagnostics] = useState<Record<string, MemoristaProviderDiagnosticMsg>>({})
   // Observador desligado nas Configurações some do elenco — mostrá-lo parado
   // para sempre seria dizer que existe alguém que não vai agir nunca.
-  const [observersOn, setObserversOn] = useState({ po: true, vigia: true, memorista: true })
+  const [observersOn, setObserversOn] = useState({ po: true, vigia: true, memorista: true, scrum: true })
   // Account-wide rate-limit usage (5h session / weekly / etc.) — deliberately
   // GLOBAL, not per-conversation: it comes from the Anthropic account, not from
   // any one chat, so it must survive switching conversations. Keyed by
@@ -3622,7 +3622,8 @@ export function App(): JSX.Element {
       setObserversOn({
         po: c.board?.po?.enabled !== false,
         vigia: c.vigia?.enabled !== false,
-        memorista: c.memorista?.enabled !== false
+        memorista: c.memorista?.enabled !== false,
+        scrum: c.board?.scrumMaster?.enabled !== false
       })
     })
     void window.api.codexStatus().then((s) => setCodexReady(s.connected))
@@ -3637,7 +3638,8 @@ export function App(): JSX.Element {
         setObserversOn({
           po: c.board?.po?.enabled !== false,
           vigia: c.vigia?.enabled !== false,
-          memorista: c.memorista?.enabled !== false
+          memorista: c.memorista?.enabled !== false,
+          scrum: c.board?.scrumMaster?.enabled !== false
         })
       )
       .catch(() => undefined)
@@ -3921,7 +3923,8 @@ export function App(): JSX.Element {
         poEnabled: observersOn.po,
         vigiaEnabled: observersOn.vigia,
         memorista: activeId ? memoristaDiagnostics[activeId] ?? null : null,
-        memoristaEnabled: observersOn.memorista
+        memoristaEnabled: observersOn.memorista,
+        scrumEnabled: observersOn.scrum
       }),
     [
       activeTracks,

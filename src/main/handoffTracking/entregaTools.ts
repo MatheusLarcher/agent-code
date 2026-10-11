@@ -11,6 +11,9 @@ import type { StartAgentOptions } from '../../shared/ipc'
 import { MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import { planEnviosOf, planProgress, type PlanProgress, type PlanRoteiro } from '../../shared/stepProgress'
 import { openPlan } from '../planning/planningStore'
+import { declaracaoInputError, SCRUM_DECLARACAO_MAX_MIN, SCRUM_SILENCIO_AVISO } from '../scrum/scrumMessages'
+import { activeScrumMaster, type ScrumMasterRuntime } from '../scrum/scrumRuntime'
+import { SCRUM_TETO_DECLARACAO } from '../scrum/scrumTypes'
 import { estimateInputError, type EntregaEstimateDone, type EntregaFound, type EntregaMiss, type EntregaTimeDone } from './entregaEstimate'
 import { activeHandoffTracker } from './handoffRuntime'
 import type { HandoffTracker } from './handoffTracker'
@@ -25,6 +28,8 @@ import type { HandoffTracker } from './handoffTracker'
  *   (estimativa do plano, congelada no envio) nunca muda por aqui.
  * - `entrega_tempo` só lê: é dela que o agente tira o "levou Y min" — o número
  *   nunca sai do texto do chat (modelos erram a própria duração 4–7×).
+ * - `entrega_aviso_demora` declara ao Scrum Master (scrum/scrumMaster.ts) o tempo
+ *   de relógio de uma tarefa demorada; responde e grava mesmo com o SM desligado.
  *
  * Toda resposta é texto pt-BR legível pelo modelo; falha vira frase, nunca stack
  * trace. Só existe nas sessões de handoff (`entregaServerApplies`).
@@ -33,7 +38,8 @@ import type { HandoffTracker } from './handoffTracker'
 export const ENTREGAS_MCP_SERVER = 'entregas'
 export const ENTREGA_ESTIMAR_TOOL = `mcp__${ENTREGAS_MCP_SERVER}__entrega_estimar`
 export const ENTREGA_TEMPO_TOOL = `mcp__${ENTREGAS_MCP_SERVER}__entrega_tempo`
-const ENTREGA_TOOLS: ReadonlySet<string> = new Set([ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL])
+export const ENTREGA_AVISO_DEMORA_TOOL = `mcp__${ENTREGAS_MCP_SERVER}__entrega_aviso_demora`
+const ENTREGA_TOOLS: ReadonlySet<string> = new Set([ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL, ENTREGA_AVISO_DEMORA_TOOL])
 
 /** O que as ferramentas usam do acompanhamento (o HandoffTracker real cumpre). */
 export type EntregaTracker = Pick<HandoffTracker, 'estimateEntrega' | 'entregaTime'>
@@ -45,6 +51,8 @@ export interface EntregaToolDeps {
   tracker?: () => EntregaTracker | null
   /** As etapas do plano do envio, numeradas pela posição no PLANO. Padrão: loadPlanProgress. */
   planProgress?: (envio: HandoffEnvio) => Promise<PlanProgress>
+  /** O Scrum Master ativo (a declaração de tarefa demorada). Padrão: scrumRuntime. */
+  scrum?: () => Pick<ScrumMasterRuntime, 'declare'> | null
 }
 
 /** De onde vêm o roteiro e os envios do plano. Cada um lança quando não consegue ler. */
@@ -275,6 +283,25 @@ export function buildEntregaTools(deps: EntregaToolDeps): AnyTool[] {
           const etapa = a.etapa?.trim() ? a.etapa : null
           const outcome = await tracker.entregaTime(deps.conversationId, etapa)
           return outcome.ok ? describeTime(outcome, await planPlace(outcome, loadPlan)) : describeMiss(outcome)
+        })
+    )),
+
+    erase(tool(
+      'entrega_aviso_demora',
+      'Declare ANTES de começar uma tarefa demorada (varredura, build longo) quanto tempo de relógio ela precisa. ' +
+        'Dentro desse tempo o Scrum Master não interrompe o seu turno por cobrança sem resposta. Vale sozinha até ' +
+        `${SCRUM_TETO_DECLARACAO}× o prazo da etapa em andamento; acima disso vale ${SCRUM_TETO_DECLARACAO}× e o usuário aprova o resto. ` +
+        `A resposta diz quanto tempo VALEU. ${SCRUM_SILENCIO_AVISO}`,
+      {
+        minutos: z.number().describe(`Minutos de RELÓGIO que a tarefa precisa, inteiro de 1 a ${SCRUM_DECLARACAO_MAX_MIN}.`),
+        motivo: z.string().describe('Qual é a tarefa demorada (ex.: "build completo", "varredura do repositório"), até 500 caracteres.')
+      },
+      async (a) =>
+        guard('entrega_aviso_demora', async () => {
+          const invalid = declaracaoInputError(a.minutos, a.motivo)
+          if (invalid) return `Nada registrado. ${invalid}`
+          const scrum = (deps.scrum ?? activeScrumMaster)()
+          return scrum ? scrum.declare(deps.conversationId, { minutos: a.minutos, motivo: a.motivo }) : OFF
         })
     ))
   ]

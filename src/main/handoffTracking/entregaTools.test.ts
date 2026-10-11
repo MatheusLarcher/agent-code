@@ -1,9 +1,10 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatEvent } from '../../shared/ipc'
 import { createPlan, openPlan, saveRoteiro } from '../planning/planningStore'
 import {
   buildEntregaTools,
+  ENTREGA_AVISO_DEMORA_TOOL,
   ENTREGA_ESTIMAR_TOOL,
   ENTREGA_TEMPO_TOOL,
   entregaMcpServerFor,
@@ -221,6 +222,28 @@ describe('entrega_tempo', () => {
   })
 })
 
+describe('entrega_aviso_demora', () => {
+  const avisar = (tools: Tool[], args: Record<string, unknown>): Promise<string> => call(tools, 'entrega_aviso_demora', args)
+
+  it('valida a entrada antes de chegar ao Scrum Master e repassa a declaração da conversa', async () => {
+    const declare = vi.fn(async () => 'VALEU 60 min')
+    const tools = buildEntregaTools({ conversationId: CONV, scrum: () => ({ declare }) })
+    expect(await avisar(tools, { minutos: 2.5, motivo: 'build' })).toMatch(/^Nada registrado\. "minutos" precisa ser um número inteiro/)
+    expect(await avisar(tools, { minutos: 10, motivo: '' })).toMatch(/^Nada registrado\. Diga o "motivo"/)
+    expect(declare).not.toHaveBeenCalled()
+    expect(await avisar(tools, { minutos: 100, motivo: 'varredura' })).toBe('VALEU 60 min')
+    expect(declare).toHaveBeenCalledWith(CONV, { minutos: 100, motivo: 'varredura' })
+  })
+
+  it('sem o Scrum Master no processo: avisa que nada foi registrado; ele falhando: nunca lança', async () => {
+    expect(await avisar(buildEntregaTools({ conversationId: CONV, scrum: () => null }), { minutos: 10, motivo: 'build' })).toMatch(
+      /^O acompanhamento das entregas não está ativo/
+    )
+    const boom = buildEntregaTools({ conversationId: CONV, scrum: () => ({ declare: async () => Promise.reject(new Error('x')) }) })
+    await expect(avisar(boom, { minutos: 10, motivo: 'build' })).resolves.toEqual(expect.any(String))
+  })
+})
+
 describe('"etapa N de M": a posição no PLANO (roteiro + envios do plano), igual às telas', () => {
   /** O roteiro do plano no disco do projeto: uma etapa antes das do prompt. */
   async function roteiro(h: Harness, etapas: string[]): Promise<void> {
@@ -279,17 +302,18 @@ describe('onde o servidor `entregas` existe', () => {
     expect(entregaMcpServerFor({ convId: 'c1', planning: { slug }, handoff: { slug } })).toBeNull()
   })
 
-  it('o servidor tem as duas ferramentas, com os nomes completos que o bloco do handoff cita', () => {
+  it('o servidor tem as três ferramentas, com os nomes completos que o bloco do handoff cita', () => {
     const server = entregaMcpServerFor({ convId: 'c1', handoff: { slug } }) as unknown as {
       instance: { _registeredTools?: Record<string, unknown> }
     }
-    expect(Object.keys(server.instance._registeredTools ?? {}).sort()).toEqual(['entrega_estimar', 'entrega_tempo'])
+    expect(Object.keys(server.instance._registeredTools ?? {}).sort()).toEqual(['entrega_aviso_demora', 'entrega_estimar', 'entrega_tempo'])
     expect([ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL]).toEqual(['mcp__entregas__entrega_estimar', 'mcp__entregas__entrega_tempo'])
   })
 
-  it('passam sem pedir permissão só na conversa de handoff, e só as duas', () => {
+  it('passam sem pedir permissão só na conversa de handoff, e só as três', () => {
     expect(entregaToolAutoAllowed({ handoff: { slug } }, ENTREGA_ESTIMAR_TOOL)).toBe(true)
     expect(entregaToolAutoAllowed({ handoff: { slug } }, ENTREGA_TEMPO_TOOL)).toBe(true)
+    expect(entregaToolAutoAllowed({ handoff: { slug } }, ENTREGA_AVISO_DEMORA_TOOL)).toBe(true)
     expect(entregaToolAutoAllowed({ handoff: { slug } }, 'mcp__entregas__outra')).toBe(false)
     // Um servidor do usuário chamado `entregas` numa conversa comum não ganha o atalho.
     expect(entregaToolAutoAllowed({}, ENTREGA_ESTIMAR_TOOL)).toBe(false)

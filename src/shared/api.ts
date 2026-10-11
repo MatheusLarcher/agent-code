@@ -104,6 +104,18 @@ import type { HandoffProjectAction, HandoffProjectSnapshot } from './handoffProj
 import type { PoAuthorizationMap } from './poAuthorization'
 import type { BoardPrintImageResult, BoardPrintsResult } from './boardPrints'
 import type { PoChatMessage } from './poChat'
+import type {
+  ScrumActionResult,
+  ScrumAskRequest,
+  ScrumAskResult,
+  ScrumChangedMsg,
+  ScrumChatHistoryRequest,
+  ScrumChatHistoryResult,
+  ScrumDecideRequest,
+  ScrumHistoryRequest,
+  ScrumHistoryResult,
+  ScrumPanelResult
+} from './scrumPanel'
 import type { ProjectColorMap } from './projectColor'
 import type {
   CloudInspectionDto,
@@ -394,6 +406,18 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
     conversationId?: string
     conversationTitle?: string
   }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }>
+  /** O painel do Scrum Master (shared/scrumPanel.ts): a aba Agora, os tiles e o selo de contestados. */
+  scrumPanel(): Promise<ScrumPanelResult>
+  /** A aba Histórico, filtrada no main (filtro, período e busca). */
+  scrumHistory(req: ScrumHistoryRequest): Promise<ScrumHistoryResult>
+  /** A conversa com o SM, paginada a partir do fim (guardada inteira, sem limite). */
+  scrumChatHistory(req?: ScrumChatHistoryRequest): Promise<ScrumChatHistoryResult>
+  /** Uma pergunta ao SM ou, com `contestar`, a marca de corte errado na decisão `sobre`. */
+  scrumAsk(req: ScrumAskRequest): Promise<ScrumAskResult>
+  /** Aprovar/Recusar a declaração de tarefa demorada acima do teto. */
+  scrumDecideDeclaration(req: ScrumDecideRequest): Promise<ScrumActionResult>
+  /** Uma linha nova no diário do SM (move o SM do escritório e relê o painel). */
+  onScrumChanged(cb: (m: ScrumChangedMsg) => void): () => void
   /** O quadro daquele projeto mudou (o agente avançou, ou o PO corrigiu). */
   onBoardChanged(cb: (msg: { projectId: string }) => void): () => void
   /** Tela de Planejamento (pasta de dados do app: <dataDir>/planning/<projeto>/<slug>/;

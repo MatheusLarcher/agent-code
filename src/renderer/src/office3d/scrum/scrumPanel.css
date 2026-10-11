@@ -1,0 +1,799 @@
+/*
+ * O "Diário do Scrum Master" (ScrumPanel.tsx): o molde do .mp (memoryPanel.css)
+ * com as cores do tema escuro do mockup 4a8a41 — todo texto com contraste >= 4,5:1.
+ */
+.smp {
+  --ink: #e8e6e3;
+  --ink-2: #c9c5bf;
+  --mute: #a3a09b;
+  --line: #3a3836;
+  --paper: #1f1e1d;
+  --card: #262624;
+  --card-2: #302e2c;
+  --sage: #8fa685;
+  --sage-2: #5d6e56;
+  --sage-on: #4f6247;
+  --proj: #6f9cf0;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(500px, 46%);
+  /* Acima do HUD (z 9), como a estante de Memórias. */
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px 22px 18px;
+  overflow-y: auto;
+  background: var(--paper);
+  color: var(--ink);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+  font: 13px/1.45 'Segoe UI', system-ui, sans-serif;
+  animation: o3d-screen-in 200ms ease-out;
+}
+
+.smp code {
+  background: #141312;
+  color: #f0ede8;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.smp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.smp-kicker,
+.smp-h {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--mute);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.smp-h {
+  margin: 8px 0 0;
+}
+
+.smp-head h2 {
+  margin: 6px 0 2px;
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.smp-sub {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.smp-close {
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.smp-off,
+.smp-err {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.smp-off {
+  background: var(--card-2);
+  color: var(--ink-2);
+}
+
+.smp-err {
+  background: #3e2422;
+  color: #f6d4cf;
+}
+
+.smp-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #b5d6a8;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- os três tiles de hoje ---- */
+.smp-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.smp-tile {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.smp-tile .n {
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.smp-tile .l {
+  color: var(--mute);
+  font-size: 11px;
+}
+
+.smp-tile.warn .n {
+  color: #e0a458;
+}
+
+.smp-tile.bad .n {
+  color: #e08a80;
+}
+
+/* ---- abas ---- */
+.smp-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.smp-tab {
+  border: 0;
+  background: transparent;
+  color: var(--mute);
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.smp-tab.on {
+  color: var(--ink);
+  border-bottom-color: var(--sage);
+}
+
+.smp-badge {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.smp-badge.bad {
+  background: #3e2422;
+  color: #f1a79e;
+}
+
+.smp-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---- chips, botões, busca ---- */
+.smp-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.smp-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.smp-chip.on {
+  background: var(--sage-on);
+  border-color: var(--sage-on);
+  color: #f2f5ef;
+}
+
+.smp-search {
+  flex: 1;
+  min-width: 140px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.smp-search::placeholder {
+  color: var(--mute);
+}
+
+.smp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.smp-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.smp-btn:hover:not(:disabled) {
+  background: var(--line);
+}
+
+.smp-btn.primary {
+  background: var(--sage-on);
+  border-color: var(--sage-on);
+  color: #f2f5ef;
+}
+
+.smp-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.smp-chip:focus-visible,
+.smp-btn:focus-visible,
+.smp-tab:focus-visible,
+.smp-agent:focus-visible,
+.smp-toggle:focus-visible,
+.smp-close:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 2px;
+}
+
+.smp-quiet {
+  color: var(--mute);
+  padding: 6px 2px;
+}
+
+/* ---- um envio: cabeçalho, projeto, trilha e a troca SM ↔ agente ---- */
+.smp-envio {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.smp-envio-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.smp-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.smp-agent small {
+  color: var(--mute);
+  font-weight: 400;
+}
+
+.smp-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--proj);
+}
+
+.smp-status {
+  flex: none;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #3d2f20;
+  color: #f0c48a;
+}
+
+.smp-status.parado {
+  background: #3e2422;
+  color: #f1a79e;
+}
+
+.smp-status.ok {
+  background: #26331f;
+  color: #b5d6a8;
+}
+
+.smp-projrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.smp-pico {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  border: 1.5px solid var(--pc, var(--proj));
+  background: color-mix(in srgb, var(--pc, var(--proj)) 22%, var(--card));
+  color: var(--pc, var(--proj));
+}
+
+.smp-pico img,
+.smp-pico svg {
+  max-width: 13px;
+  max-height: 13px;
+}
+
+.smp-pico.mini {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border-width: 0;
+}
+
+.smp-pico.mini img,
+.smp-pico.mini svg {
+  max-width: 10px;
+  max-height: 10px;
+}
+
+.smp-pname {
+  border-bottom: 2px solid var(--pc, var(--proj));
+  padding-bottom: 1px;
+  flex: none;
+}
+
+.smp-ppath {
+  color: var(--mute);
+  font-weight: 400;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smp-etapa {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+/* trilha: 0 ─ 100% ─ 150 ─ 200 ─ 300, com o ponteiro do tempo ativo */
+.smp-track {
+  position: relative;
+  height: 26px;
+  margin: 14px 8px 8px;
+}
+
+.smp-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 11px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #5d6e56 0 33%, #7a6533 33% 50%, #8a5a33 50% 66%, #8a4640 66% 100%);
+}
+
+.smp-m {
+  position: absolute;
+  top: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--sage-2);
+  transform: translateX(-50%);
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mute);
+}
+
+.smp-m.hit {
+  border-color: #e0a458;
+  color: #e0a458;
+  font-weight: 700;
+}
+
+.smp-m.hit.bad {
+  border-color: #e08a80;
+  color: #e08a80;
+}
+
+.smp-lbl {
+  position: absolute;
+  top: 22px;
+  transform: translateX(-50%);
+  font-size: 9.5px;
+  color: var(--mute);
+}
+
+.smp-now {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 26px;
+  background: var(--ink);
+  transform: translateX(-50%);
+}
+
+.smp-now::after {
+  content: attr(data-t);
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* a conversa: balão do Scrum (sálvia escura), a resposta do agente e a sua (VC) */
+.smp-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.smp-msg {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.smp-who {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--sage-on);
+  color: #f2f5ef;
+}
+
+.smp-msg.agent-msg .smp-who {
+  background: var(--card);
+  color: var(--proj);
+  border: 2px solid var(--proj);
+}
+
+.smp-msg.me-msg .smp-who {
+  background: #d97757;
+  color: #1f1e1d;
+}
+
+.smp-bubble {
+  border-radius: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.smp-msg.sm-msg .smp-bubble {
+  background: #29331f;
+  border-color: #3e4c36;
+}
+
+.smp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  color: var(--mute);
+  font-size: 11px;
+  margin-bottom: 3px;
+  white-space: normal;
+}
+
+.smp-reply-note {
+  color: var(--mute);
+  font-style: italic;
+}
+
+.smp-verdict {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--card-2);
+  color: var(--ink-2);
+}
+
+.smp-verdict.just {
+  background: #26331f;
+  color: #b5d6a8;
+}
+
+.smp-verdict.desvio {
+  background: #3d2f20;
+  color: #f0c48a;
+}
+
+.smp-verdict.parar {
+  background: #3e2422;
+  color: #f1a79e;
+}
+
+.smp-decl {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #3d2f20;
+  color: #f6e2c4;
+  font-size: 12px;
+}
+
+/* ---- Histórico ---- */
+.smp-hist {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.smp-ev {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.smp-ev-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  background: var(--card-2);
+  color: var(--ink-2);
+}
+
+.smp-ev.corte .smp-ev-ico {
+  background: #3e2422;
+  color: #f1a79e;
+}
+
+.smp-ev.cobra .smp-ev-ico {
+  background: #3d2f20;
+  color: #f0c48a;
+}
+
+.smp-ev.ok .smp-ev-ico {
+  background: #26331f;
+  color: #b5d6a8;
+}
+
+.smp-ev.contestado {
+  border-color: #8a4640;
+  box-shadow: inset 3px 0 0 #e08a80;
+}
+
+.smp-ev-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+}
+
+.smp-ev-meta {
+  color: var(--mute);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+.smp-ev-why {
+  color: var(--ink-2);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.smp-ev-reply {
+  font-size: 12px;
+}
+
+.smp-ev-flag {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #3e2422;
+  color: #f6d4cf;
+  font-size: 12px;
+}
+
+.smp-projtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 1px 8px 1px 2px;
+  border-radius: 999px;
+  border: 1px solid var(--pc, var(--proj));
+}
+
+/* ---- Conversa com o SM ---- */
+.smp-chat-note {
+  font-size: 11.5px;
+  color: var(--mute);
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+}
+
+.smp-older {
+  align-self: center;
+}
+
+.smp-chat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.smp-ctx {
+  font-size: 11.5px;
+  color: var(--mute);
+  text-align: center;
+}
+
+.smp-ctx b {
+  color: var(--ink-2);
+}
+
+.smp-composer {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.smp-composer textarea {
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.smp-composer textarea::placeholder {
+  color: var(--mute);
+}
+
+.smp-composer-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.smp-ctx-chip {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: #3e2422;
+  color: #f1a79e;
+  cursor: pointer;
+}
+
+/* ---- rodapé ---- */
+.smp-foot {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--mute);
+  font-size: 11.5px;
+}
+
+.smp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.smp-toggle i {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  /* Desligada também com contraste >= 3:1 sobre o fundo. */
+  background: #75716b;
+  position: relative;
+  display: inline-block;
+}
+
+.smp-toggle i::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f2f5ef;
+  transition: left 120ms ease-out;
+}
+
+.smp-toggle.on i {
+  background: var(--sage-on);
+}
+
+.smp-toggle.on i::after {
+  left: 14px;
+}

@@ -50,6 +50,18 @@ import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from '../sha
 import type { OfficeCallOpen, OfficeCallsState } from '../shared/officeCall'
 import type { PlanningPeekDto } from '../shared/officeApi'
 import type { MemoryListItem, MemoryReadResult } from '../shared/memoryPanel'
+import type {
+  ScrumActionResult,
+  ScrumAskRequest,
+  ScrumAskResult,
+  ScrumChangedMsg,
+  ScrumChatHistoryRequest,
+  ScrumChatHistoryResult,
+  ScrumDecideRequest,
+  ScrumHistoryRequest,
+  ScrumHistoryResult,
+  ScrumPanelResult
+} from '../shared/scrumPanel'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from '../shared/central'
 import type {
   ConversationQueryDto,
@@ -318,6 +330,12 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
     conversationId?: string
     conversationTitle?: string
   }): Promise<{ ok: true; messages: PoChatMessage[] } | { ok: false; message: string }> => ipcRenderer.invoke(Channels.poChatSend, req),
+  scrumPanel: (): Promise<ScrumPanelResult> => ipcRenderer.invoke(Channels.scrumPanel),
+  scrumHistory: (req: ScrumHistoryRequest): Promise<ScrumHistoryResult> => ipcRenderer.invoke(Channels.scrumHistory, req),
+  scrumChatHistory: (req?: ScrumChatHistoryRequest): Promise<ScrumChatHistoryResult> => ipcRenderer.invoke(Channels.scrumChatHistory, req ?? {}),
+  scrumAsk: (req: ScrumAskRequest): Promise<ScrumAskResult> => ipcRenderer.invoke(Channels.scrumAsk, req),
+  scrumDecideDeclaration: (req: ScrumDecideRequest): Promise<ScrumActionResult> => ipcRenderer.invoke(Channels.scrumDecideDeclaration, req),
+  onScrumChanged: (cb: (m: ScrumChangedMsg) => void): (() => void) => on(Channels.scrumChanged, cb),
   onBoardChanged: (cb: (m: { projectId: string }) => void): (() => void) => on(Channels.boardChanged, cb),
   planningList: (req: { projectCwd: string }): Promise<PlanningResult<{ slugs: string[] }>> =>
     ipcRenderer.invoke(Channels.planningList, req),

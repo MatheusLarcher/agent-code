@@ -5,12 +5,13 @@
  *
  * - `fila`: o envio seguinte saiu sozinho (com pendência do anterior, ou retomado);
  * - `decisao`: uma pergunta foi resolvida pela opção recomendada;
- * - `atencao`: linha "ATENÇÃO:" / "DESVIO DO PLANO:" do agente.
+ * - `atencao`: linha "ATENÇÃO:" / "DESVIO DO PLANO:" do agente;
+ * - `scrum`: resumo do Scrum Master (marco de 200%+, corte, parada, declaração acima do teto).
  */
 
 export const HANDOFF_NOTICE_EVENT = 'handoff-aviso'
 
-export type HandoffNoticeTipo = 'fila' | 'decisao' | 'atencao'
+export type HandoffNoticeTipo = 'fila' | 'decisao' | 'atencao' | 'scrum'
 
 export interface HandoffNotice {
   convId: string
@@ -20,7 +21,7 @@ export interface HandoffNotice {
   at: number
 }
 
-const TIPOS: readonly HandoffNoticeTipo[] = ['fila', 'decisao', 'atencao']
+const TIPOS: readonly HandoffNoticeTipo[] = ['fila', 'decisao', 'atencao', 'scrum']
 
 /** "Envio N/M": a posição do envio no lote (prompts do plano, sem rotina nem tirados da fila). */
 export function envioPositionLabel(position: { n: number; m: number }): string {
@@ -42,7 +43,7 @@ export function handoffNoticeText(notice: Pick<HandoffNotice, 'tipo' | 'texto'>,
     const opcao = notice.texto.replace(/^Decidido sozinho:\s*/u, '')
     return conv ? `Decidido sozinho em ${conv}: ${opcao}` : `Decidido sozinho: ${opcao}`
   }
-  if (notice.tipo === 'atencao' && conv) return `${conv} — ${notice.texto}`
+  if ((notice.tipo === 'atencao' || notice.tipo === 'scrum') && conv) return `${conv} — ${notice.texto}`
   return notice.texto
 }
 

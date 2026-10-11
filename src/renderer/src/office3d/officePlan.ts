@@ -263,6 +263,18 @@ export const PO_SPOTS: ReadonlyArray<{ x: number; z: number; yaw: number }> = [
 ].map((s) => ({ ...s, yaw: facingBoard(s.x, s.z) }))
 
 /**
+ * Lugares do Scrum Master: do OUTRO lado do quadro, entre a borda direita dele e o vidro da sala de reunião
+ * (MEETING.x0), virados para o quadro e fora do enquadramento do clique nele (layout.test.ts). A faixa é
+ * estreita (0,43 m), então os lugares descem em z em vez de abrir em x.
+ */
+export const SCRUM_SPOTS: ReadonlyArray<{ x: number; z: number; yaw: number }> = [
+  { x: 1.45, z: -6.2 },
+  { x: 1.45, z: -5.6 },
+  { x: 1.45, z: -5.0 },
+  { x: 1.45, z: -4.4 }
+].map((s) => ({ ...s, yaw: facingBoard(s.x, s.z) }))
+
+/**
  * A bandeja da fila (uma folha por prompt esperando): numa mesinha alta encostada na parede do fundo, entre
  * o kanban e a planta do lounge, diante do lugar do PO. Centro, tampo (w × d) e altura; `standZ` = onde o PO
  * fica para pegar a folha de cima.

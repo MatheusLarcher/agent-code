@@ -39,6 +39,7 @@ import { ollamaSelectable, selectableModelIds } from '../shared/selectableModels
 import { registerProviderStatusIpc } from './providerStatus'
 import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
+import { watchRendererGone } from './mcpInbound/rendererLifecycle'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk, resolveRemoteRoot } from './remote/buildApk'
@@ -51,6 +52,7 @@ import {
   isAutoModel,
   OPENAI_MODELS,
   REMOTE_RELAY_WS,
+  scrumMasterConfig,
   type BoardItemStatus
 } from '../shared/ipc'
 import {
@@ -85,7 +87,7 @@ import {
   storableSessionAccount
 } from './accounts'
 import { registerClaudeAccountsIpc } from './accounts/accountsIpc'
-import { setClaudeObserverAccounts } from './observerQuery'
+import { askObserver, setClaudeObserverAccounts } from './observerQuery'
 import { registerOutboxIpc } from './outboxIpc'
 import { registerCentralIpc, type CentralIpcHandle } from './central/centralIpc'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
@@ -119,7 +121,17 @@ import { holdQueued, nextQueuedPrompt } from './handoffTracking/handoffQueueEdit
 import { createPoAuthorizations } from './po/poAuthorizationBoot'
 import { HandoffTracker } from './handoffTracking/handoffTracker'
 import { HandoffEtapasCache } from './handoffTracking/handoffEtapasView'
-import { onHandoffNotice } from './handoffTracking/handoffNotices'
+import { onHandoffNotice, publishHandoffNotice } from './handoffTracking/handoffNotices'
+import { ScrumMaster } from './scrum/scrumMaster'
+import { createScrumLogWriter, defaultScrumLogFile, readScrumLog, readScrumLogStrict } from './scrum/scrumLog'
+import { createScrumFeed, setActiveScrumFeed } from './scrum/scrumFeed'
+import { ScrumChatService } from './scrum/scrumChatService'
+import { ScrumChatStore } from './scrum/scrumChatStore'
+import { registerScrumIpc } from './scrum/scrumIpc'
+import { loadPlanProgress } from './handoffTracking/entregaTools'
+import { scrumEscala } from './scrum/scrumMarks'
+import { setActiveScrumMaster } from './scrum/scrumRuntime'
+import { SCRUM_ESCALA_ENV, type ScrumDecisao } from './scrum/scrumTypes'
 import { startHandoffSweep } from './handoffTracking/handoffSweep'
 import { exportFlowPdf } from './planning/flowPdfExport'
 import { registerPlanningMockupsIpc } from './planning/planningMockups'
@@ -584,6 +596,34 @@ const projectQueue = createProjectQueue({
   turnRunning: (conversationId) => handoffTracker.isTurnRunning(conversationId),
   lastActivityMs: (conversationId) => handoffTracker.lastActivityMs(conversationId)
 })
+
+// O diário do SM com aviso à tela (o painel e o SM do escritório) e a resposta do agente à cobrança.
+const scrumWriter = createScrumLogWriter()
+const scrumFeed = createScrumFeed({ write: scrumWriter, emit: (decisao) => send(Channels.scrumChanged, { decisao }) })
+setActiveScrumFeed(scrumFeed)
+/** O diário inteiro, depois das escritas em fila (a tela relê no `scrumChanged`). */
+const scrumHistory = async (): Promise<ScrumDecisao[]> => {
+  await scrumWriter.idle()
+  return readScrumLog()
+}
+
+// O Scrum Master (scrum/): a cada passada da varredura, cobra a etapa que passou
+// do prazo (150/200/300%), corta o agente travado e, no 300%, pode parar o envio.
+const scrumMaster = new ScrumMaster({
+  tracker: handoffTracker,
+  liveConversations: () => [...sessions].filter(([, s]) => s.liveOptions().handoff && s.isAlive()).map(([id]) => id),
+  interrupt: async (convId) => (await sessions.get(convId)?.interruptForScrum()) ?? false,
+  send: async (convId, text) => sessions.get(convId)?.send(text),
+  config: () => scrumMasterConfig(loadConfig().board ?? DEFAULT_CONFIG.board),
+  conversation: async (id) =>
+    (await storageLifecycle.repository().loadConversations({ ids: [id], includeDeleted: true }).catch(() => []))[0]?.payload ?? null,
+  ask: askObserver,
+  log: scrumFeed.log,
+  publish: (convId, texto) => void publishHandoffNotice(convId, 'scrum', texto),
+  history: scrumHistory,
+  escala: scrumEscala(process.env[SCRUM_ESCALA_ENV], app.isPackaged)
+})
+setActiveScrumMaster(scrumMaster)
 
 /** Uma escrita fora do acompanhamento (faixa, SEGURAR do PO): a tela relê e a fila do projeto revê a pasta. */
 function notifyHandoffChanged(conversationId: string): void {
@@ -1365,9 +1405,9 @@ function createWindow(startMinimized = false): void {
       win.minimize()
     })
   }
-  // Recarregou (F5) ou trocou de página: até o renderer avisar de novo que está
+  // Recarregou (F5) ou o renderer morreu: até ele avisar de novo que está
   // pronto, as tarefas do MCP de entrada esperam no main em vez de se perder.
-  mainWindow.webContents.on('did-start-loading', () => mcpInbound.markRendererGone())
+  watchRendererGone(mainWindow.webContents, () => mcpInbound.markRendererGone())
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     // Mockup .html local: navegador padrão, mesmo com .html associado ao VS Code.
@@ -1784,6 +1824,34 @@ export function registerIpc(): void {
       handoffTracker.onRegistered(envios)
       await projectQueue.addPlan(envios).catch((err) => console.warn('[fala-po] fila do projeto:', (err as Error)?.message ?? err))
       for (const id of new Set(envios.map((e) => e.conversationId))) notifyHandoffChanged(id)
+    }
+  })
+  // O painel do Scrum Master no escritório: só lê o banco; a conversa com o SM é arquivo.
+  const scrumChatStore = new ScrumChatStore()
+  const scrumConfig = () => scrumMasterConfig(loadConfig().board ?? DEFAULT_CONFIG.board)
+  registerScrumIpc({
+    repository: () => {
+      try {
+        return storageLifecycle.repository()
+      } catch {
+        return null
+      }
+    },
+    master: scrumMaster,
+    config: scrumConfig,
+    history: scrumHistory,
+    historyStrict: async () => {
+      await scrumWriter.idle()
+      return readScrumLogStrict()
+    },
+    log: scrumFeed.log,
+    logFile: () => defaultScrumLogFile(),
+    chat: new ScrumChatService({ store: scrumChatStore, history: scrumHistory, log: scrumFeed.log, config: scrumConfig, ask: askObserver }),
+    chatStore: scrumChatStore,
+    place: async (envio, etapaId) => {
+      const progress = await loadPlanProgress(envio)
+      const step = progress.steps.find((s) => s.id === etapaId)
+      return step ? { n: step.n, total: progress.total } : null
     }
   })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
@@ -3230,7 +3298,21 @@ app.whenReady().then(async () => {
   if (storageAvailable) stopTaskReaper = startTaskReaper(undefined, (line) => console.log(line))
   // A sessão de handoff que morre calada não manda evento: a varredura marca o
   // envio parado e grava o tempo ativo de quem está rodando.
-  if (storageAvailable) stopHandoffSweep = startHandoffSweep(handoffTracker, undefined, (line) => console.log(line))
+  if (storageAvailable) {
+    stopHandoffSweep = startHandoffSweep(
+      {
+        loadKnown: () => handoffTracker.loadKnown(),
+        // O Scrum Master olha depois de o tempo ativo ser gravado; sem segurar a próxima passada.
+        sweep: async () => {
+          const outcome = await handoffTracker.sweep()
+          void scrumMaster.onSweep()
+          return outcome
+        }
+      },
+      undefined,
+      (line) => console.log(line)
+    )
+  }
   // Ponte do Chrome do usuário: precisa da config (token) já carregada.
   if (storageAvailable) void startChromeBridge((status) => send(Channels.chromeBridgeStatusChanged, status))
   // Re-arm the LAN remote bridge if the user had it ON before closing the app, so

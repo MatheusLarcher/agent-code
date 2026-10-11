@@ -189,6 +189,29 @@ describe('configuração persistida', () => {
     expect(d.transcribeEngine).toBe('whisper')
   })
 
+  it('Scrum Master: ligado, Sonnet 5.5 e pode parar por padrão; merge aninhado não apaga o modelo', () => {
+    const padrao = { enabled: true, model: 'claude-sonnet-5-5', podeParar: true }
+    expect(defaultAppConfig().board.scrumMaster).toEqual(padrao)
+    // Config antiga, sem o bloco: cai no padrão.
+    expect(parseStoredAppConfig('{}').board.scrumMaster).toEqual(padrao)
+    expect(parseStoredAppConfig(JSON.stringify({ board: { requirePlan: false } })).board.scrumMaster).toEqual(padrao)
+    // O padrão nunca é compartilhado com DEFAULT_CONFIG.
+    expect(defaultAppConfig().board.scrumMaster).not.toBe(DEFAULT_CONFIG.board.scrumMaster)
+
+    const comModelo = mergeAppConfig(defaultAppConfig(), { board: { scrumMaster: { model: 'claude-haiku-5-5' } } })
+    const desligado = mergeAppConfig(comModelo, { board: { scrumMaster: { enabled: false } } })
+    expect(desligado.board.scrumMaster).toEqual({ enabled: false, model: 'claude-haiku-5-5', podeParar: true })
+    // Gravar o PO não mexe no SM, e vice-versa.
+    expect(mergeAppConfig(desligado, { board: { po: { enabled: false } } }).board.scrumMaster).toEqual(desligado.board.scrumMaster)
+    expect(mergeAppConfig(desligado, { board: { scrumMaster: { podeParar: false } } }).board.po).toEqual(desligado.board.po)
+    // Persistido e relido.
+    expect(parseStoredAppConfig(JSON.stringify(desligado)).board.scrumMaster).toEqual(desligado.board.scrumMaster)
+
+    expect(() => mergeAppConfig(defaultAppConfig(), { board: { scrumMaster: { enabled: 'sim' } } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { board: { scrumMaster: { model: '' } } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { board: { scrumMaster: { limite: 3 } } })).toThrow()
+  })
+
   it('modelo do Whisper: small é aceito; desconhecido ou de tipo errado volta a turbo-q8', () => {
     const atual = defaultAppConfig()
     expect(mergeAppConfig(atual, { voice: { whisperModel: 'small-fp32' } }).voice.whisperModel).toBe('small-fp32')

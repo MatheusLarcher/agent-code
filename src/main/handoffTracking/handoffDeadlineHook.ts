@@ -1,6 +1,7 @@
 import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { StartAgentOptions } from '../../shared/ipc'
 import type { PlanProgress } from '../../shared/stepProgress'
+import { activeScrumMaster, type ScrumMasterRuntime } from '../scrum/scrumRuntime'
 import { entregaServerApplies, loadPlanProgress } from './entregaTools'
 import { rememberPlanSteps } from './handoffDeadline'
 import { activeHandoffTracker } from './handoffRuntime'
@@ -62,7 +63,8 @@ export class PlanPositions {
 const planPositions = new PlanPositions()
 
 /**
- * O texto que o hook anexa ao resultado da ferramenta, ou `null`. Só na conversa
+ * O texto que o hook anexa ao resultado da ferramenta — o aviso de prazo e,
+ * depois dele, a cobrança pendente do Scrum Master —, ou `null`. Só na conversa
  * de handoff (a mesma regra do servidor `entregas`: nunca a comum nem o Agent
  * Manager) e só no fio PRINCIPAL: o subagente (`agentId`) descarta o próprio
  * contexto ao terminar, e o marco seria gasto sem chegar a quem conduz a etapa —
@@ -73,16 +75,27 @@ export async function sessionDeadlineNotice(
   role: DeadlineHookRole,
   agentId: string | undefined,
   trackerOf: () => DeadlineNoticeTracker | null = activeHandoffTracker,
-  positions: PlanPositions = planPositions
+  positions: PlanPositions = planPositions,
+  scrumOf: () => Pick<ScrumMasterRuntime, 'takeCharge'> | null = activeScrumMaster
 ): Promise<string | null> {
   if (!entregaServerApplies(role) || agentId) return null
+  let notice: string | null = null
   try {
     const tracker = trackerOf()
-    if (!tracker) return null
-    // Sem await: a posição no plano chega para o próximo aviso, nunca segura este.
-    void positions.refresh(role.convId, tracker)
-    return await tracker.deadlineNotice(role.convId)
+    if (tracker) {
+      // Sem await: a posição no plano chega para o próximo aviso, nunca segura este.
+      void positions.refresh(role.convId, tracker)
+      notice = await tracker.deadlineNotice(role.convId)
+    }
   } catch {
-    return null
+    notice = null
   }
+  // A cobrança pendente do Scrum Master: só um mapa em memória, depois do aviso de prazo.
+  let charge: string | null = null
+  try {
+    charge = scrumOf()?.takeCharge(role.convId) ?? null
+  } catch {
+    charge = null
+  }
+  return [notice, charge].filter(Boolean).join('\n\n') || null
 }

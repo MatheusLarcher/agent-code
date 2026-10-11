@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest'
 import type { HandoffQueueGateResult } from '../../shared/api'
+import { isStallMotivo } from '../../shared/handoffTracking'
 import { Channels, type ChatEvent } from '../../shared/ipc'
 import { registerHandoffQueueIpc, STOP_HOLD_REASON, type HandoffQueueIpcListener } from './handoffQueueIpc'
 import { STOP_MOTIVO } from './handoffRules'
@@ -109,6 +110,33 @@ describe('Stop do usuário: a fila fica parada e não tenta de novo sozinha', ()
     h.emit(turnStart)
     await end(h, ok)
     expect(await g()).toMatchObject({ decision: { kind: 'next', envio: { conteudo: 'Prompt 2' } } })
+  })
+
+  it('a parada do Scrum Master: parada com o motivo dele (não é inatividade) e a fila espera', async () => {
+    const h = await harness()
+    await running(h)
+    const motivo = 'Scrum Master: laço sem saída no typecheck'
+    h.tracker.noteStop(CONV, motivo)
+    await end(h, { kind: 'result', id: 'r1', isError: true, text: 'interrompido', durationMs: 1 })
+    await end(h, { kind: 'error', id: 'e1', text: 'stream encerrado' })
+    expect((await h.envios())[0]).toMatchObject({ status: 'parada', motivo })
+    expect(isStallMotivo(motivo)).toBe(false)
+    expect(await gate(h)()).toMatchObject({ decision: { kind: 'hold', motivo: STOP_HOLD_REASON } })
+  })
+
+  it('o corte do Scrum Master não fecha o envio: segue em execução, a fila não anda, e o turno seguinte conclui', async () => {
+    const h = await harness()
+    await running(h)
+    h.tracker.noteScrumCut(CONV, true)
+    await end(h, { kind: 'result', id: 'r1', isError: true, text: 'interrompido', durationMs: 1 })
+    await end(h, { kind: 'error', id: 'e1', text: 'stream encerrado' })
+    expect((await h.envios())[0].status).toBe('em_execucao')
+    expect(await gate(h)()).not.toMatchObject({ decision: { kind: 'next' } })
+    // A mensagem do SM abre o turno seguinte, que termina a etapa.
+    h.advance(1_000)
+    h.emit(turnStart)
+    await end(h, ok, true)
+    expect((await h.envios())[0].status).toBe('concluida')
   })
 
   it('Stop que pega o prompt antes de o turno começar (sem `result`): o envio fica parado', async () => {

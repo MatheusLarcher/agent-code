@@ -41,7 +41,7 @@ function interruptedNote(interrupted: readonly string[] | null): string {
 }
 
 type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'> &
-  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'isAlive' | 'injectNow' | 'storageRestored' | 'restartActivity'>>
+  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'isAlive' | 'injectNow' | 'storageRestored' | 'restartActivity' | 'interruptForScrum'>>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 /** Troca de conta com o turno fechado: a de fim de turno e a manual do painel. */
@@ -106,14 +106,9 @@ export class ProviderFailoverSession {
     this.create()
   }
 
-  private accountId(): string {
-    return this.options.claudeAccountId ?? DEFAULT_ACCOUNT_ID
-  }
-
+  private accountId(): string { return this.options.claudeAccountId ?? DEFAULT_ACCOUNT_ID }
   /** A troca entre contas vale aqui? Claude, mais de uma conta. */
-  private accountsInPlay(): boolean {
-    return !!this.accounts?.multiple() && providerForModel(this.options.model) === 'claude'
-  }
+  private accountsInPlay(): boolean { return !!this.accounts?.multiple() && providerForModel(this.options.model) === 'claude' }
 
   private create(): void {
     const generation = ++this.generation
@@ -477,6 +472,12 @@ export class ProviderFailoverSession {
       await this.complete()
     }
     return receipt
+  }
+  /** Corte do Scrum Master, sem as marcas do Stop: `false` sem turno ou no meio de uma troca. */
+  async interruptForScrum(): Promise<boolean> {
+    if (this.disposed || this.switching || !this.current.interruptForScrum) return false
+    this.stopped = true
+    return this.current.interruptForScrum()
   }
   dispose(): void {
     this.disposed = true

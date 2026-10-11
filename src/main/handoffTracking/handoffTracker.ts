@@ -2,13 +2,13 @@ import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ChatEvent } from '../../shared/ipc'
 import type { HandoffRepository } from '../persistence/types'
 import type { EntregaEstimateOutcome, EntregaEstimateRequest, EntregaTimeOutcome } from './entregaEstimate'
-import { DEADLINE_NOTICE_TIMEOUT_MS, withTimeout } from './handoffDeadline'
+import { DEADLINE_NOTICE_TIMEOUT_MS, queuedNotice } from './handoffDeadline'
 import { HandoffJobs, type HandoffBoard, type HandoffCorrection } from './handoffJobs'
 import { handoffContentHash } from './handoffModel'
 import { HandoffReconciler } from './handoffReconcile'
 import * as rules from './handoffRules'
 import { setActiveHandoffTracker } from './handoffRuntime'
-import { closeSlice, ConvQueues, newConvState, rememberSend, type ConvState } from './handoffState'
+import { closeSlice, ConvQueues, newConvState, rememberSend, resetTurnMarks, turnEnd, type ConvState } from './handoffState'
 import { BOOT_GRACE_MS, loadKnownConversations, sweepConversations, type SweepContext } from './handoffTrackerSweep'
 
 export type { HandoffBoard, HandoffCorrection } from './handoffJobs'
@@ -93,7 +93,7 @@ export class HandoffTracker {
       if (event.kind === 'task-list') return this.flushBeforeCards(convId)
       if (event.kind === 'turn-start') {
         // Um turno novo (o usuário retomou): o Stop do anterior deixa de valer.
-        s.stoppedByUser = false
+        resetTurnMarks(s)
         return this.openTurn(convId, s, at)
       }
       // `result`/`error` encerram o turno — e as pendências: há resoluções
@@ -102,19 +102,19 @@ export class HandoffTracker {
         s.turnRunning = false
         s.pending.clear()
       })
-      const stopped = s.stoppedByUser
+      const end = turnEnd(s)
       if (event.kind === 'result') {
-        // Turno parado pelo usuário: o fim dele não é erro (nem conclui o que faltou).
-        const turnError = event.isError && !stopped ? event.text.trim() || 'erro sem texto' : null
+        // Turno parado ou cortado pelo Scrum Master: o fim dele não é erro (nem conclui o que faltou).
+        const turnError = event.isError && !end.stopped && !end.cut ? event.text.trim() || 'erro sem texto' : null
         return this.enqueue(convId, async () => {
           await this.jobs.addTime(convId, ms)
-          await this.jobs.result(convId, at, turnError, stopped)
+          await this.jobs.result(convId, at, turnError, end)
         })
       }
       const recoverable = rules.isRecoverableError(event)
       this.enqueue(convId, async () => {
         await this.jobs.addTime(convId, ms)
-        await this.jobs.error(convId, event.text, recoverable, stopped)
+        await this.jobs.error(convId, event.text, recoverable, end)
       })
     })
   }
@@ -134,6 +134,8 @@ export class HandoffTracker {
 
   /** Abre o turno: fecha a fatia anterior e começa a contar o tempo ativo. */
   private openTurn(convId: string, s: ConvState, at: number): void {
+    // Também o turno aberto pela atividade (sem `turn-start`): o corte do anterior acabou.
+    s.scrumCut = false
     const ms = closeSlice(s, at, () => {
       if (!s.turnRunning) s.turnStartedAt = at
       s.turnRunning = true
@@ -172,13 +174,21 @@ export class HandoffTracker {
     })
   }
 
-  /** Stop do usuário (não é erro): o envio fica PARADO e a fila espera até um turno novo ou o "mesmo assim". */
-  noteStop(convId: string): void {
+  /** Stop do usuário (não é erro): o envio fica PARADO e a fila espera até um turno novo ou o "mesmo assim".
+   *  `motivo`: a parada do Scrum Master (no lugar de STOP_MOTIVO), pelo mesmo caminho. */
+  noteStop(convId: string, motivo: string | null = null): void {
     const s = this.states.get(convId)
     if (!s) return
-    s.stoppedByUser = true
+    Object.assign(s, { stoppedByUser: true, stopMotivo: motivo, scrumCut: false })
     // O Stop que pega o prompt antes de o turno começar não rende `result`: o job cobre.
-    this.guard('noteStop', () => this.enqueue(convId, () => this.jobs.stopped(convId)))
+    this.guard('noteStop', () => this.enqueue(convId, () => this.jobs.stopped(convId, motivo)))
+  }
+
+  /** O Scrum Master vai cortar o turno (`true`, ANTES de interromper: o `result` pode
+   *  chegar antes do recibo) ou o pedido não pegou (`false`). O fim cortado não fecha o envio. */
+  noteScrumCut(convId: string, on: boolean): void {
+    const s = this.states.get(convId)
+    if (s) s.scrumCut = on && !s.stoppedByUser
   }
 
   /** O último turno da conversa foi parado pelo usuário (a fila do quadro espera ele). */
@@ -201,7 +211,7 @@ export class HandoffTracker {
       })
       this.enqueue(convId, async () => {
         await this.jobs.addTime(convId, ms)
-        if (wasRunning) await this.jobs.sessionEnded(convId, s.stoppedByUser)
+        if (wasRunning) await this.jobs.sessionEnded(convId, s.stoppedByUser, s.stopMotivo)
         else await this.jobs.permission(convId)
       })
     })
@@ -273,10 +283,10 @@ export class HandoffTracker {
     return this.exclusive(marked.conversationId, () => this.jobs.correct(marked.conversationId, marked.id, req, at))
   }
 
-  /** O envio corrente da conversa (o mais recente já enviado), ou `null`. */
-  async currentEnvio(convId: string): Promise<HandoffEnvio | null> {
+  /** O envio corrente da conversa (o mais recente já enviado), ou `null`; `live`: com o tempo ativo em curso. */
+  async currentEnvio(convId: string, live = false): Promise<HandoffEnvio | null> {
     try {
-      return await this.jobs.currentEnvio(convId)
+      return await this.jobs.currentEnvio(convId, live ? this.unflushedActiveMs(convId) : 0)
     } catch (err) {
       this.warn('currentEnvio', err)
       return null
@@ -335,22 +345,9 @@ export class HandoffTracker {
   async deadlineNotice(convId: string): Promise<string | null> {
     const s = this.states.get(convId)
     if (!s) return null
+    const read = (): Promise<string | null> => this.jobs.deadlineNotice(convId, this.unflushedActiveMs(convId))
     try {
-      if (s.noticeBusy || (s.noticeCarry === null && this.now() < s.noticeAt)) return null
-      let late = false
-      s.noticeBusy = true
-      const job = this.exclusive(convId, async () => {
-        try {
-          const text = s.noticeCarry ?? (await this.jobs.deadlineNotice(convId, this.unflushedActiveMs(convId)))
-          s.noticeCarry = late ? text : null
-          return late ? null : text
-        } finally {
-          s.noticeBusy = false
-        }
-      })
-      return await withTimeout(job, this.deps.noticeTimeoutMs ?? DEADLINE_NOTICE_TIMEOUT_MS, () => {
-        late = true
-      })
+      return await queuedNotice(s, this.now(), this.deps.noticeTimeoutMs ?? DEADLINE_NOTICE_TIMEOUT_MS, (job) => this.exclusive(convId, job), read)
     } catch (err) {
       this.warn('deadlineNotice', err)
       return null

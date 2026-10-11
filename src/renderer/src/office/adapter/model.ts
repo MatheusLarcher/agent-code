@@ -12,6 +12,7 @@ import { isProjectColor, reserveProjectColor, SANDBOX_PROJECT_COLOR, type Projec
 import type { AgentTrack } from '../../agentTracks'
 import { hasAgentBackground } from '../../backgroundHold'
 import { buildCrew, callSegments, lineText, roleFromSubagentType, type CrewMember, type CrewRole } from '../../crew'
+import { scrumMember } from '../../crewScrum'
 import type { Conversation } from '../../types'
 import type { OfficeFeed } from './feed'
 import type { Activity, BubbleKind, DestinationRole, SeatKind } from './kinds'
@@ -394,6 +395,23 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
         activity: null,
         bubble: null,
         label: member ? lineText(member.line) : ''
+      })
+    }
+    // O Scrum Master: um por sala com quadro, na condição do PO. Fica de pé no
+    // lugar dele; a visita à mesa do atrasado é do escritório 3D (office3d/scrum).
+    if (feed.observersOn.scrum && boardRooms?.has(room.id) && convs.length > 0) {
+      const member = scrumMember()
+      characters.push({
+        key: `scrum:${room.id}`,
+        convId: convs[0].id,
+        roomId: room.id,
+        role: 'scrum',
+        placement: { kind: 'destination', papel: 'scrum' },
+        seed: `scrum:${room.id}`,
+        active: false,
+        activity: null,
+        bubble: null,
+        label: lineText(member.line)
       })
     }
   }
