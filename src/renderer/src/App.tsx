@@ -908,8 +908,11 @@ export function App(): JSX.Element {
   // meio dele o retoma no próximo boot. Marcado com o `installationId` deste PC.
   const deviceRef = useRef<string | null>(null)
   deviceRef.current = storageStatus?.installationId || null
-  const markTurn = (cid: string, msgId: string, mcpTaskId: string | undefined, sent: boolean): void =>
-    patchConv(cid, (c) => withTurnInFlight(c, turnMark(msgId, { mcpTaskId, sent, device: deviceRef.current })))
+  const markTurn = (cid: string, msgId: string, mcpTaskId: string | undefined, sent: boolean): void => {
+    const inflight = inflightRef.current[cid]
+    const sdkUuid = inflight?.msgId === msgId ? inflight.sdkUuid : undefined
+    patchConv(cid, (c) => withTurnInFlight(c, turnMark(msgId, { mcpTaskId, sent, device: deviceRef.current }), sdkUuid))
+  }
   const clearTurn = (cid: string, msgId?: string): void => patchConv(cid, (c) => withoutTurnInFlight(c, msgId))
 
   // Contas Claude: a lista (painel de consumo) e as ações de troca de conta.
@@ -2812,11 +2815,14 @@ export function App(): JSX.Element {
       presetMsgId?: string,
       /** Botão "agora": o usuário mandou sair já — subagentes em segundo plano não seguram. */
       now = false
-    ): Promise<void> => {
+      /** `false` = a mensagem NÃO saiu por falha (a bolha "Falha ao enviar", a pasta sumida):
+       *  o despachante da fila do quadro devolve o envio à fila. `true` = saiu, entrou na
+       *  fila da conversa, ou o usuário parou no meio (o main cuida). */
+    ): Promise<boolean> => {
       // A Central não despacha: o pedido dela vai para o roteador (central/centralSend.ts).
-      if (isCentralConversation(conv)) return
+      if (isCentralConversation(conv)) return true
       // Project folder gone → don't process or send to the LLM; just warn.
-      if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return
+      if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return false
 
       // Recuperação já parada (tentativas automáticas encerradas): nada mais vai
       // despachar a fila, então uma mensagem nova recomeça o fluxo — descarta o
@@ -2884,7 +2890,7 @@ export function App(): JSX.Element {
             void dispatchRef.current?.(conv, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
           }
         }
-        return
+        return true
       }
 
       // Reflect the send SYNCHRONOUSLY before any await: mark busy (so a second
@@ -2929,9 +2935,10 @@ export function App(): JSX.Element {
         if (auto || !connectedRef.current.has(conv.id)) await connect(conv, auto ?? opening)
         // Parada enquanto conectava ("não era aqui", Stop): a mensagem NÃO sai. Quem
         // parou já cuidou da bolha (cancelada) e do estado da conversa.
-        if (stoppedWhileSending(conv.id, msgId)) return
+        if (stoppedWhileSending(conv.id, msgId)) return true
         markSending(conv.id)
         await window.api.sendMessage(conv.id, full, images, files, fileRefs, sdkUuid, undefined, mcpTaskId)
+        return true
       } catch (err) {
         // Couldn't even reach the agent → keep the message, flag it with the error
         // and keep its payload so "Tentar de novo" can resend it.
@@ -2952,13 +2959,14 @@ export function App(): JSX.Element {
             setQueue((q) => q.filter((m) => m.id !== head.id))
             void dispatchRef.current?.(fresh, head.full, head.text, head.images, head.thumbs, head.files, head.fileRefs, true, head.mcpTaskId, head.msgId)
           }
-          return
+          return false
         }
         failedRef.current[msgId] = { convId: conv.id, full, images, files, fileRefs, ...(mcpTaskId ? { mcpTaskId } : {}) }
         // O main não achou sessão viva: o "Tentar de novo" reconecta antes de enviar.
         if (isNoLiveSession(err)) setConnected(conv.id, false)
         markMessageError(conv.id, msgId, `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
         notify('erro', `Falha ao enviar: ${ipcErrorMessage(err, String(err))}`)
+        return false
       }
     },
     [connect, patchConv, setBusy, setConnected, notify, ensureProject, markMessageError, autoTitle]
@@ -2994,6 +3002,7 @@ export function App(): JSX.Element {
     dispatch: (conv, text) => {
       // O gate do main acabou de dar a vez a esta conversa: a foto daqui pode estar um passo atrás.
       projectQueueRef.current?.allowOnce(conv.id)
+      // `false` (a bolha "Falha ao enviar" ficou na conversa): o despachante devolve o envio à fila.
       return dispatch(conv, text, text, [], [], [])
     },
     // Conversa sem plano, mas com o PO autorizado "sempre": a rotina também sai pela fila.
@@ -3360,7 +3369,9 @@ export function App(): JSX.Element {
     setQueue,
     createBackground: (cwd, id, extra) => createConversation(cwd, id, extra, false),
     addLoaded: (conv) => setConversations((prev) => (prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev])),
-    dispatch: (conv, full, text, images, thumbs, taskId) => dispatch(conv, full, text, images, thumbs, [], [], false, taskId),
+    dispatch: async (conv, full, text, images, thumbs, taskId) => {
+      await dispatch(conv, full, text, images, thumbs, [], [], false, taskId)
+    },
     isBusy: (convId) => busyRef.current.has(convId)
   })
 
@@ -4127,8 +4138,9 @@ export function App(): JSX.Element {
     addLoaded: addLoadedConversation,
     loadByIds: loadConversationsByIds,
     createConversation: (cwd) => createConversation(cwd, undefined, {}, false),
-    dispatch: (conv, text, images, thumbs, files, fileRefs, msgId) =>
-      dispatch(conv, text, text, images, thumbs, files, fileRefs, false, undefined, msgId),
+    dispatch: async (conv, text, images, thumbs, files, fileRefs, msgId) => {
+      await dispatch(conv, text, text, images, thumbs, files, fileRefs, false, undefined, msgId)
+    },
     deleteQueued,
     stopKeepingQueue: (cid) => {
       // A recuperação automática pendente retomaria o turno tirado daqui: sai junto.
@@ -4510,6 +4522,7 @@ export function App(): JSX.Element {
       queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
       crewWorking={crewWorking}
       onOpenAgents={openAgentsPanel}
+      agentTracks={activeTracks}
       onBackToCentral={backToCentral && backToCentral === activeId ? selectCentral : undefined}
     />
   )

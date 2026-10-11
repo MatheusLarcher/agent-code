@@ -20,11 +20,11 @@ export const USER_SKILLS = 'D:/OneDrive/Documentos/agent-code/skills'
 export const MANAGER = { model: 'claude-opus-5-5', effort: 'xhigh' }
 
 export const SIDES = {
-  // Hoje: os três interruptores desligados (golden dos prompts 1 e 2 = comportamento anterior).
-  hoje: { ciclo: false, leituraGuiada: false, tiered: false },
+  // Hoje: os interruptores desligados (golden dos prompts 1 e 2 = comportamento anterior).
+  hoje: { leituraGuiada: false, tiered: false },
   // Novo: o catálogo em níveis fica desligado também aqui — reprovado no teste de acerto
-  // (docs/validation/teste-acerto-skills-2026-10-09.md).
-  novo: { ciclo: true, leituraGuiada: true, tiered: false }
+  // (docs/validation/teste-acerto-skills-2026-10-09.md). O interruptor das 7 fases saiu do app.
+  novo: { leituraGuiada: true, tiered: false }
 }
 
 /** 2 rodadas por lado (12 execuções, como no card original) — escolha do usuário em 09/10 11:02. */
@@ -62,8 +62,40 @@ export const TASKS = {
     titulo: 'consumo da conta atualiza a cada 1 min e zera quando a janela reseta',
     origem: 'pedido direto, conversa cmtmvv3cgn9ls5 (04/09 11:46Z); resolvido em ~9 min',
     plan: { kind: 'frozen', slugHint: 'replay-s3' }
+  },
+  /**
+   * Validação da autonomia do handoff (plano-20261010-0616, etapa `validar`): o NOVO
+   * build refaz uma conversa de handoff real que perguntou ao usuário. Sessão base
+   * 3708b226 (06/10 14:17–16:21Z): 1 AskUserQuestion, 1 espera de 7 min, 1 turno
+   * terminado em pergunta. A entrega foram 3 commits seguidos (794f767, 63a4ae5,
+   * 526d549, 3 min antes do fim da sessão): referência = a faixa `parent..reference`.
+   * O plano é o REAL da sessão (cópia de plano-20261006-1026, sem o _handoff): o
+   * Manager só escreve o handoff com as regras novas — a comparação com a base usa a
+   * mesma entrada. Lado único, `novo`, com os interruptores da config do usuário em
+   * 10/10 (leitura guiada e catálogo em níveis ligados); a autonomia é a padrão do
+   * plano (sem card = perguntas `nenhuma`, permitir tudo exceto destrutivo).
+   */
+  a1: {
+    reference: '526d549',
+    parent: '8c89585',
+    titulo: 'escritório 3D: cadeira na altura padrão e uma cadeira por agente na sala de reunião',
+    origem: 'handoff real do plano-20261006-1026, sessão 3708b226 (06/10 14:17Z), conversa cmuwrit7ezz9nf',
+    plan: { kind: 'copy', from: 'D:/OneDrive/Documentos/agent-code/planning/agent-code/plano-20261006-1026', slug: 'plano-20261006-1026', semEtapas: [] },
+    timeoutMs: 60 * 60_000,
+    sides: { novo: { leituraGuiada: true, tiered: true } },
+    out: 'replay-autonomia-2026-10-10',
+    baseSession: '3708b226-14e5-4348-910a-ccd0f8a397e2'
   }
 }
+
+/** Teto do trabalho do agente numa rodada da tarefa (a1: 60 min; s1–s3: 10 min). */
+export const roundTimeoutOf = (t) => TASKS[t]?.timeoutMs ?? ROUND_TIMEOUT_MS
+/** Os lados da tarefa (a1 tem um só, `novo`). */
+export const sidesOf = (t) => TASKS[t]?.sides ?? SIDES
+/** A referência como o git a entende: um commit, ou a faixa `pai..ponta` quando a entrega foi mais de um. */
+export const referenceSpecOf = (t) => (TASKS[t]?.parent ? `${TASKS[t].parent}..${TASKS[t].reference}` : TASKS[t]?.reference)
+/** Pasta de resultados da tarefa no repositório. */
+export const outOf = (t) => (TASKS[t]?.out ? path.join(REPO, 'docs', 'validation', TASKS[t].out) : OUT)
 
 /**
  * Ordem das tarefas: cada cópia de commit pai POSTERIOR contém a solução das tarefas
@@ -72,6 +104,8 @@ export const TASKS = {
  * da tarefa em curso.
  */
 export const ORDER = ['s1', 's2', 's3']
+/** Tarefas da validação da autonomia (relatório próprio: base × novo). */
+export const AUTONOMY_TASKS = ['a1']
 
 /** Saídas das rodadas ficam FORA do repositório até as revisões às cegas terminarem (o revisor não vê o lado). */
 export const PRIVATE = path.join(ROOT, 'saidas')
@@ -82,8 +116,8 @@ export const paths = {
   frozenPlan: (t) => path.join(ROOT, 'planos', t),
   runData: (t, side, n) => path.join(ROOT, 'runs', `${t}-${side}-r${n}`),
   out: (t, side, n) => path.join(PRIVATE, t, `${side}-r${n}`),
-  published: (t, side, n) => path.join(OUT, t, `${side}-r${n}`),
-  baseline: (t) => path.join(OUT, t, 'baseline.json'),
+  published: (t, side, n) => path.join(outOf(t), t, `${side}-r${n}`),
+  baseline: (t) => path.join(outOf(t), t, 'baseline.json'),
   review: (t, n) => path.join(ROOT, 'revisao', `${t}-par-${n}`),
   reviewResult: (t, n) => path.join(PRIVATE, t, 'revisao', `par-${n}.json`),
   map: (t, n) => path.join(ROOT, 'mapas', `${t}-par-${n}.json`)

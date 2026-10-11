@@ -100,9 +100,10 @@ export interface HandoffQueuedPrompt {
   conteudo: string
 }
 
-/** A decisão do despachante para uma conversa. */
+/** A decisão do despachante para uma conversa. `retomada`: o MESMO envio
+ *  anterior, que parou por inatividade, sai de novo com o pedido de continuar. */
 export type HandoffQueueDecision =
-  | { kind: 'next'; envio: HandoffQueuedPrompt }
+  | { kind: 'next'; envio: HandoffQueuedPrompt; retomada?: true }
   | { kind: 'hold'; envio: HandoffQueuedPrompt; motivo: string }
   | { kind: 'none' }
 
@@ -139,10 +140,85 @@ export interface HandoffQueueItem {
  *  Fica `parada` e sem `enviadoEm` — sem status novo no banco compartilhado. */
 export const HANDOFF_REMOVED_MOTIVO = 'tirado da fila por você'
 
-/** O envio que o usuário tirou da fila: nem saiu nem espera mais a vez. */
-export function isEnvioRemoved(envio: Pick<HandoffEnvio, 'status' | 'enviadoEm' | 'motivo'>): boolean {
-  return envio.status === 'parada' && envio.enviadoEm === null && envio.motivo === HANDOFF_REMOVED_MOTIVO
+/** A conversa foi apagada: todo envio dela que não concluiu para com este motivo
+ *  (o nunca enviado conta como tirado da fila) e o plano sai da fila do projeto. */
+export const HANDOFF_CONVERSATION_DELETED_MOTIVO = 'a conversa foi apagada'
+
+export function isEnvioOfDeletedConversation(envio: Pick<HandoffEnvio, 'status' | 'motivo'>): boolean {
+  return envio.status === 'parada' && envio.motivo === HANDOFF_CONVERSATION_DELETED_MOTIVO
 }
+
+/** O envio que o usuário tirou da fila (ou cuja conversa foi apagada antes de ele sair): nem saiu nem espera mais a vez. */
+export function isEnvioRemoved(envio: Pick<HandoffEnvio, 'status' | 'enviadoEm' | 'motivo'>): boolean {
+  return (
+    envio.status === 'parada' &&
+    envio.enviadoEm === null &&
+    (envio.motivo === HANDOFF_REMOVED_MOTIVO || envio.motivo === HANDOFF_CONVERSATION_DELETED_MOTIVO)
+  )
+}
+
+/** A sessão morreu com o turno aberto (descarte, lease perdido, troca de sessão):
+ *  sem `result`, o envio que rodava fica parado por INATIVIDADE — a fila retoma sozinha. */
+export const HANDOFF_SESSION_ENDED_MOTIVO = 'a sessão encerrou no meio do turno, sem resultado'
+
+/**
+ * O envio parou por INATIVIDADE (o vigia do acompanhamento, handoffRules.stallReason):
+ * nenhum turno rodando há N min. É o único `parada` que a fila retoma sozinha;
+ * o Stop do usuário e o "tirar da fila" esperam você.
+ */
+export function isStallMotivo(motivo: string | null | undefined): boolean {
+  const m = motivo ?? ''
+  return (
+    m === HANDOFF_SESSION_ENDED_MOTIVO ||
+    /^o prompt ficou \d+ min na fila sem ser enviado$/u.test(m) ||
+    /^o prompt foi enviado, mas nenhum turno começou em \d+ min$/u.test(m) ||
+    /^esperava você, mas não há pergunta aberta nem turno rodando há \d+ min$/u.test(m) ||
+    /^nenhum turno rodando há \d+ min, sem pergunta pendente e sem conclusão$/u.test(m)
+  )
+}
+
+/**
+ * Channels.handoffQueueUndispatch (main: handoffQueueIpc.ts): o despacho do
+ * renderer falhou DEPOIS da marca "despachado" — o envio volta para a fila.
+ * `undone: false` = já não cabia desfazer (o turno começou, ou outro estado).
+ * O tipo mora aqui, e não em shared/api.ts, para a tela e o preload lerem o
+ * mesmo contrato sem alterar a interface AgentCodeApi.
+ */
+export interface HandoffQueueUndispatchRequest {
+  conversationId: string
+  envioId: string
+}
+export type HandoffQueueUndispatchResult = { ok: true; undone: boolean } | { ok: false; message: string }
+export interface HandoffQueueUndispatchApi {
+  handoffQueueUndispatch(req: HandoffQueueUndispatchRequest): Promise<HandoffQueueUndispatchResult>
+}
+
+/** O incompleto que veio de um ERRO do turno (API caiu, sobrecarga): o motivo
+ *  começa com este prefixo (o mesmo de handoffRules.TURN_ERROR_PREFIX). Erro de
+ *  verdade segura a fila — mandar o próximo prompt para uma API que caiu não adianta. */
+export const TURN_ERROR_MOTIVO_PREFIX = 'o turno terminou com erro'
+
+export function isTurnErrorMotivo(motivo: string | null | undefined): boolean {
+  return (motivo ?? '').startsWith(TURN_ERROR_MOTIVO_PREFIX)
+}
+
+/** O anterior ficou incompleto SEM erro do turno: a fila segue com a pendência na frente. */
+export function isIncompleteWithoutError(envio: Pick<HandoffEnvio, 'status' | 'motivo'>): boolean {
+  return envio.status === 'incompleta' && !isTurnErrorMotivo(envio.motivo)
+}
+
+/** A posição de um envio no lote dele (1-based) e o total de prompts do lote. */
+export function envioPosition(envios: readonly HandoffEnvio[], envio: Pick<HandoffEnvio, 'id' | 'loteId'>): { n: number; m: number } {
+  const lote = envios
+    .filter((e) => e.loteId === envio.loteId && !isRoutineEnvio(e) && !isEnvioRemoved(e))
+    .sort((a, b) => a.ordem - b.ordem || a.id.localeCompare(b.id))
+  const index = lote.findIndex((e) => e.id === envio.id)
+  return { n: index + 1 || 1, m: Math.max(lote.length, 1) }
+}
+
+/** O que a retomada manda à conversa (o mesmo envio, que parou por inatividade). */
+export const HANDOFF_RESUME_TEXT =
+  'Continue de onde parou. Não repita o que já está feito; retome do último item em andamento do seu plano e termine.'
 
 /** "SEGURAR" do PO: o próximo prompt espera, com o motivo depois deste prefixo. */
 export const HANDOFF_PO_HOLD_PREFIX = 'o PO segurou: '

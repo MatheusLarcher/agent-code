@@ -43,7 +43,6 @@ const FIELDS: Field[] = [
   { key: 'config.board.requirePlan', get: (c) => c.board.requirePlan, patch: (v) => ({ board: { requirePlan: v as boolean } as AppConfig['board'] }) },
   { key: 'config.board.po.enabled', get: (c) => c.board.po.enabled, patch: (v) => ({ board: { po: { enabled: v as boolean } } as AppConfig['board'] }) },
   { key: 'config.board.po.model', get: (c) => c.board.po.model, patch: (v) => ({ board: { po: { model: v as string } } as AppConfig['board'] }) },
-  { key: 'config.handoff.ciclo', get: (c) => c.handoff.ciclo, patch: (v) => ({ handoff: { ciclo: v as boolean } as AppConfig['handoff'] }) },
   { key: 'config.handoff.leituraGuiada', get: (c) => c.handoff.leituraGuiada, patch: (v) => ({ handoff: { leituraGuiada: v as boolean } as AppConfig['handoff'] }) },
   { key: 'config.skillCatalog.tiered', get: (c) => c.skillCatalog.tiered, patch: (v) => ({ skillCatalog: { tiered: v as boolean } as AppConfig['skillCatalog'] }) },
   // Mapa (não escalar), como a lista do Automático: ajuste ilegível é descartado, não derruba o boot.

@@ -27,7 +27,6 @@ const EXPECTED_KEYS = [
   'config.board.requirePlan',
   'config.chromeBridgeToken',
   'config.chromeControlEnabled',
-  'config.handoff.ciclo',
   'config.handoff.leituraGuiada',
   'config.localSpeech.model',
   'config.memorista.enabled',

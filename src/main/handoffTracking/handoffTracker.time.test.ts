@@ -2,9 +2,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ChatEvent } from '../../shared/ipc'
 import type { HandoffRepository } from '../persistence/types'
-import { HANDOFF_STALL_MS } from './handoffRules'
+import { HANDOFF_SESSION_ENDED_MOTIVO } from '../../shared/handoffTracking'
+import { HANDOFF_STALL_MS, STOP_MOTIVO } from './handoffRules'
 import { iso } from './handoffTestKit'
-import { HandoffTracker, type HandoffBoard } from './handoffTracker'
+import { BOOT_GRACE_MS, HandoffTracker, type HandoffBoard } from './handoffTracker'
 import { CONV, closeHarnesses, harness } from './handoffTrackerHarness'
 
 // Tempo (ativo, corrido, retrabalho) com o relógio injetado, a parada da
@@ -97,22 +98,41 @@ describe('HandoffTracker — tempo', () => {
     expect((await h.envios())[0].tempoAtivoMs).toBe(90 * SEC)
   })
 
-  it('sessão descartada ou substituída no meio do turno: o tempo ativo para de contar', async () => {
+  it('sessão descartada ou substituída no meio do turno: o tempo para e o envio fica parado por inatividade (a fila retoma)', async () => {
     const h = await running([])
     h.advance(20 * SEC)
-    // Troca de sessão (outro modelo/config): dispose sem `result`/`error`.
+    // Troca de sessão (outro modelo/config), lease perdido, descarte: dispose sem `result`/`error`.
     h.tracker.sessionEnded(CONV)
     await h.settle()
     expect(h.tracker.isTurnRunning(CONV)).toBe(false)
     expect(h.tracker.unflushedActiveMs(CONV)).toBe(0)
-    expect((await h.envios())[0]).toMatchObject({ status: 'em_execucao', tempoAtivoMs: 20 * SEC })
+    // Antes ficava "em_execucao" até a varredura (10 min) — o plano constava rodando sem turno nenhum.
+    expect((await h.envios())[0]).toMatchObject({ status: 'parada', motivo: HANDOFF_SESSION_ENDED_MOTIVO, tempoAtivoMs: 20 * SEC })
     h.advance(60 * SEC)
     await expect(h.tracker.sweep()).resolves.toEqual({ flushed: 0, stalled: 0 })
-    expect((await h.envios())[0].tempoAtivoMs).toBe(20 * SEC)
-    // Sem turno, a parada volta a valer.
     h.advance(HANDOFF_STALL_MS)
-    await expect(h.tracker.sweep()).resolves.toEqual({ flushed: 0, stalled: 1 })
+    await expect(h.tracker.sweep()).resolves.toEqual({ flushed: 0, stalled: 0 })
     expect((await h.envios())[0]).toMatchObject({ status: 'parada', tempoAtivoMs: 20 * SEC })
+    // A sessão nova de uma troca reabre o envio com o próprio turn-start.
+    h.emit(turnStart)
+    await h.settle()
+    expect((await h.envios())[0]).toMatchObject({ status: 'em_execucao', motivo: null })
+  })
+
+  it('sessão encerrada SEM turno aberto não mexe no envio; depois do Stop, vale o Stop (a fila espera você)', async () => {
+    const h = await running(['a'])
+    h.emit(result)
+    await h.settle()
+    expect((await h.envios())[0].status).toBe('incompleta')
+    h.tracker.sessionEnded(CONV)
+    await h.settle()
+    expect((await h.envios())[0].status).toBe('incompleta')
+
+    const g = await running([])
+    g.tracker.noteStop(CONV)
+    g.tracker.sessionEnded(CONV)
+    await g.settle()
+    expect((await g.envios())[0]).toMatchObject({ status: 'parada', motivo: STOP_MOTIVO })
   })
 
   it('depois de concluído, mensagem nova não reabre: o tempo vai para retrabalho', async () => {
@@ -223,29 +243,50 @@ describe('HandoffTracker — parada (varredura, 10 min)', () => {
     expect((await h.envios())[0]).toMatchObject({ status: 'aguardando_voce', tempoAtivoMs: 3 * HANDOFF_STALL_MS })
   })
 
-  it('app reaberto: as conversas com envio em curso no banco viram conhecidas e param depois do limite', async () => {
+  it('app reaberto: a parada conta da atividade REAL (a escrita no banco), com a carência curta do boot', async () => {
     const h = await running([])
     await h.tracker.sweep()
-    // O app fechou no meio do turno: nenhum result chegou. Outro processo:
+    // O app fechou no meio do turno: nenhum result chegou. Outro processo. A
+    // última escrita no banco é "velha" (o harness põe o relógio um dia à
+    // frente do carimbo do banco): só a carência do boot segura a parada —
+    // antes contava no mínimo 10 min a partir do boot, e o plano ficava
+    // "rodando" sem turno nenhum.
     const tracker = h.reopen()
     await expect(tracker.loadKnown()).resolves.toBe(true)
-    h.advance(HANDOFF_STALL_MS - SEC)
+    h.advance(BOOT_GRACE_MS - SEC)
     await tracker.sweep()
     expect((await h.envios())[0].status).toBe('em_execucao')
     h.advance(SEC)
-    await tracker.sweep()
-    expect((await h.envios())[0].status).toBe('parada')
+    await expect(tracker.sweep()).resolves.toMatchObject({ stalled: 1 })
+    expect((await h.envios())[0]).toMatchObject({ status: 'parada', motivo: 'nenhum turno rodando há 10 min, sem pergunta pendente e sem conclusão' })
   })
 
-  it('app fechado com pergunta aberta: o "esperando você" sem pendência viva para depois do limite', async () => {
+  it('app reaberto com atividade recente no banco: a parada espera o limite desde ela, não desde o boot', async () => {
+    const h = await running([])
+    await h.tracker.sweep()
+    const [envio] = await h.envios()
+    // Outro processo, e o banco foi escrito há 4 min (o PC que rodava gravou tempo até então).
+    const writtenAt = h.now() - 4 * MIN
+    const read = h.repo.listHandoffEnvios.bind(h.repo)
+    h.repo.listHandoffEnvios = async (query) => (await read(query)).map((e) => (e.id === envio.id ? { ...e, updatedAt: iso(writtenAt) } : e))
+    const tracker = h.reopen()
+    await tracker.loadKnown()
+    h.advance(HANDOFF_STALL_MS - 4 * MIN - SEC)
+    await expect(tracker.sweep()).resolves.toMatchObject({ stalled: 0 })
+    h.advance(SEC)
+    await expect(tracker.sweep()).resolves.toMatchObject({ stalled: 1 })
+  })
+
+  it('app fechado com pergunta aberta: o "esperando você" sem pendência viva para depois da carência do boot', async () => {
     const h = await running([])
     h.tracker.notePermission(CONV, 'perg-1', true, 'AskUserQuestion')
     await h.settle()
     expect((await h.envios())[0].status).toBe('aguardando_voce')
-    // O app fechou com a pergunta aberta; reaberto, ninguém mais a responde.
+    // O app fechou com a pergunta aberta; reaberto, ninguém mais a responde. A
+    // escrita no banco é velha: a carência do boot é o que segura.
     const tracker = h.reopen()
     await tracker.loadKnown()
-    h.advance(HANDOFF_STALL_MS - SEC)
+    h.advance(BOOT_GRACE_MS - SEC)
     await tracker.sweep()
     expect((await h.envios())[0].status).toBe('aguardando_voce')
     h.advance(SEC)

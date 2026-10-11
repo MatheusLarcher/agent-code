@@ -5,13 +5,14 @@
  * linha por ação (ToolLine) e o pensamento. `ActLine` também serve aos passos da
  * Central (com spinner e "agora: …"; no chat isso fica na linha ao vivo do trilho).
  */
-import { memo, useMemo, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, type ReactNode } from 'react'
 import type { CentralActivity } from '@shared/central'
 import { sameStep, stepActivity, stepFallback, stepHasLine, type ChatStep } from '@renderer/components/chatSteps'
 import type { CardRefResolver } from '@renderer/components/Markdown'
 import { StepPillRow } from '@renderer/components/StepPillRow'
 import { stepPills, type StepPill } from '@renderer/components/stepPills'
 import { useStepOpen } from '@renderer/components/useStepOpen'
+import { client } from '../app/runtime'
 import type { ChatMsg } from '../core/types'
 import { Icon } from '../ui/icons'
 import { MessageItem } from './MessageItem'
@@ -75,6 +76,11 @@ function StepLine({ step, voiceReady, speakingId, onSpeak, resolveRef, fresh }: 
   const pills = useMemo(() => stepPills(step.tools), [step])
   // Sem o "agora" (ele fica na linha ao vivo): rodando sem nada pronto, "usou 1 ferramenta".
   const fallback = stepFallback({ segments: activity.segments, now: undefined }, step.tools.length, step.items.length - step.tools.length)
+  // O histórico vem LEVE: ao abrir a resposta, pede ao PC o detalhe inteiro das ações dela (uma chamada só).
+  const lightIds = step.items.filter((m) => m.light && m.id).map((m) => m.id as string).join(',')
+  useEffect(() => {
+    if (open && lightIds) void client.loadDetails(lightIds.split(',')).catch(() => undefined)
+  }, [open, lightIds])
   return (
     <>
       <ActLine activity={activity} running={step.running} open={open} onToggle={toggle} fallback={fallback} animate={fresh} quiet pills={pills} />

@@ -50,7 +50,7 @@ if (process.argv[2] === '--verify') {
     console.error(`Skills: instalador sem as skills do cache (faltando: ${missing.join(', ') || 'todas'}).`)
     process.exit(1)
   }
-  // Um kit fora do instalador deixaria o ciclo (ligado por padrão) pedindo skills que não existem.
+  // Um kit fora do instalador deixaria o interruptor dele ligado pedindo skills que não existem.
   for (const dir of bundledDirs()) {
     const inApp = skillNames(join(appDir, '.agents', dir))
     const absent = skillNames(join(REPO, '.agents', dir)).filter((name) => !inApp.includes(name))

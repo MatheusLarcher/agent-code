@@ -133,6 +133,15 @@
   color: #8a8578;
   overflow-wrap: anywhere;
 }
+.o3d-mempaper-path-btn {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.o3d-mempaper-path-btn:hover { color: #2f6b4a; text-decoration: underline; }
 .o3d-mempaper-note {
   margin: 0 0 10px;
   padding: 6px 8px;
@@ -144,4 +153,10 @@
 .o3d-mempaper-body { font-size: 13.5px; overflow-wrap: anywhere; }
 .o3d-mempaper-body pre,
 .o3d-mempaper-body code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12px; }
+/* Destaque em fundo escuro (código): texto claro para ler. */
+.o3d-mempaper-body pre,
+.o3d-mempaper-body code { background: #2b2a26; color: #f7f6f1; border-radius: 4px; }
+.o3d-mempaper-body code { padding: 1px 4px; }
+.o3d-mempaper-body pre { padding: 8px 10px; overflow-x: auto; }
+.o3d-mempaper-body pre code { padding: 0; background: none; }
 .o3d-mempaper-muted { margin: 0; color: #8a8578; font-style: italic; list-style: none; }

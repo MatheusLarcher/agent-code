@@ -15,8 +15,9 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSyn
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MANAGER, OUT, PLAN_TIMEOUT_MS, PRIVATE, PROTECTED, REPO, ROOT, ROUND_TIMEOUT_MS, ROUNDS, SIDES, TASKS, USER_SKILLS, paths } from './config.mjs'
-import { driveUntilDone, quietSince } from './drive.mjs'
+import { MANAGER, OUT, PLAN_TIMEOUT_MS, PRIVATE, PROTECTED, REPO, ROOT, ROUNDS, TASKS, USER_SKILLS, outOf, paths, referenceSpecOf, roundTimeoutOf, sidesOf } from './config.mjs'
+import { roundAutonomy } from './baseline-sessao.mjs'
+import { driveUntilDone, pendingBackground, quietSince } from './drive.mjs'
 import { evaluateRound, stableFailures, typecheck, vitest } from './evaluate.mjs'
 import { configure, freeCommitGb, launch, openProject, seedDataDir, shutdown, waitForMemory } from './instance.mjs'
 import { claudeProjectSlug, collectTranscripts, implementationTotals, parseFirstEdit, runMedirExploracao } from './measure.mjs'
@@ -32,7 +33,8 @@ const PLAN_NUDGE ='Pode seguir com as opções que você recomenda. Feche o rote
 const samePath = (a, b) => path.resolve(String(a ?? '')).toLowerCase() === path.resolve(String(b ?? '')).toLowerCase()
 /** O handoff consome o mesmo teto da implementação; orçamento esgotado não ganha tempo. */
 export const remainingRoundMs = (timeoutMs, startedAt, now = Date.now()) => Math.max(0, timeoutMs - (now - startedAt))
-const parentOf = (t) => git(REPO, ['rev-parse', `${TASKS[t].reference}^`]).trim()
+/** O commit pai da tarefa: `parent` quando a entrega foi uma faixa de commits; senão o pai da referência. */
+const parentOf = (t) => git(REPO, ['rev-parse', TASKS[t].parent ?? `${TASKS[t].reference}^`]).trim()
 const writeJson = (file, data) => {
   mkdirSync(path.dirname(file), { recursive: true })
   writeFileSync(file, JSON.stringify(data, null, 2))
@@ -98,9 +100,9 @@ async function cmdBaseline(t) {
   const parent = parentOf(t)
   ensureStandaloneRepo(REPO, wt, parent)
   resetWorktree(wt, parent)
-  const refTests = referenceTestFiles(REPO, TASKS[t].reference)
+  const refTests = referenceTestFiles(REPO, referenceSpecOf(t))
   const testFiles = refTests.filter((f) => /\.test\./.test(f))
-  const log = logger(path.join(OUT, t, 'baseline.log'))
+  const log = logger(path.join(outOf(t), t, 'baseline.log'))
   await waitForMemory(MIN_FREE_EVAL_GB, { log })
   log(`[${t}] typecheck do pai ${parent.slice(0, 7)}`)
   const tc = typecheck(wt)
@@ -108,12 +110,12 @@ async function cmdBaseline(t) {
   const suite = vitest(wt)
   const stable = stableFailures(wt, suite)
   log(`[${t}] testes da referência no pai (devem falhar: mostram que discriminam)`)
-  applyCommitFiles(REPO, wt, TASKS[t].reference, refTests)
+  applyCommitFiles(REPO, wt, referenceSpecOf(t), refTests)
   const refAtParent = vitest(wt, testFiles, 20 * 60_000)
   resetWorktree(wt, parent)
   log(`[${t}] testes da referência na própria referência (teto)`)
   // Pai + todos os arquivos que o commit mudou = a árvore da referência (que não existe na cópia).
-  applyCommitFiles(REPO, wt, TASKS[t].reference)
+  applyCommitFiles(REPO, wt, referenceSpecOf(t))
   const refAtReference = vitest(wt, testFiles, 20 * 60_000)
   resetWorktree(wt, parent)
   const brief = (r) => ({ total: r.total, passed: r.passed ?? 0, failed: r.failed.map((f) => f.id), crashed: r.crashed })
@@ -173,13 +175,13 @@ async function cmdPlan(t) {
   rmSync(runData, { recursive: true, force: true })
   const { wt, parent, ctx } = prepareRun(t, runData)
   seedDataDir(runData, { userSkillsDir: USER_SKILLS })
-  const log = logger(path.join(OUT, t, 'plan.log'))
+  const log = logger(path.join(outOf(t), t, 'plan.log'))
   const pedido = readFileSync(path.join(OUT, 'pedidos', `${t}.md`), 'utf8')
   await waitForMemory(MIN_FREE_GB, { log })
   const { app, page, bridge } = await launch(runData, { log })
   let slug = null
   try {
-    await configure(page, { side: SIDES.hoje, manager: MANAGER })
+    await configure(page, { side: Object.values(sidesOf(t))[0], manager: MANAGER })
     await openProject(app, page, wt)
     const created = await bridge.createPlan(wt, pedido)
     if (!created.ok) throw new Error(`não criou o planejamento: ${JSON.stringify(created)}`)
@@ -187,7 +189,7 @@ async function cmdPlan(t) {
     const res = await driveUntilDone(bridge, ctx, { pick: (s) => s.conversations.find((c) => c.id === created.convId), timeoutMs: PLAN_TIMEOUT_MS, idleMs: 60_000, maxNudges: 3, nudgeText: PLAN_NUDGE, log })
     slug = res.convId ? (await bridge.state()).conversations.find((c) => c.id === created.convId)?.planningSlug : null
     log(`[${t}] Manager terminou: ${res.status}, ${res.nudges} insistências, slug ${slug}`)
-    writeJson(path.join(OUT, t, 'plan-events.json'), { res, events: ctx.events })
+    writeJson(path.join(outOf(t), t, 'plan-events.json'), { res, events: ctx.events })
   } finally {
     await shutdown(app, runData, { log })
   }
@@ -197,7 +199,7 @@ async function cmdPlan(t) {
   rmSync(dest, { recursive: true, force: true })
   cpSync(src, dest, { recursive: true, filter: (p) => !/[\\/](_handoff|_sandbox)([\\/]|$)/.test(p) })
   writeJson(path.join(dest, '..', `${t}.json`), { slug, criadoEm: new Date().toISOString() })
-  cpSync(dest, path.join(OUT, t, 'plano-congelado'), { recursive: true })
+  cpSync(dest, path.join(outOf(t), t, 'plano-congelado'), { recursive: true })
   collectTranscripts(wt, runData)
   resetWorktree(wt, parent)
   log(`[${t}] plano congelado em ${dest}`)
@@ -205,11 +207,12 @@ async function cmdPlan(t) {
 
 /** Uma rodada: plano congelado → handoff (com os interruptores do lado) → implementação → avaliação. */
 async function cmdRound(t, side, n, smoke = false) {
-  if (!SIDES[side] || !(n >= 1 && n <= ROUNDS)) throw new Error('uso: round <t> <hoje|novo> <1..3> [--smoke]')
+  const sides = sidesOf(t)
+  if (!sides[side] || !(n >= 1 && n <= ROUNDS)) throw new Error(`uso: round <t> <${Object.keys(sides).join('|')}> <1..${ROUNDS}> [--smoke]`)
   // Fumaça: mesma rodada com teto curto, gravada à parte (não conta no resultado).
   const out = smoke ? path.join(PRIVATE, 'fumaca', `${t}-${side}`) : paths.out(t, side, n)
   const runData = smoke ? path.join(ROOT, 'runs', `fumaca-${t}-${side}`) : paths.runData(t, side, n)
-  const timeoutMs = smoke ? 8 * 60_000 : ROUND_TIMEOUT_MS
+  const timeoutMs = smoke ? 8 * 60_000 : roundTimeoutOf(t)
   const meta = JSON.parse(readFileSync(path.join(paths.frozenPlan(t), '..', `${t}.json`), 'utf8'))
   const baseline = JSON.parse(readFileSync(paths.baseline(t), 'utf8'))
   rmSync(runData, { recursive: true, force: true })
@@ -218,11 +221,11 @@ async function cmdRound(t, side, n, smoke = false) {
   seedDataDir(runData, { userSkillsDir: USER_SKILLS, plan: { from: paths.frozenPlan(t), projectKey: 'agent-code', slug: meta.slug } })
   const log = logger(path.join(out, 'run.log'))
   writeJson(path.join(out, 'cerca.json'), ctx.policy.forbidden)
-  const run = { task: t, side, round: n, switches: SIDES[side], manager: MANAGER, startedAt: new Date().toISOString() }
+  const run = { task: t, side, round: n, switches: sides[side], manager: MANAGER, timeoutMs, startedAt: new Date().toISOString() }
   run.memoryBefore = await waitForMemory(MIN_FREE_GB, { log })
   const { app, page, bridge } = await launch(runData, { log })
   try {
-    run.config = await configure(page, { side: SIDES[side], manager: MANAGER })
+    run.config = await configure(page, { side: sides[side], manager: MANAGER })
     await openProject(app, page, wt)
     await reopenPlan(page, meta.slug)
     const managerPick = (s) => s.conversations.find((c) => c.mode === 'planning' && c.planningSlug === meta.slug)
@@ -250,7 +253,7 @@ async function cmdRound(t, side, n, smoke = false) {
     const remainingMs = remainingRoundMs(timeoutMs, h0)
     const res = remainingMs === 0
       ? { status: 'timeout', stage: 'handoff', ms: 0, nudges: 0 }
-      : await driveUntilDone(bridge, ctx, { pick: implPick, timeoutMs: remainingMs, idleMs: 60_000, prompts, quietMs: () => quietSince(transcriptsDir(wt)), onTick, log })
+      : await driveUntilDone(bridge, ctx, { pick: implPick, timeoutMs: remainingMs, idleMs: 60_000, prompts, quietMs: () => quietSince(transcriptsDir(wt)), pendingBackground: () => pendingBackground(transcriptsDir(wt)), onTick, log })
     const impl = implPick(await bridge.state())
     run.implementation = { ...res, model: impl?.model, effort: impl?.effort, fastMode: impl?.fastMode, finalText: res.finalText?.slice(-3000) }
     log(`[${t} ${side} r${n}] implementação: ${res.status} em ${Math.round(res.ms / 60000)} min, ${res.nudges} insistências (${impl?.model}@${impl?.effort})`)
@@ -272,7 +275,7 @@ async function cmdRound(t, side, n, smoke = false) {
     log(`[${t} ${side} r${n}] diff: ${run.diff.files} arquivos, +${run.diff.add} -${run.diff.del}, ${run.diff.tests.length} de teste${run.diff.outside.stash || run.diff.outside.worktrees ? ` (ATENÇÃO fora do diff: ${JSON.stringify(run.diff.outside)})` : ''}; avaliando`)
     if (!run.infraError) {
       run.memoryBeforeEval = await waitForMemory(MIN_FREE_EVAL_GB, { log })
-      const evaluation = evaluateRound(wt, { repo: REPO, reference: TASKS[t].reference, refTests: baseline.refTests, baselineFailed: baseline.suite.stable, baselinePassed: baseline.suite.passedIds })
+      const evaluation = evaluateRound(wt, { repo: REPO, reference: referenceSpecOf(t), refTests: baseline.refTests, baselineFailed: baseline.suite.stable, baselinePassed: baseline.suite.passedIds })
       writeJson(path.join(out, 'eval.json'), evaluation)
       log(`[${t} ${side} r${n}] fim: typecheck ${evaluation.typecheck.ok ? 'ok' : 'FALHOU'}, falhas novas na suíte ${evaluation.suite.newFailures.length}, testes sumidos ${evaluation.suite.missingFromParent.length}, referência ${evaluation.reference.passed}/${evaluation.reference.total}`)
     }
@@ -281,6 +284,8 @@ async function cmdRound(t, side, n, smoke = false) {
       const medir = runMedirExploracao(tr.dir)
       writeFileSync(path.join(out, 'medir-exploracao.txt'), medir)
       run.time = { firstEdit: parseFirstEdit(medir), totals: implementationTotals(tr.dir) }
+      // Os contadores da sessão base (baseline-sessao.mjs) sobre a conversa de implementação da rodada.
+      run.autonomy = roundAutonomy(tr.dir, run.time.totals?.file ?? null)
     }
   } catch (err) {
     run.evalError = String(err?.stack ?? err)
@@ -299,7 +304,7 @@ async function cmdRound(t, side, n, smoke = false) {
  */
 async function cmdBatch(t) {
   for (let n = 1; n <= ROUNDS; n++) {
-    for (const side of Object.keys(SIDES)) {
+    for (const side of Object.keys(sidesOf(t))) {
       for (let attempt = 1; attempt <= 5; attempt++) {
         if (existsSync(path.join(paths.out(t, side, n), 'eval.json'))) break
         try {
@@ -315,7 +320,7 @@ async function cmdBatch(t) {
 
 /** Recalcula o tempo de todas as rodadas da tarefa a partir dos transcripts guardados (antes do retire). */
 function cmdMeasure(t) {
-  for (const side of Object.keys(SIDES)) {
+  for (const side of Object.keys(sidesOf(t))) {
     for (let n = 1; n <= ROUNDS; n++) {
       const runFile = path.join(paths.out(t, side, n), 'run.json')
       const projects = path.join(paths.runData(t, side, n), 'projects')
@@ -324,6 +329,7 @@ function cmdMeasure(t) {
       const medir = runMedirExploracao(projects)
       writeFileSync(path.join(paths.out(t, side, n), 'medir-exploracao.txt'), medir)
       run.time = { firstEdit: parseFirstEdit(medir), totals: implementationTotals(projects) }
+      run.autonomy = roundAutonomy(projects, run.time.totals?.file ?? null)
       writeJson(runFile, run)
       console.log(`[${t} ${side} r${n}] ${JSON.stringify({ ...run.time.totals, tools: undefined })}`)
     }
@@ -334,26 +340,26 @@ function cmdMeasure(t) {
 function cmdRetire(t) {
   const wt = paths.worktree(t)
   rmSync(path.dirname(wt), { recursive: true, force: true })
-  for (const side of Object.keys(SIDES)) for (let n = 1; n <= ROUNDS; n++) rmSync(paths.runData(t, side, n), { recursive: true, force: true })
+  for (const side of Object.keys(sidesOf(t))) for (let n = 1; n <= ROUNDS; n++) rmSync(paths.runData(t, side, n), { recursive: true, force: true })
   rmSync(path.join(ROOT, 'runs', `${t}-plan`), { recursive: true, force: true })
   console.log(`[${t}] cópia e dados das execuções apagados`)
 }
 
 /** Depois das revisões às cegas: copia as saídas privadas para docs/validation (repositório). */
 function cmdPublish(t) {
-  for (const side of Object.keys(SIDES)) {
+  for (const side of Object.keys(sidesOf(t))) {
     for (let n = 1; n <= ROUNDS; n++) if (existsSync(paths.out(t, side, n))) cpSync(paths.out(t, side, n), paths.published(t, side, n), { recursive: true })
   }
   const reviews = path.join(PRIVATE, t, 'revisao')
-  if (existsSync(reviews)) cpSync(reviews, path.join(OUT, t, 'revisao'), { recursive: true })
-  for (let n = 1; n <= ROUNDS; n++) if (existsSync(paths.map(t, n))) cpSync(paths.map(t, n), path.join(OUT, t, 'revisao', `mapa-par-${n}.json`))
-  console.log(`[${t}] saídas publicadas em ${path.join(OUT, t)}`)
+  if (existsSync(reviews)) cpSync(reviews, path.join(outOf(t), t, 'revisao'), { recursive: true })
+  for (let n = 1; n <= ROUNDS; n++) if (existsSync(paths.map(t, n))) cpSync(paths.map(t, n), path.join(outOf(t), t, 'revisao', `mapa-par-${n}.json`))
+  console.log(`[${t}] saídas publicadas em ${path.join(outOf(t), t)}`)
 }
 
 function cmdStatus() {
   for (const t of Object.keys(TASKS)) {
     const row = [t, existsSync(paths.baseline(t)) ? 'base✓' : 'base·', existsSync(path.join(paths.frozenPlan(t), '..', `${t}.json`)) ? 'plano✓' : 'plano·']
-    for (const side of Object.keys(SIDES)) for (let n = 1; n <= ROUNDS; n++) row.push(`${side[0]}${n}${existsSync(path.join(paths.out(t, side, n), 'eval.json')) ? '✓' : '·'}`)
+    for (const side of Object.keys(sidesOf(t))) for (let n = 1; n <= ROUNDS; n++) row.push(`${side[0]}${n}${existsSync(path.join(paths.out(t, side, n), 'eval.json')) ? '✓' : '·'}`)
     console.log(row.join(' '))
   }
 }

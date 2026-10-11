@@ -2,14 +2,12 @@ import { constants, type Stats } from 'node:fs'
 import { open, realpath, readdir, lstat, stat, type FileHandle } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, sep } from 'node:path'
 import { loadDocsIgnore, type DocsIgnore } from './docsIgnore'
-import { MAX_DOCS_CONTEXT_BYTES, ROOT_BUDGET_MARKER, renderOutlineBlock, type OutlineEntry } from './projectOutlineRender'
+import { firstTitle, MAX_DOCS_CONTEXT_BYTES, ROOT_BUDGET_MARKER, renderOutlineBlock, type OutlineEntry } from './projectOutlineRender'
 
 export { MAX_DOCS_CONTEXT_BYTES }
 
 const MAX_MARKDOWN_BYTES = 64 * 1024
-/** Orçamento de LEITURA dos Markdown da raiz = o teto do bloco. */
-const MAX_ROOT_MARKDOWN_TOTAL_BYTES = MAX_DOCS_CONTEXT_BYTES
-/** Teto de entradas visitadas por varredura: o bloco é cortado em 48 KiB de
+/** Teto de entradas visitadas por varredura: o bloco é cortado no teto de
  *  qualquer jeito, e visitar 50 mil arquivos a cada turno só custa I/O. */
 const MAX_WALK_ENTRIES = 5000
 /** Teto de títulos POR ARQUIVO no índice. Quando corta, o índice diz que cortou
@@ -135,32 +133,22 @@ export function extractMarkdownHeadings(text: string, maxHeadings: number = MAX_
   return headings
 }
 
-async function readMarkdownPreview(
+async function readMarkdownTitle(
   path: string,
   canonicalRoot: string
-): Promise<{ preview: string[]; marker?: string }> {
+): Promise<{ title?: string; marker?: string }> {
   const { handle, before } = await openVerifiedRegularFile(path, canonicalRoot)
   try {
-    // Nested Markdown is deliberately bounded: callers receive the path plus
-    // the first three *physical* lines, not a heading-derived summary. Keep the
-    // existing I/O ceiling so an unterminated giant first line cannot exhaust us.
+    // Só o ÍNDICE (caminho — primeiro título): o arquivo se abre com Read quando a
+    // tarefa pede. Leitura limitada como sempre, para um arquivo gigante não custar I/O.
     const buffer = Buffer.alloc(Math.min(before.size, MAX_MARKDOWN_BYTES))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const after = await handle.stat()
-    if (!stableFile(before, after)) return { preview: [], marker: '[changed during read]' }
+    if (!stableFile(before, after)) return { marker: '[changed during read]' }
     const text = buffer.subarray(0, bytesRead)
-    if (text.includes(0)) return { preview: [], marker: '[binary markdown omitted]' }
-    const decoded = text.toString('utf8')
-    // Never pass a truncated physical line as if it were documentation. If the
-    // bounded scan cannot establish all first three lines, omit the preview
-    // rather than violating the "first three physical lines" contract.
-    if (before.size > bytesRead && (decoded.match(/\r\n|\r|\n/g) ?? []).length < 3) {
-      return { preview: [], marker: '[first 3 physical lines exceed 64 KiB read limit]' }
-    }
-    return {
-      preview: decoded.split(/\r\n|\r|\n/).slice(0, 3),
-      ...(before.size > bytesRead ? { marker: '[first 64 KiB scanned]' } : {})
-    }
+    if (text.includes(0)) return { marker: '[binary markdown omitted]' }
+    const title = firstTitle(text.toString('utf8'))
+    return title ? { title } : {}
   } finally {
     await handle.close()
   }
@@ -206,8 +194,9 @@ interface ScanState {
   walkTruncated: boolean
 }
 
-function newScanState(ignore: DocsIgnore): ScanState {
-  return { remainingBytes: MAX_ROOT_MARKDOWN_TOTAL_BYTES, ignore, visited: 0, walkTruncated: false }
+/** `readBytes`: o orçamento de LEITURA dos Markdown da raiz lidos inteiros = o teto do bloco. */
+function newScanState(ignore: DocsIgnore, readBytes: number = MAX_DOCS_CONTEXT_BYTES): ScanState {
+  return { remainingBytes: readBytes, ignore, visited: 0, walkTruncated: false }
 }
 
 async function readRootMarkdown(
@@ -289,11 +278,10 @@ async function walk(
               if (result.truncated) entry.headingsTruncated = true
               if (result.marker) entry.marker = result.marker
             } else {
-              // Tudo dentro de docs/ é ANINHADO em relação à raiz do projeto:
-              // caminho + três primeiras linhas, nunca o arquivo inteiro. (A
-              // regra antiga, `depth === 1`, mandava docs/*.md inteiros.)
-              const result = await readMarkdownPreview(absolutePath, canonicalRoot)
-              entry.preview = result.preview
+              // Tudo dentro de docs/ entra como ÍNDICE: caminho — primeiro título.
+              // O conteúdo se abre com Read quando a tarefa pede.
+              const result = await readMarkdownTitle(absolutePath, canonicalRoot)
+              if (result.title) entry.title = result.title
               if (result.marker) entry.marker = result.marker
             }
           } catch (err) {
@@ -332,11 +320,15 @@ async function scanDocs(
   return { entries }
 }
 
+/** Os Markdown da raiz que vão INTEIROS: as regras do projeto para o agente. O
+ *  resto (README e afins) entra como índice, como os de docs/. */
+const ROOT_FULL_MARKDOWN = new Set(['agents.md', 'claude.md'])
+
 /**
- * Os Markdown da RAIZ do projeto (não recursivo): os únicos que entram
- * completos. Mesma leitura verificada do resto do módulo; o que o `.gitignore`
- * exclui fica de fora, e um arquivo que não cabe no orçamento de 48 KiB vira
- * marcador + três primeiras linhas.
+ * Os Markdown da RAIZ do projeto (não recursivo). AGENTS.md e CLAUDE.md entram
+ * completos; os demais como índice (caminho — primeiro título). Mesma leitura
+ * verificada do resto do módulo; o que o `.gitignore` exclui fica de fora, e um
+ * arquivo completo que não cabe no orçamento vira marcador + título.
  */
 async function scanRootMarkdown(cwd: string, state: ScanState): Promise<OutlineEntry[]> {
   let canonicalRoot: string
@@ -362,11 +354,18 @@ async function scanRootMarkdown(cwd: string, state: ScanState): Promise<OutlineE
       }
       const entry: OutlineEntry = { path, depth: 0, kind: 'file' }
       try {
-        const result = await readRootMarkdown(absolutePath, canonicalRoot, state)
-        entry.content = result.content
-        if (result.marker) entry.marker = result.marker
-        if (result.marker === ROOT_BUDGET_MARKER) {
-          entry.preview = (await readMarkdownPreview(absolutePath, canonicalRoot)).preview
+        if (!ROOT_FULL_MARKDOWN.has(child.name.toLowerCase())) {
+          const result = await readMarkdownTitle(absolutePath, canonicalRoot)
+          if (result.title) entry.title = result.title
+          if (result.marker) entry.marker = result.marker
+        } else {
+          const result = await readRootMarkdown(absolutePath, canonicalRoot, state)
+          entry.content = result.content
+          if (result.marker) entry.marker = result.marker
+          if (result.marker === ROOT_BUDGET_MARKER) {
+            const title = (await readMarkdownTitle(absolutePath, canonicalRoot)).title
+            if (title) entry.title = title
+          }
         }
       } catch (err) {
         entry.marker = `[unreadable: ${safeReason(err)}]`
@@ -379,15 +378,16 @@ async function scanRootMarkdown(cwd: string, state: ScanState): Promise<OutlineE
   return entries
 }
 
-export async function buildProjectOutline(cwd: string): Promise<string> {
-  const state = newScanState(await loadDocsIgnore(cwd))
+/** `maxBytes`: o teto do bloco (o hook passa o que sobra depois da memória, `docsBudgetFor`). */
+export async function buildProjectOutline(cwd: string, maxBytes: number = MAX_DOCS_CONTEXT_BYTES): Promise<string> {
+  const state = newScanState(await loadDocsIgnore(cwd), maxBytes)
   const rootEntries = await scanRootMarkdown(cwd, state)
   const scan = await scanDocs(cwd, 'full', state)
   const docsEntries: OutlineEntry[] = 'unavailable' in scan
     ? [{ path: 'docs', depth: 0, kind: 'directory', marker: scan.unavailable }]
     : scan.entries
   const notes = state.walkTruncated ? [`... varredura de docs/ interrompida após ${MAX_WALK_ENTRIES} entradas`] : []
-  return renderOutlineBlock([...rootEntries, ...docsEntries], notes)
+  return renderOutlineBlock([...rootEntries, ...docsEntries], notes, maxBytes)
 }
 
 /**

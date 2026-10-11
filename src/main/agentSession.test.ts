@@ -133,6 +133,7 @@ import type { SkillRuntimePaths } from './agentSession'
 import { forgetUsedMemories, usedMemories } from './memoria/memoriasUsadas'
 import { buildMemoryGateState } from './typesafe/memoryGate'
 import { claudeAuthExpiry } from './authExpiry'
+import { onHandoffNotice } from './handoffTracking/handoffNotices'
 
 const secretsForPrompt = vi.hoisted(() => vi.fn(async () => [] as Array<{ name: string; value: string }>))
 vi.mock('./memory/memoryRuntime', async () => {
@@ -160,6 +161,8 @@ function makeSession(opts: {
   fastMode?: boolean
   effort?: string
   cwd?: string
+  handoff?: { slug: string }
+  resume?: string
   skillRuntime?: SkillRuntimePaths
   tokenUsageRepository?: { insertLlmCall: ReturnType<typeof vi.fn>; updateLlmCall?: ReturnType<typeof vi.fn> }
 } = {}): {
@@ -485,6 +488,160 @@ describe('AgentSession — AskUserQuestion (pergunta interativa)', () => {
     const { id } = ask.mock.calls[0][0]
     s.resolvePermission({ id, behavior: 'allow', answers: [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Yup'] }] })
     await expect(p).resolves.toMatchObject({ behavior: 'deny' })
+  })
+})
+
+describe('AgentSession — conversa de handoff decide sozinha (autonomia do plano)', () => {
+  const q = (header: string, question: string, labels: string[]) => ({
+    header,
+    question,
+    multiSelect: false,
+    options: labels.map((label) => ({ label, description: '' }))
+  })
+  let project = ''
+  afterEach(async () => {
+    if (project) await rm(project, { recursive: true, force: true })
+    project = ''
+  })
+  /** Projeto com o card de autonomia do plano `p` (sem texto: sem card = padrão). */
+  async function handoffProject(card?: string): Promise<string> {
+    project = await mkdtemp(join(tmpdir(), 'agent-session-handoff-'))
+    if (card !== undefined) {
+      const dir = join(project, 'docs', 'spec', 'p', 'cards')
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'decisao-autonomia-handoff.md'), card)
+    }
+    return project
+  }
+
+  it('(b) com recomendada: resolve sem UI, devolve a escolha e emite "Decidido sozinho"', async () => {
+    const { s, ask, emit } = makeSession({ cwd: await handoffProject(), handoff: { slug: 'p' } })
+    const res = (await gate(s, 'AskUserQuestion', { questions: [q('Lib', 'Qual lib usar?', ['Zod (Recommended)', 'Yup'])] })) as {
+      behavior: string
+      message: string
+    }
+    expect(ask).not.toHaveBeenCalled()
+    expect(res.behavior).toBe('deny')
+    expect(res.message).toContain('- Lib: Zod')
+    expect(res.message).not.toContain('(Recommended)')
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'status', text: 'Decidido sozinho: Zod (recomendada) — pergunta: Lib' })
+    )
+  })
+
+  it('(c) sem recomendada: deny imediato mandando decidir pelos cards', async () => {
+    const { s, ask } = makeSession({ cwd: await handoffProject(), handoff: { slug: 'p' } })
+    const res = (await gate(s, 'AskUserQuestion', { questions: [q('Lib', 'Qual lib usar?', ['Zod', 'Yup'])] })) as { behavior: string; message: string }
+    expect(ask).not.toHaveBeenCalled()
+    expect(res).toEqual({
+      behavior: 'deny',
+      message:
+        "Conversa de handoff: decida você pelos cards do plano (leitura mais conservadora se eles não responderem), registre a decisão em 'Decisões tomadas sozinho' no relatório e continue."
+    })
+  })
+
+  it('(a) pergunta sobre ação destrutiva vai à UI', () => {
+    const { s, ask } = makeSession({ cwd: '/proj', handoff: { slug: 'p' } })
+    void gate(s, 'AskUserQuestion', { questions: [q('Git', 'Posso rodar git reset --hard?', ['Sim (Recommended)', 'Não'])] })
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('(d) "só o que listar": casa com a lista → UI; não casa → segue a recomendada', async () => {
+    const card = '---\nid: decisao-autonomia-handoff\n---\nPerguntas: só o que listar\n- nome da tabela\nPermissões: permitir tudo, exceto destrutivo\n'
+    const { s, ask } = makeSession({ cwd: await handoffProject(card), handoff: { slug: 'p' } })
+    void gate(s, 'AskUserQuestion', { questions: [q('Banco', 'Qual o nome da tabela nova?', ['orders (Recommended)', 'pedidos'])] })
+    expect(ask).toHaveBeenCalledTimes(1)
+    const res = (await gate(s, 'AskUserQuestion', { questions: [q('Lib', 'Qual lib?', ['Zod (Recomendado)', 'Yup'])] })) as { message: string }
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(res.message).toContain('- Lib: Zod')
+  })
+
+  it('(e) política "como hoje" e conversa comum: a pergunta vai à UI', async () => {
+    const card = 'Perguntas: como hoje\nPermissões: pedir como hoje\n'
+    const handoff = makeSession({ cwd: await handoffProject(card), handoff: { slug: 'p' } })
+    void gate(handoff.s, 'AskUserQuestion', { questions: [q('Lib', 'Qual?', ['Zod (Recommended)'])] })
+    expect(handoff.ask).toHaveBeenCalledTimes(1)
+    const comum = makeSession()
+    void gate(comum.s, 'AskUserQuestion', { questions: [q('Lib', 'Qual?', ['Zod (Recommended)'])] })
+    expect(comum.ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('handoff com a política padrão nasce com "Permitir tudo" (mesmo com o toggle global desligado, inclusive na retomada)', async () => {
+    const cwd = await handoffProject()
+    for (const resume of [undefined, 'sess-1']) {
+      const { s, ask } = makeSession({ cwd, handoff: { slug: 'p' }, skipPermissions: false, ...(resume ? { resume } : {}) })
+      await s.start()
+      const input = { command: 'npm run build' }
+      await expect(gate(s, 'Bash', input)).resolves.toEqual({ behavior: 'allow', updatedInput: input })
+      expect(ask).not.toHaveBeenCalled()
+      s.dispose()
+    }
+  })
+
+  it('handoff com "pedir como hoje" mantém o toggle que veio', async () => {
+    const { s, ask } = makeSession({ cwd: await handoffProject('Perguntas: nenhuma\nPermissões: pedir como hoje'), handoff: { slug: 'p' } })
+    await s.start()
+    void gate(s, 'Bash', { command: 'npm run build' })
+    expect(ask).toHaveBeenCalledTimes(1)
+    s.dispose()
+  })
+})
+
+describe('AgentSession — ATENÇÃO / DESVIO DO PLANO viram aviso em tempo real (só no handoff)', () => {
+  const say = (text: string, parent: string | null = null) => ({
+    type: 'assistant',
+    parent_tool_use_id: parent,
+    message: { model: 'claude-sonnet-5-5', usage: {}, content: [{ type: 'text', text }] }
+  })
+
+  it('handoff: linha que começa com o prefixo publica; citação no meio e subagente não; conversa comum não', () => {
+    const got: string[] = []
+    const off = onHandoffNotice((n) => got.push(`${n.convId}|${n.tipo}|${n.texto}`))
+    try {
+      const { s } = makeSession({ cwd: '/proj', handoff: { slug: 'p' } })
+      handle(s, say('Etapa 2.\nATENÇÃO: outra conversa mexeu em x.ts\nDESVIO DO PLANO: usei y'))
+      handle(s, say('ele disse ATENÇÃO: x'))
+      handle(s, say('ATENÇÃO: de subagente', 'toolu_sub'))
+      const comum = makeSession({ cwd: '/proj' })
+      handle(comum.s, say('ATENÇÃO: conversa comum'))
+      expect(got).toEqual(['c1|atencao|ATENÇÃO: outra conversa mexeu em x.ts', 'c1|atencao|DESVIO DO PLANO: usei y'])
+    } finally {
+      off()
+    }
+  })
+})
+
+describe('AgentSession — gate destrutivo antes do "Permitir tudo" (toda sessão)', () => {
+  it('git reset --hard com bypassAll vai à UI numa conversa comum e numa de handoff', () => {
+    for (const extra of [{}, { handoff: { slug: 'p' } }]) {
+      const { s, ask } = makeSession({ cwd: '/proj', ...extra })
+      s.setBypass(true)
+      void gate(s, 'Bash', { command: 'git reset --hard HEAD~1' })
+      expect(ask).toHaveBeenCalledTimes(1)
+      expect(ask.mock.calls[0][0]).toMatchObject({ toolName: 'Bash' })
+    }
+  })
+
+  it('"sempre permitir" o Bash não libera o próximo destrutivo; ligar "Permitir tudo" ao vivo não aprova o pendente', async () => {
+    const { s, ask } = makeSession({ cwd: '/proj' })
+    const first = gate(s, 'Bash', { command: 'npm test' })
+    s.resolvePermission({ id: ask.mock.calls[0][0].id, behavior: 'allow', always: true })
+    await first
+    let settled = false
+    void gate(s, 'Bash', { command: 'git push --force' }).then(() => {
+      settled = true
+    })
+    expect(ask).toHaveBeenCalledTimes(2)
+    s.setBypass(true)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+  })
+
+  it('comando legítimo com bypassAll segue sem UI', async () => {
+    const { s, ask } = makeSession({ cwd: '/proj' })
+    s.setBypass(true)
+    await expect(gate(s, 'Bash', { command: 'git status' })).resolves.toMatchObject({ behavior: 'allow' })
+    expect(ask).not.toHaveBeenCalled()
   })
 })
 
@@ -1001,6 +1158,39 @@ describe('AgentSession — vision_fallback_router', () => {
   })
 })
 
+describe('AgentSession — afinação por tipo de conversa (plugins, subagentes, compactação)', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+  const envOf = (): Record<string, string | undefined> => optionsOfLastQuery().env as Record<string, string | undefined>
+
+  it('toda sessão do app desliga o superpowers em Options.settings (camada flag, na subida)', async () => {
+    for (const extra of [{}, { handoff: { slug: 'p' } }]) {
+      const { s } = makeSession({ cwd: '/proj', ...extra })
+      await s.start()
+      expect((optionsOfLastQuery().settings as Record<string, unknown>).enabledPlugins).toEqual({
+        'superpowers@superpowers-marketplace': false
+      })
+      s.dispose()
+    }
+  })
+
+  it('conversa de handoff: até 6 subagentes ao mesmo tempo; a comum não recebe a variável', async () => {
+    const handoff = makeSession({ cwd: '/proj', handoff: { slug: 'p' } })
+    await handoff.s.start()
+    expect(envOf().CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBe('6')
+    expect(envOf().CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000')
+    expect(envOf().CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBeUndefined()
+    expect(envOf().CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe('true')
+    handoff.s.dispose()
+
+    const comum = makeSession({ cwd: '/proj' })
+    await comum.s.start()
+    expect(envOf().CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBeUndefined()
+    expect(envOf().CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
+    comum.s.dispose()
+  })
+})
+
 describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () => {
   const optionsOfLastQuery = (): Record<string, unknown> =>
     (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
@@ -1010,7 +1200,11 @@ describe('AgentSession — modo rápido (settings.fastMode) enviado ao SDK', () 
   it('modelo suportado + flag ligada: manda settings.fastMode', async () => {
     const { s } = makeSession({ model: 'claude-opus-5-5', fastMode: true })
     await s.start()
-    expect(optionsOfLastQuery().settings).toEqual({ autoMemoryEnabled: false, fastMode: true })
+    expect(optionsOfLastQuery().settings).toEqual({
+      autoMemoryEnabled: false,
+      enabledPlugins: { 'superpowers@superpowers-marketplace': false },
+      fastMode: true
+    })
   })
 
   it('flag desligada: não manda settings.fastMode (fica no padrão da conta)', async () => {
@@ -1302,7 +1496,7 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(dispatched).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
   })
 
-  it('catálogo em níveis: lista nativa sem as baixas, crítica inteira no prompt, busca MCP e /nome de baixa reescrito', async () => {
+  it('catálogo em níveis: lista nativa sem o nível baixo, nível alto inteiro no prompt, busca MCP e /nome de nível baixo reescrito', async () => {
     configState.skillCatalog = { tiered: true, overrides: {} }
     const project = await mkdtemp(join(tmpdir(), 'agent-session-tiers-'))
     cacheState.dir = join(project, 'cache')
@@ -1810,7 +2004,7 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       hookSpecificOutput: { additionalContext: expect.stringContaining('depois-da-ferramenta.md') }
     })
     expect(projectOutlineMock).toHaveBeenCalledTimes(2)
-    expect(projectOutlineMock).toHaveBeenCalledWith('/proj')
+    expect(projectOutlineMock).toHaveBeenCalledWith('/proj', expect.any(Number))
   })
 
   it('não reenvia o contexto vivo a cada lote de ferramentas quando nada mudou', async () => {

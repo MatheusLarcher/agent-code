@@ -49,12 +49,12 @@ const WRITES_LAST_OPERAND = new Set(['cp', 'mv', 'install', 'rsync', 'ln'])
  * aparece no comando, então não há caminho a conferir: sob uma tarefa com
  * escopo, eles são escrita de alcance indeterminado.
  */
-const GIT_WORKTREE_WIDE = new Set(['checkout', 'restore', 'apply', 'clean', 'stash', 'merge', 'rebase'])
+export const GIT_WORKTREE_WIDE: ReadonlySet<string> = new Set(['checkout', 'restore', 'apply', 'clean', 'stash', 'merge', 'rebase'])
 
 /** Destinos de redirecionamento que não são arquivo do projeto. */
 const NULL_SINKS = new Set(['/dev/null', 'nul', 'NUL', '/dev/stderr', '/dev/stdout'])
 
-interface Token {
+export interface Token {
   text: string
   /** O texto depende de variável ou substituição — o valor real é desconhecido. */
   dynamic: boolean

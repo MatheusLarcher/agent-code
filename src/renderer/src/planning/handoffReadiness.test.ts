@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildDraftHandoff, demoteHeadings, handoffReadiness, isOpenAmbiguity } from './handoffReadiness'
 import type { PlanMediaDto } from '@shared/ipc'
+import { HANDOFF_CONTINUOUS_RULES, HANDOFF_DECIDE_RULE } from '@shared/handoffWorkRules'
 import { makeCard, makePlan, PLAN_DIR } from './planningTestUtils'
 
 describe('handoffReadiness', () => {
@@ -140,7 +141,8 @@ describe('buildDraftHandoff com mídia', () => {
     return { name, path: `${MIDIA}\\${name}`, kind: 'imagem', size: 10, mediaType: 'image/png', ...over }
   }
 
-  /** O texto que o rascunho gerava ANTES de existir mídia (capturado do código anterior). */
+  /** O texto que o rascunho gerava ANTES de existir mídia (capturado do código anterior), com as seções por etapa. */
+  const VERIFICAR = '   - Verificar com: os testes dos arquivos que a etapa tocar e o typecheck/build do projeto, com a saída no relatório.'
   const BEFORE_MEDIA = [
     '# Implementação: Plano de teste',
     '',
@@ -154,12 +156,21 @@ describe('buildDraftHandoff com mídia', () => {
     '',
     '1. **Levantar requisitos** (`requisitos`) — concluída',
     '   - Requisito: Login com SSO (`cards/login.md`)',
+    '   - Aceite: os requisitos desta etapa atendidos — Login com SSO.',
+    VERIFICAR,
+    '   - Decidido: nada específico; valem as decisões gerais abaixo.',
     '2. **Desenhar a solução** (`desenho`) — pendente',
     '   - Decisão: Usar Postgres (`cards/banco.md`)',
     '   - Sugestão: Cache com Redis (`cards/cache.md`)',
     '   - Ambiguidade: Pix ou boleto? (`cards/amb-pix.md`)',
+    '   - Aceite: o que os cards desta etapa descrevem, funcionando no fluxo real.',
+    VERIFICAR,
+    '   - Decidido: Usar Postgres; Pix ou boleto?.',
     '3. **Entregar** (`entrega`) — em andamento',
     '   - Ambiguidade: Frete grátis? (`cards/amb-frete.md`)',
+    '   - Aceite: o que os cards desta etapa descrevem, funcionando no fluxo real.',
+    VERIFICAR,
+    '   - Decidido: nada específico; valem as decisões gerais abaixo.',
     '',
     '## Cards fora das etapas',
     '',
@@ -208,9 +219,20 @@ describe('buildDraftHandoff com mídia', () => {
     '',
     '- Antes de começar, declare as etapas acima como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as sem replanejar.',
     `- Consulte \`${PLAN_DIR}\` (roteiro e cards) sempre que precisar de detalhe: os cards são a fonte das decisões.`,
-    '- Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.',
+    `- ${HANDOFF_DECIDE_RULE}`,
+    ...HANDOFF_CONTINUOUS_RULES.map((rule) => `- ${rule}`),
     ''
   ].join('\n')
+
+  it('o rascunho passa na conferência do plan_handoff_write: cada etapa com Aceite e Verificar com', () => {
+    const md = buildDraftHandoff(richPlan())
+    for (const id of ['requisitos', 'desenho', 'entrega']) {
+      const start = md.indexOf(`(\`${id}\`)`)
+      const section = md.slice(start, md.indexOf('\n', md.indexOf('Decidido:', start)))
+      expect(section).toContain('Aceite:')
+      expect(section).toContain('Verificar com:')
+    }
+  })
 
   function richPlan() {
     const plan = makePlan()

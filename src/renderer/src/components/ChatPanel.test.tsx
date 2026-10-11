@@ -78,6 +78,21 @@ function renderPanel(
   )
 }
 
+it('abre e fecha contexto mantendo histórico e composer disponíveis', () => {
+  renderPanel({ messages: [{ kind: 'user', id: 'u1', text: 'Pedido continua no histórico' }] })
+  const toggle = screen.getByRole('button', { name: 'Detalhar contexto recebido' })
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getByRole('region', { name: 'Contexto detalhado' })).toBeTruthy()
+  expect(screen.getByText('Histórico de contexto indisponível neste dispositivo.')).toBeTruthy()
+  expect(screen.getByText('Pedido continua no histórico')).toBeTruthy()
+  expect(screen.getByRole('textbox')).toBeTruthy()
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByRole('region', { name: 'Contexto detalhado' })).toBeNull()
+  expect(screen.getByText('Pedido continua no histórico')).toBeTruthy()
+})
+
 const consumo = (c: HTMLElement) => ({
   header: c.querySelector('.chat-header .token-meter'),
   last: c.querySelector('.last-usage-float'),

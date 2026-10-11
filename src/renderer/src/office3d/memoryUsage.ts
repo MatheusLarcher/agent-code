@@ -42,7 +42,7 @@ export function relInMemories(path: string, memoriesDir: string | null): string 
 }
 
 /** Das mensagens da conversa: as ferramentas de memória e as leituras na pasta. */
-export function usageFromMessages(c: Conversation, memoriesDir: string | null): UsageEvent[] {
+export function usageFromMessages(c: Pick<Conversation, 'id' | 'title' | 'cwd' | 'messages' | 'updatedAt'>, memoriesDir: string | null): UsageEvent[] {
   const found: Array<Omit<UsageEvent, 'at'> & { i: number }> = []
   c.messages.forEach((m, i) => {
     if (m.kind !== 'tool-use' || !m.result || m.result.isError) return

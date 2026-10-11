@@ -28,6 +28,13 @@ const conv = (extra: Partial<Conversation> = {}): Conversation => ({
 const opts = { now: 1_000, self: 'pc-a', newId: () => 'rec-1', maxAttempts: 5 }
 
 describe('turnInFlight — a marca', () => {
+  it('persiste identidade da bolha antes da saída e preserva aliases após reinício/limpeza', () => {
+    const first = withTurnInFlight(conv(), turnMark('u1'), 't1')
+    const second = withTurnInFlight(first, turnMark('u1'), 't2')
+    const reloaded = JSON.parse(JSON.stringify(withoutTurnInFlight(second))) as Conversation
+    expect(reloaded.messages[0]).toMatchObject({ sdkUuid: 't2', turnIds: ['t1', 't2'] })
+    expect(withTurnInFlight(second, turnMark('u1'), 't2').messages[0]).toMatchObject({ turnIds: ['t1', 't2'] })
+  })
   it('nasce ao criar o turno, ganha `sent` no envio e sai no terminal (só a do turno certo)', () => {
     const marked = withTurnInFlight(conv(), turnMark('u1', { device: 'pc-a', now: 5 }))
     expect(marked.turnInFlight).toEqual({ msgId: 'u1', at: 5, device: 'pc-a' })

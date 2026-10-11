@@ -1,0 +1,1 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 0 | sem edição: 2 | edição delegada a executor: 0

@@ -98,14 +98,38 @@ describe('deliveryNotices — a fila do quadro', () => {
   const queued = (over: Partial<HandoffEnvio> = {}): HandoffEnvio =>
     base({ id: 'env-2', ordem: 2, status: 'na_fila', enviadoEm: null, entregas: [], ...over })
 
-  it('o envio corrente parou com prompts esperando: um aviso "a fila parou" no lugar do incompleto', () => {
+  it('o envio corrente parou pelo Stop (ou com erro) com prompts esperando: um aviso "a fila parou" no lugar do parado', () => {
     const prev = [base({ status: 'em_execucao' }), queued()]
-    const next = [base({ status: 'incompleta', motivo: 'faltou [b]' }), queued()]
+    const next = [base({ status: 'parada', motivo: 'você parou este prompt (Stop) — a fila espera você' }), queued()]
     expect(deliveryNotices(prev, next).map((n) => [n.kind, n.msg])).toEqual([
       ['fila', 'A fila parou: Checkout com Pix · loja — 1 prompt espera no quadro']
     ])
+    expect(deliveryNotices(prev, [base({ status: 'falhou' }), queued()]).map((n) => n.kind)).toEqual(['fila'])
     // Sem nada esperando, o aviso de sempre.
-    expect(deliveryNotices([prev[0]], [next[0]]).map((n) => n.kind)).toEqual(['incompleta'])
+    expect(deliveryNotices([prev[0]], [next[0]]).map((n) => n.kind)).toEqual(['parada'])
+  })
+
+  it('incompleto com prompts esperando: a fila NÃO parou (segue sozinha) — só o aviso do incompleto', () => {
+    const prev = [base({ status: 'em_execucao' }), queued()]
+    const next = [base({ status: 'incompleta', motivo: 'faltou [b]' }), queued()]
+    expect(deliveryNotices(prev, next).map((n) => n.kind)).toEqual(['incompleta'])
+  })
+
+  it('o prompt seguinte sai sozinho com a pendência do anterior: "Envio N/M saiu sozinho…"', () => {
+    const prev = [base({ status: 'incompleta', motivo: 'faltou [b]' }), queued()]
+    const next = [base({ status: 'incompleta', motivo: 'faltou [b]' }), queued({ status: 'enviado', enviadoEm: '2026-10-10T10:00:00.000Z' })]
+    expect(deliveryNotices(prev, next).map((n) => [n.kind, n.tipo, n.msg])).toEqual([
+      ['fila', 'aviso', 'Envio 2/2 saiu sozinho com a pendência do anterior: faltou [b] — Checkout com Pix · loja']
+    ])
+  })
+
+  it('o envio parado por inatividade volta a enviado: "Envio N/M retomado…"', () => {
+    const stall = 'nenhum turno rodando há 10 min, sem pergunta pendente e sem conclusão'
+    const prev = [base({ status: 'parada', motivo: stall }), queued()]
+    const next = [base({ status: 'enviado', motivo: null }), queued()]
+    expect(deliveryNotices(prev, next).map((n) => n.msg)).toEqual(['Envio 1/2 retomado depois de parar por inatividade — Checkout com Pix · loja'])
+    // A 1ª parada por inatividade não diz "a fila parou" (ela vai retomar).
+    expect(deliveryNotices([base({ status: 'em_execucao' }), queued()], prev).map((n) => n.kind)).toEqual(['parada'])
   })
 
   it('o PO segurou o próximo prompt: avisa com o motivo; tirar da fila (ação sua) não avisa', () => {

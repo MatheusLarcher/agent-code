@@ -8,30 +8,24 @@ import { handoffContentHash } from './handoffModel'
 import { HandoffReconciler } from './handoffReconcile'
 import * as rules from './handoffRules'
 import { setActiveHandoffTracker } from './handoffRuntime'
-import { closeSlice, ConvQueues, mayHaveStalled, newConvState, rememberSend, type ConvState } from './handoffState'
+import { closeSlice, ConvQueues, newConvState, rememberSend, type ConvState } from './handoffState'
+import { BOOT_GRACE_MS, loadKnownConversations, sweepConversations, type SweepContext } from './handoffTrackerSweep'
 
 export type { HandoffBoard, HandoffCorrection } from './handoffJobs'
+export { BOOT_GRACE_MS } from './handoffTrackerSweep'
 
 /** Eventos de atividade do turno: o mesmo critério que abre o "em execução" no topo da conversa. */
 const TURN_ACTIVITY: ReadonlySet<ChatEvent['kind']> = new Set(['assistant-text', 'thinking', 'tool-use', 'tool-result', 'status'])
 
 /**
  * O acompanhamento dos envios de handoff pelo que o APP observa — nunca pela
- * palavra do modelo (card req-acompanhamento-app). Entradas, todas ligadas no
- * index.ts só para conversas de handoff: o tee de eventos (`observe`), o
- * agent:send (`noteUserSend`), as perguntas/permissões (`notePermission`), as
- * mudanças no Quadro (`boardChanged`) e o registro dos envios (`onRegistered`).
- *
- * Invariantes, as mesmas do BoardService:
- * 1. **Nunca derruba a conversa.** Nenhuma entrada lança; banco fora do ar só
- *    deixa de gravar.
- * 2. **Uma escrita por vez por conversa.** Cada entrada vira um job na fila da
- *    conversa (handoffJobs.ts); o estado em memória (handoffState.ts) muda NA
- *    HORA do evento, e o job só grava o que foi decidido.
- *
- * Tempo ativo = turno rodando e sem pergunta aberta. A fatia vai ao banco em
- * cada transição e a cada passada da varredura; app fechado não conta porque não
- * há turno. As regras moram em handoffRules.ts.
+ * palavra do modelo (card req-acompanhamento-app). Entradas (index.ts, só
+ * conversas de handoff): o tee de eventos, o agent:send, as perguntas, o Quadro
+ * e o registro dos envios. Invariantes, as do BoardService: nenhuma entrada
+ * lança (banco fora só deixa de gravar) e uma escrita por vez por conversa — o
+ * estado em memória (handoffState.ts) muda na hora, o job (handoffJobs.ts) grava
+ * o decidido. Tempo ativo = turno rodando sem pergunta aberta; a fatia vai ao
+ * banco a cada transição e passada da varredura. Regras em handoffRules.ts.
  */
 
 export interface HandoffTrackerDeps {
@@ -54,7 +48,8 @@ export interface HandoffTrackerDeps {
 export class HandoffTracker {
   private readonly states = new Map<string, ConvState>()
   private readonly queues = new ConvQueues((convId, err) => this.warn(convId, err))
-  private readonly startedAt: number
+  /** O boot deste processo (ms): a carência (BOOT_GRACE_MS) da varredura e da fila do projeto conta daqui. */
+  readonly startedAt: number
   private readonly stallMs: number
   private readonly jobs: HandoffJobs
   private readonly reconciler: HandoffReconciler
@@ -191,19 +186,32 @@ export class HandoffTracker {
     return this.states.get(convId)?.stoppedByUser === true
   }
 
-  /** Sessão descartada: não sai `result` nem `error`, mas o turno acabou. */
+  /** Sessão descartada (descarte, lease perdido, troca de sessão): não sai `result`
+   *  nem `error`, mas o turno acabou. Com o turno ABERTO em memória, o envio que
+   *  rodava fica parado por inatividade (a fila retoma sozinha); a sessão nova de
+   *  uma troca reabre com o próprio turn-start. Sem turno, nada a encerrar. */
   sessionEnded(convId: string): void {
     const s = this.states.get(convId)
     if (!s) return
     this.guard('sessionEnded', () => {
+      const wasRunning = s.turnRunning
       const ms = closeSlice(s, this.now(), () => {
         s.turnRunning = false
         s.pending.clear()
       })
       this.enqueue(convId, async () => {
         await this.jobs.addTime(convId, ms)
-        await this.jobs.permission(convId)
+        if (wasRunning) await this.jobs.sessionEnded(convId, s.stoppedByUser)
+        else await this.jobs.permission(convId)
       })
+    })
+  }
+
+  /** A conversa foi apagada: os envios abertos dela param e ela deixa de ser acompanhada. */
+  conversationDeleted(convId: string): void {
+    this.guard('conversationDeleted', () => {
+      this.enqueue(convId, () => this.jobs.conversationDeleted(convId))
+      this.states.delete(convId)
     })
   }
 
@@ -231,6 +239,11 @@ export class HandoffTracker {
     const s = this.states.get(convId)
     if (s) s.lastActivity = at
     return this.exclusive(convId, () => this.jobs.dispatched(convId, envioId, at)).catch(() => false)
+  }
+
+  /** O despacho falhou no renderer depois da marca: o envio volta à fila (HandoffJobs.undispatched). */
+  undispatched(convId: string, envioId: string): Promise<boolean> {
+    return this.exclusive(convId, () => this.jobs.undispatched(convId, envioId)).catch(() => false)
   }
 
   /** O Quadro do projeto mudou (sync, PO, arrasto): o reconciliador relê o
@@ -270,11 +283,19 @@ export class HandoffTracker {
     }
   }
 
-  /** Para o PO no fechamento: as etapas do envio corrente sem cartão no Quadro (HandoffJobs.orphanEtapas — fora da fila, nunca lança). */
+  /** Para o PO no fechamento (HandoffJobs — fora da fila, nunca lançam): as etapas do envio
+   *  corrente sem cartão no Quadro, e o placar inteiro dele (toda etapa, com cartão e aceite). */
   orphanEtapas = (convId: string) => this.jobs.orphanEtapas(convId)
+  envioEtapas = (convId: string) => this.jobs.envioEtapas(convId)
 
   isTurnRunning(convId: string): boolean {
     return this.states.get(convId)?.turnRunning ?? false
+  }
+
+  /** A última atividade da conversa vista NESTE processo (ms); `null` sem nenhuma. */
+  lastActivityMs(convId: string): number | null {
+    const at = this.states.get(convId)?.lastActivity ?? 0
+    return at > 0 ? at : null
   }
 
   /** Tempo ativo da conversa ainda não gravado (para o prazo em tempo real). */
@@ -341,7 +362,7 @@ export class HandoffTracker {
     return this.queues.run(convId, job)
   }
 
-  /** Espera a fila (de uma conversa ou de todas, com o reconciliador) esvaziar — para teste e varredura. */
+  /** Espera a fila (de uma conversa ou de todas, com o reconciliador) esvaziar — teste e varredura. */
   async settled(convId?: string): Promise<void> {
     for (let i = 0; i < 100; i++) {
       const pending = convId ? this.queues.pending(convId) : [...this.queues.pending(), ...this.reconciler.pending()]
@@ -350,49 +371,27 @@ export class HandoffTracker {
     }
   }
 
-  /** As conversas com envio em curso no banco viram conhecidas (para a parada), e
-   *  o reconciliador passa em cada projeto com envio saído e não concluído (o
-   *  Quadro pode ter andado com o app fechado). Lança se o banco falhar — a
-   *  varredura tenta de novo na passada seguinte. */
-  async loadKnown(): Promise<boolean> {
-    const repo = this.repo()
-    if (!repo) return false
-    const envios = await repo.listHandoffEnvios({ statuses: [...rules.HANDOFF_OPEN_STATUSES], limit: 1000 })
-    for (const envio of envios) {
-      const s = this.state(envio.conversationId, envio.projectCwd, false)
-      s.projectId ??= envio.projectId
-    }
-    await this.reconciler.scheduleUnsettled(repo)
-    return true
+  /** A carga das conversas com envio em curso (boot) e a passada da varredura — handoffTrackerSweep.ts. */
+  loadKnown(): Promise<boolean> {
+    return loadKnownConversations(this.sweepContext())
   }
 
-  /** Uma passada: grava a fatia ativa de quem está rodando e marca `parada` — e
-   *  o reconciliador relê o projeto do que parou (com tudo pronto, conclui). */
-  async sweep(): Promise<{ flushed: number; stalled: number }> {
-    const at = this.now()
-    const work: Promise<unknown>[] = []
-    let flushed = 0
-    let stalled = 0
-    for (const [convId, s] of this.states) {
-      if (s.activeSince !== null) {
-        const ms = closeSlice(s, at)
-        if (ms > 0) {
-          flushed++
-          work.push(this.exclusive(convId, () => this.jobs.addTime(convId, ms)))
-        }
-      }
-      if (!mayHaveStalled(s, at, this.startedAt, this.stallMs)) continue
-      work.push(
-        this.exclusive(convId, async () => {
-          // A última atividade é relida na vez do job: algo pode ter chegado na fila.
-          const marked = await this.jobs.markStalled(convId, this.startedAt)
-          stalled += marked.length
-          for (const envio of marked) this.reconciler.schedule(envio.projectId)
-        })
-      )
+  sweep(): Promise<{ flushed: number; stalled: number }> {
+    return sweepConversations(this.sweepContext())
+  }
+
+  private sweepContext(): SweepContext {
+    return {
+      states: this.states,
+      state: (convId, cwd) => this.state(convId, cwd, false),
+      jobs: this.jobs,
+      reconciler: this.reconciler,
+      exclusive: (convId, job) => this.exclusive(convId, job),
+      repo: () => this.repo(),
+      now: () => this.now(),
+      notBefore: this.startedAt + BOOT_GRACE_MS,
+      stallMs: this.stallMs
     }
-    await Promise.allSettled(work)
-    return { flushed, stalled }
   }
 
   // -------------------------------------------------------------------------
@@ -402,7 +401,9 @@ export class HandoffTracker {
   private state(convId: string, cwd: string, fromSession: boolean): ConvState {
     let s = this.states.get(convId)
     if (!s) {
-      s = newConvState(cwd, this.now())
+      // Sem atividade vista ainda (0): subir a sessão não é atividade — quem
+      // vê um evento marca a sua; sem nenhum, a parada é julgada pelo banco.
+      s = newConvState(cwd, 0)
       this.states.set(convId, s)
     } else if (cwd && (fromSession || !s.cwd)) {
       // A pasta da SESSÃO é a do Quadro da conversa (board.observe usa a mesma).

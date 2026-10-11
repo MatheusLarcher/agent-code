@@ -29,4 +29,11 @@ describe('index.ts: sessão substituída avisa o acompanhamento', () => {
       )
     }
   })
+
+  it('a conversa apagada (mudança `deleted` em conversations:sync) chega ao acompanhamento, e a fila do projeto lê o sinal de vida do tracker', () => {
+    // Sem isto o plano da conversa apagada ficaria "rodando" para sempre na fila do projeto.
+    expect(source).toMatch(/ipcMain\.on\(Channels\.conversationsSync,[\s\S]{0,300}if \(change\.deleted\) handoffTracker\.conversationDeleted\(change\.id\)/)
+    expect(source).toMatch(/turnRunning: \(conversationId\) => handoffTracker\.isTurnRunning\(conversationId\)/)
+    expect(source).toMatch(/lastActivityMs: \(conversationId\) => handoffTracker\.lastActivityMs\(conversationId\)/)
+  })
 })

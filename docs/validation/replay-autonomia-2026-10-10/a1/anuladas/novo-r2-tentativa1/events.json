@@ -1,0 +1,26 @@
+[
+  {
+    "at": 1791637646465,
+    "conv": "cmv2es2cqyzqot",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && git status --short && echo \\\"---LOG\\\" && git log --oneline -5 && echo \\\"---SANDBOX\\\" && ls docs/spec/plano-20261006-1026/_sandbox 2>&1; ls D:/agent-code-replay/a1/agent-code/docs/spec/ 2>&1; echo \\\"---GITIGNORE\\\"; git check-ignore -v docs/spec/pla…"
+  },
+  {
+    "at": 1791637700663,
+    "conv": "cmv2es2cqyzqot",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && grep -n \\\"phone:build\\\\|\\\\\\\"test\\\\\\\"\\\\|\\\\\\\"typecheck\\\\\\\"\\\\|\\\\\\\"build\\\\\\\"\\\" package.json\",\"description\":\"Confirm npm script names\"}"
+  },
+  {
+    "at": 1791637745850,
+    "conv": "cmv2es2cqyzqot",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && ls scripts/office-agents/ && grep -rln \\\"reuniao-cabeceira\\\" src/renderer/src | head -20 && grep -n \\\"keep\\\\|cdp-eval\\\\|shots\\\\b\\\" scripts/office-agents/app-harness.mjs | tail -15\",\"description\":\"List harness scripts and demo manager references\"}"
+  }
+]

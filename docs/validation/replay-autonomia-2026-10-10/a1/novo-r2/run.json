@@ -1,0 +1,118 @@
+{
+  "task": "a1",
+  "side": "novo",
+  "round": 2,
+  "switches": {
+    "leituraGuiada": true,
+    "tiered": true
+  },
+  "manager": {
+    "model": "claude-opus-5-5",
+    "effort": "xhigh"
+  },
+  "timeoutMs": 3600000,
+  "startedAt": "2026-10-10T15:18:38.577Z",
+  "memoryBefore": {
+    "waitedMs": 0,
+    "free": 9.314048767089844
+  },
+  "config": {
+    "leituraGuiada": true,
+    "tiered": true,
+    "planning": {
+      "model": "claude-opus-5-5",
+      "effort": "xhigh"
+    }
+  },
+  "handoff": {
+    "prompts": 1,
+    "ms": 403631,
+    "nudges": 0,
+    "secs": 404
+  },
+  "implementationStarted": true,
+  "implementation": {
+    "status": "timeout",
+    "convId": "cmv2jqjtvtazbu",
+    "nudges": 0,
+    "ms": 3197870,
+    "finalText": "",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "fastMode": false
+  },
+  "endedAt": "2026-10-10T16:19:11.897Z",
+  "diff": {
+    "files": 19,
+    "add": 926,
+    "del": 422,
+    "tests": [
+      "src/renderer/src/office3d/_tmpGlbNap.test.ts",
+      "src/renderer/src/office3d/agentCast.test.ts",
+      "src/renderer/src/office3d/agentPoses.test.ts",
+      "src/renderer/src/office3d/destinations.test.ts",
+      "src/renderer/src/office3d/poses.test.ts",
+      "src/renderer/src/office3d/seatedPose.test.ts",
+      "src/renderer/src/office3d/seatedReach.test.ts"
+    ],
+    "outside": {
+      "stash": 0,
+      "worktrees": 0,
+      "branches": 1
+    }
+  },
+  "memoryBeforeEval": {
+    "waitedMs": 0,
+    "free": 9.595321655273438
+  },
+  "time": {
+    "firstEdit": {
+      "pedidos": 1,
+      "secsToFirstEdit": 289,
+      "callsToFirstEdit": 33,
+      "readsToFirstEdit": 40
+    },
+    "totals": {
+      "file": "8dad84fe-f7ac-4874-b818-e46023582ed2.jsonl",
+      "subagents": 0,
+      "secsTotal": 3181,
+      "secsToFirstEditAny": 289,
+      "calls": 181,
+      "callsMain": 181,
+      "edits": 66,
+      "tools": {
+        "ToolSearch": 4,
+        "TaskCreate": 8,
+        "Read": 99,
+        "TaskUpdate": 15,
+        "Bash": 57,
+        "mcp__entregas__entrega_estimar": 8,
+        "Grep": 43,
+        "Glob": 3,
+        "mcp__entregas__entrega_tempo": 7,
+        "Edit": 61,
+        "TaskList": 1,
+        "Write": 6,
+        "Estimate": 1,
+        "PowerShell": 15
+      }
+    }
+  },
+  "autonomy": {
+    "turns": 1,
+    "handoffPrompts": 1,
+    "lateHandoffPrompts": 0,
+    "askUserQuestion": 0,
+    "expired7min": 0,
+    "turnsEndingInQuestion": 0,
+    "activeSecs": 3193,
+    "wallSecs": 3193,
+    "calls": 181,
+    "avgContextTokens": 109356,
+    "atencaoLines": 0,
+    "desvioLines": 1,
+    "firstAt": "2026-10-10T15:25:50.842Z",
+    "lastAt": "2026-10-10T16:19:03.854Z",
+    "firstRequest": "# Handoff — Altura da mesa muito baixa (cadeira no padrão + uma cadeira por agente na sala de reunião)\n\n## Arquivos\n\nAbra TODOS os arquivos de \"Ler antes de começar\" numa única resposta, com as leituras em paralelo. Não reexplore o que a lista cobre; use Grep/Glob só para o que faltar. As linhas são"
+  }
+}

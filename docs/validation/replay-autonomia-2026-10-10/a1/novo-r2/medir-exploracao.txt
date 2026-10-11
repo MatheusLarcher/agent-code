@@ -1,0 +1,32 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 1 | sem edição: 1 | edição delegada a executor: 0
+handoff: 1 pedidos | p50 289s, 33 chamadas, 40 Read, 31 arquivos, 5 buscas, 16492 tokens de saída
+pedido comum: 0 pedidos | p50 0s, 0 chamadas, 0 Read, 0 arquivos, 0 buscas, 0 tokens de saída
+  H claude-opus-5-5 @ xhigh            1 pedidos (1 handoff) | p50 289s, 33 chamadas, 16492 tokens saída, 5.2 s/chamada
+segundos de modelo por chamada: p50 5.2 | p90 5.2
+
+métrica (até o 1º Edit)      p50        p75        p90        máx
+secs                              289        289        289        289
+calls                              33         33         33         33
+model                             170        170        170        170
+toolSecs                          120        120        120        120
+agentSecs                           0          0          0          0
+reads                              40         40         40         40
+grep                                4          4          4          4
+glob                                1          1          1          1
+bash                               11         11         11         11
+agents                              0          0          0          0
+files                              31         31         31         31
+ctxFirst                        65810      65810      65810      65810
+ctxAtEdit                      119464     119464     119464     119464
+tokensSum                     3535065    3535065    3535065    3535065
+outTokens                       16492      16492      16492      16492
+thinkingChars                     973        973        973        973
+
+chamadas ao modelo com UMA ferramenta só (leitura em série): 21/33 (64%)
+tempo até o 1º Edit: modelo 59% | ferramentas 41% (inclui espera de permissão e subagentes)
+
+por projeto: projeto | pedidos com edição | p50 segs | p50 chamadas | p50 Reads
+  D--agent-code-replay-a1-agent-code          1      289       33       40
+
+15 mais lentos até o 1º Edit:
+  2026-10-10T15:25 D--agent-code-replay-a   289s  33 chamadas  40 Read   5 busca  0 subag.     0s em subag. | # Handoff — Altura da mesa muito baixa (cadeira no padrão + uma cadeira por agente na sala

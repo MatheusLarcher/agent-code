@@ -496,32 +496,6 @@ export function SettingsModal({
                   )}
                 </section>
 
-                <section className={`settings-section settings-switch-section ${cfg.board.requirePlan ? 'on' : ''}`}>
-                  <label className="settings-switch-row">
-                    <span className="settings-switch-text">
-                      <strong>
-                        <IconBoard size={15} /> Exigir o plano antes de escrever
-                      </strong>
-                      <span className="settings-desc">
-                        O agente só escreve arquivo no projeto depois de declarar as tarefas que vai executar —
-                        é o que alimenta o Quadro. Vale uma vez por mensagem sua: se ele insistir sem declarar
-                        nada, a escrita seguinte passa. Desligue se preferir que ele trabalhe sem plano nenhum.
-                      </span>
-                    </span>
-                    <input
-                      className="switch-input"
-                      type="checkbox"
-                      checked={cfg.board.requirePlan}
-                      onChange={(event) => {
-                        const on = event.target.checked
-                        setCfg((c) => ({ ...c, board: { ...c.board, requirePlan: on } }))
-                        void patchConfig({ board: { requirePlan: on } })
-                      }}
-                    />
-                    <span className="switch-visual" aria-hidden="true" />
-                  </label>
-                </section>
-
                 <section className={`settings-section settings-switch-section ${cfg.board.po.enabled ? 'on' : ''}`}>
                   <label className="settings-switch-row">
                     <span className="settings-switch-text">

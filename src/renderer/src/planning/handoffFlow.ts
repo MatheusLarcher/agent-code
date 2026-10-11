@@ -5,6 +5,7 @@
  */
 import type { AgentCodeApi } from '@shared/api'
 import { handoffGuidanceRules, type HandoffGuidance } from '@shared/handoffGuidance'
+import { HANDOFF_AUTONOMY_CARD_RULE, HANDOFF_STAGE_FORMAT_RULE, handoffContinuousRequirement } from '@shared/handoffWorkRules'
 import {
   DEFAULT_CONFIG,
   type HandoffConfig,
@@ -76,6 +77,12 @@ export function managerHandoffRequest(
       'mcp__entregas__entrega_estimar e escrever "Etapa N — <título>: estimativa do plano X min (prazo), minha estimativa Z min"; ' +
       'ao concluir, consultar mcp__entregas__entrega_tempo e escrever "levou Y min de trabalho (dentro/fora do prazo)" e, se passou, o motivo. ' +
       'O prazo é a estimativa do plano; a do agente não o muda, e o tempo que vale é o medido pelo app.',
+    '',
+    HANDOFF_STAGE_FORMAT_RULE,
+    '',
+    HANDOFF_AUTONOMY_CARD_RULE,
+    '',
+    handoffContinuousRequirement(),
     ...handoffGuidanceRules(guidance).flatMap((rule) => ['', rule]),
     '',
     'Não implemente nada e não altere cards nem o roteiro agora: só grave os prompts e, no fim, diga quantos gravou. Única exceção: etapa ' +

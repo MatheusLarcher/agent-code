@@ -40,9 +40,16 @@ import { sessionDeadlineNotice } from './handoffTracking/handoffDeadlineHook'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
 import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
+import { TASKS_HINT } from './agents/tasksHint'
+import { APP_DISABLED_PLUGINS, handoffSessionEnv } from './agents/sessionTuning'
 import { applyPlanningSessionOptions, handoffAppendBlock, planGateApplies, sessionSkillDenial, sessionWriteScopes } from './planning/planningSession'
 import { planningPreToolDecision, planningRequiresBashApproval, planningToolDenial } from './planning/planningPolicy'
 import { planningDataDir } from './planning/planningRoot'
+import { readHandoffAutonomy, type HandoffAutonomy } from './planning/handoffAutonomy'
+import { decidedAloneLine, decidedAloneMessage, decideHandoffQuestion } from './planning/handoffQuestionPolicy'
+import { destructiveCommandReason } from './tasks/destructiveCommand'
+import { publishHandoffNotice } from './handoffTracking/handoffNotices'
+import { attentionLines } from './handoffTracking/handoffAttention'
 import {
   memoryService,
   readSecret,
@@ -78,6 +85,7 @@ import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
+import { docsBudgetFor } from './projectOutlineRender'
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type {
@@ -193,33 +201,6 @@ export function buildContextStamp(origin: MessageOrigin, now: Date = new Date(),
 // cache folder (next to the SQLite db — see store.ts), so the PATH is per-user/per-machine,
 // but THESE INSTRUCTIONS ship with the project, so every install behaves the same.
 // Built per session because the folder path and the current index are dynamic.
-/**
- * Só entra no prompt quando o registro está ligado a um repositório. Diz ao
- * modelo O QUE é a fila e a disciplina mínima (reivindicar → running → evidência
- * → estado final); as regras duras vivem no repositório e voltam como texto
- * legível quando violadas.
- */
-const TASKS_HINT = `You have a durable TASK LEDGER shared by the agent team (tools task_*). It is how work is delegated, scoped and verified across agents.
-
-ROLES
-- SUPERVISOR (you, in the main conversation, for any non-trivial request): decompose the request into tasks with task_create — each with a goal, VERIFIABLE acceptance criteria and a write_scope_allow (the files the executor may touch). Then delegate each task with the Agent tool using subagent_type "executor", passing the task id in the prompt. Do not implement delegated tasks yourself.
-- EXECUTOR (subagent_type "executor", given a task id): task_claim(task_id) → task_transition pending→running → task_step_start per phase → do the work → task_deliverable_add for every piece of EVIDENCE (diff, test_run, note, file, screenshot) → task_transition running→review with a short reason. Never declare done yourself.
-- CRITIC/REVIEWER (subagent_type "critico", or you for a small task): read task_get, check every acceptance criterion against the deliverables (run the tests yourself if a test_run is claimed), then either task_transition review→done, or send it back. The critic has no Write/Edit on purpose — a critic that fixes what it reviews stops being one.
-- Two more specialists exist for the work around the task: "navegador-de-codigo" (read-only: where something lives in the code, answered as caminho:linha, without spending the main context) and "memoria" (looks up and proposes entries in the user's memory catalog).
-
-SENDING WORK BACK — pick by who will redo it
-- The SAME live executor will fix it now: task_transition review→running, then it keeps working under the same task.
-- A NEW executor will redo it (the usual case: the first subagent already finished): task_transition review→failed with a reason listing exactly what is missing, then task_transition failed→pending. Only a "pending" task can be claimed, so this is what puts it back in the queue; skipping it leaves the task stranded in "running" with nobody able to take it. Each claim spends one attempt, and a task out of attempts stops being handed out — that is the anti-loop budget.
-
-RULES THE LEDGER ENFORCES (not you)
-- task_claim returns a LEASE (lease_token + fencing_epoch). Every write to that task must carry both. Another agent cannot claim the task while the lease lives; the lease is renewed automatically on every write you make.
-- Moving a task to review or blocked RELEASES the lease — the executor is handing off. From then on, call the task's tools WITHOUT lease_token/fencing_epoch (that is how the critic closes it). Reusing the old fence after a handoff is refused.
-- While you hold a task with write_scope, Write/Edit outside that scope are REFUSED by the permission gate, even with "allow all" on. Bash is checked too, by the write targets found in the command (redirection, cp/mv/rm/mkdir/touch/tee, sed -i, dd of=): a command whose target cannot be pinned down — one built from a variable, a relative path after cd, git checkout/restore/clean — is refused with the reason, so rewrite it with an absolute path inside the scope. If a file outside scope must change, record a task_event "blocker" and ask the supervisor to widen the scope or open another task.
-- Invalid transitions and stale leases are refused and explained in the reply; read task_get and adjust instead of retrying blindly.
-- "done" without deliverables is just a claim. A reviewer that finds no evidence sends the task back.
-
-Trivial requests (one file, obvious change, no verification needed) do not need the ledger.`
-
 function buildMemoryHint(memoriesDir: string): string {
   return `You have a PERSISTENT MEMORY for this user, kept as Markdown files in this folder:
 ${memoriesDir}
@@ -592,11 +573,15 @@ export class AgentSession {
       /** Auto-resolve timer (cleared if the user answers first; undefined while a
        *  minimized question waits with no deadline). */
       timer: ReturnType<typeof setTimeout> | undefined
+      /** Comando destrutivo: nem ligar "Permitir tudo" ao vivo o aprova. */
+      destructive?: boolean
     }
   >()
   private approvedTools = new Set<string>()
   /** "Allow all" — when true every tool is auto-approved without prompting. Toggleable at runtime. */
   private bypassAll = false
+  /** Conversa de handoff: a autonomia lida do card do plano na subida (null fora do handoff). */
+  private readonly handoffAutonomy: HandoffAutonomy | null
   /** Set when the user manually canceled the previous turn. The SDK keeps the
    *  interrupted exchange in its in-memory context (no API to drop it), so the
    *  next message is prefixed with a note telling the model to disregard it. */
@@ -950,6 +935,9 @@ export class AgentSession {
     this.restartRegistration = appRestart?.register(opts.convId, () => this.restartActivity())
     // Um handoff retomado (app reiniciado, conversa reaberta) já teve o 1º turno.
     this.handoffFirstTurnDone = Boolean(opts.resume)
+    // Uma vez, na subida (inclusive na retomada): mudar o card depois só vale
+    // na próxima conversa. Nunca lança — ausente/ilegível = padrão autônomo.
+    this.handoffAutonomy = opts.handoff && !opts.planning ? readHandoffAutonomy(opts.cwd, opts.handoff.slug) : null
   }
 
   /** Todo evento sai por aqui. A saída do turno leva os `turnIds` dele (quando o CLI
@@ -961,7 +949,10 @@ export class AgentSession {
 
   async start(): Promise<boolean> {
     if (this.disposed) return false
-    this.bypassAll = this.opts.skipPermissions === true
+    // Handoff com "permitir tudo, exceto destrutivo" (o padrão) nasce com
+    // "Permitir tudo", independente do toggle global que o renderer mandou; o
+    // gate destrutivo continua levando o destrutivo ao usuário.
+    this.bypassAll = this.opts.skipPermissions === true || this.handoffAutonomy?.permissoes === 'tudo_exceto_destrutivo'
 
     const cfg = loadConfig()
 
@@ -1071,10 +1062,10 @@ export class AgentSession {
     const memorySnapshot = memorySelectorActive ? null : this.readMemoryCatalogSnapshot(memoriesDir)
     this.memoryFilesystemVersion = memorySnapshot?.filesystemVersion ?? ''
     this.memoryCatalogVersion = memorySnapshot?.version ?? ''
-    // Catálogo de skills (skills/sessionSkillCatalog.ts); em níveis, críticas e o servidor `skills`.
+    // Catálogo de skills (skills/sessionSkillCatalog.ts); em níveis, as de nível alto e o servidor `skills`.
     const skillStart = this.skills.start(cfg)
-    const criticalSkills = skillStart.critical
-    if (criticalSkills.warning) this.emit({ kind: 'status', id: nextId(), text: criticalSkills.warning })
+    const highSkills = skillStart.high
+    if (highSkills.warning) this.emit({ kind: 'status', id: nextId(), text: highSkills.warning })
     if (skillStart.mcpServer) mcpServers[SKILLS_MCP_SERVER] = skillStart.mcpServer
     const skillRoots = skillStart.roots
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
@@ -1088,11 +1079,11 @@ export class AgentSession {
     append += secretsHint.text
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     append += `\n\n${CHROME_CONTROL_HINT}`
-    if (criticalSkills.text) append += `\n\n${criticalSkills.text}`
+    if (highSkills.text) append += `\n\n${highSkills.text}`
 
     // Conversa nascida de um handoff do planejamento: de onde veio, onde está o
     // plano e que o roteiro vira o plano dela. `null` em qualquer outra sessão.
-    const handoffBlock = handoffAppendBlock(this.opts)
+    const handoffBlock = handoffAppendBlock(this.opts, this.handoffAutonomy)
     if (handoffBlock) append += `\n\n${handoffBlock}`
 
     // Ollama Cloud routing: when the chosen model is an Ollama model, point the
@@ -1196,12 +1187,15 @@ export class AgentSession {
       // lê e grava na pasta errada.
       settings: {
         autoMemoryEnabled: false,
+        // Plugins que o app desliga nas sessões dele (sessionTuning.ts): na subida, camada flag.
+        enabledPlugins: { ...APP_DISABLED_PLUGINS },
         ...(this.opts.fastMode && fastModeTransport(this.opts.model) === 'anthropic-setting'
           ? { fastMode: true }
           : {})
       },
       // TodoWrite/TaskCreate sempre: é o plano do agente que vira cartão no Quadro (todoToolsEnv.ts).
-      env: withTodoTools(env),
+      // Conversa de handoff: até 6 subagentes ao mesmo tempo (sessionTuning.ts).
+      env: { ...withTodoTools(env), ...handoffSessionEnv(this.opts) },
       ...(openaiOn ? { maxTurns: OPENAI_MAX_TURNS } : {}),
       // The memories folder lives outside the project cwd, so allow it explicitly —
       // otherwise the workspace boundary would block reading/writing memory files.
@@ -1227,7 +1221,7 @@ export class AgentSession {
       // O time de especialistas. Cada um só entra com o serviço de que depende
       // no ar — anunciar um crítico sem registro de tarefas seria oferecer ao
       // modelo um papel que falha na primeira chamada.
-      agents: buildSpecialistAgents({ ledger: !!ledger, memory: !!memory }),
+      agents: buildSpecialistAgents({ ledger: !!ledger, memory: !!memory, model: this.opts.model }),
       mcpServers,
       hooks: {
         // `additionalContext` is the Agent SDK's supported live injection
@@ -1310,6 +1304,13 @@ export class AgentSession {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: planning.decision,
               permissionDecisionReason: planning.reason } }
           }
+          // Destrutivo: um `allow` do settings.json pularia o canUseTool (e o gate
+          // destrutivo dele); `ask` força a passagem pelo gate, que leva à UI.
+          const destructive = destructiveCommandReason(name, (input.tool_input ?? {}) as Record<string, unknown>, this.opts.cwd)
+          if (destructive) {
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'ask' as const,
+              permissionDecisionReason: `Comando destrutivo (${destructive}): precisa da confirmação do usuário.` } }
+          }
           return {}
         }] }],
         // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
@@ -1364,7 +1365,7 @@ export class AgentSession {
         projectCwd: this.opts.cwd,
         slug: this.opts.planning.slug,
         // O chamado também vale no Manager (o 'app' dele só tem o app_chamar_usuario).
-        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT, criticalSkills.text],
+        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT, highSkills.text],
         guidance: loadConfig().handoff
       })
     }
@@ -1821,6 +1822,8 @@ export class AgentSession {
       return
     }
     if (res.behavior === 'allow') {
+      // "Sempre permitir" num destrutivo libera a ferramenta (Bash) para o resto,
+      // nunca o próximo destrutivo: o gate destrutivo vem antes do approvedTools.
       if (res.always) this.approvedTools.add(pending.toolName)
       pending.resolve({ behavior: 'allow', updatedInput: pending.input })
     } else {
@@ -1835,7 +1838,7 @@ export class AgentSession {
       // Auto-approve anything currently waiting on the user — EXCEPT an
       // AskUserQuestion, which still needs a real answer (it isn't a permission).
       for (const [id, pending] of this.pendingPermissions) {
-        if (pending.toolName === 'AskUserQuestion') continue
+        if (pending.toolName === 'AskUserQuestion' || pending.destructive) continue
         clearTimeout(pending.timer)
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
@@ -1979,13 +1982,6 @@ export class AgentSession {
    * through the same Agent SDK request path without bloating history.
    */
   private async buildLiveRequestContext(): Promise<{ docs: string; memory: string }> {
-    let docs: string
-    try {
-      docs = await buildProjectOutline(this.opts.cwd)
-    } catch {
-      docs = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this request]\n[/PROJECT_DOCS_CONTEXT]'
-    }
-
     let memory = ''
     try {
       // Do not inject the memory index here: this runs for every provider
@@ -2001,6 +1997,15 @@ export class AgentSession {
       memory = selected?.block ?? buildDynamicMemoryContext(getCacheInfo().memoriesDir, this.activeMemoryQuery, false)
     } catch {
       // Memory recall is optional context; docs and the user request still run.
+    }
+
+    // Docs e memória vão juntos num `additionalContext`, que o CLI corta em
+    // 10.000 caracteres: o bloco de docs fica com o que sobra (docsBudgetFor).
+    let docs: string
+    try {
+      docs = await buildProjectOutline(this.opts.cwd, docsBudgetFor(memory))
+    } catch {
+      docs = '[PROJECT_DOCS_CONTEXT]\ndocs/ [context unavailable for this request]\n[/PROJECT_DOCS_CONTEXT]'
     }
     return { docs, memory }
   }
@@ -2098,7 +2103,7 @@ ${lines}
   private async crossConversationContext(): Promise<string> {
     const topics = await recentTopics(() => storageLifecycle.repository()).catch(() => [])
     const workingNow = renderWorkingNow(this.opts.convId, this.opts.cwd, presenceSnapshot(), topics)
-    let topicsBlock = renderTopics(this.opts.convId, topics)
+    let topicsBlock = renderTopics(this.opts.convId, topics, this.opts.cwd)
     if (topicsBlock === this.crossTopicsVersion) topicsBlock = ''
     else this.crossTopicsVersion = topicsBlock
     return renderCrossConversation(workingNow, topicsBlock)
@@ -2130,12 +2135,26 @@ ${lines}
     // Always route it to our interactive UI (even with "allow all" on: you can't
     // auto-answer a question), and feed the user's pick back via resolvePermission.
     if (toolName === 'AskUserQuestion') {
+      const questions = parseAskQuestions(input)
+      // Conversa de handoff com política "perguntas: nenhuma"/"só o que listar":
+      // a recomendada decide, sem recomendada o modelo decide pelos cards; só
+      // pergunta destrutiva (ou da lista) vai ao usuário. Fora do handoff, null.
+      const decision = decideHandoffQuestion(this.handoffAutonomy, questions)
+      if (decision.kind === 'deny') return Promise.resolve({ behavior: 'deny', message: decision.message })
+      if (decision.kind === 'answer') {
+        for (const pick of decision.picks) {
+          const line = decidedAloneLine(pick)
+          this.emit({ kind: 'status', id: nextId(), text: line })
+          publishHandoffNotice(this.opts.convId, 'decisao', line)
+        }
+        return Promise.resolve({ behavior: 'deny', message: decidedAloneMessage(decision.picks) })
+      }
       const id = nextId()
       this.askPermission({
         id,
         toolName,
         input,
-        questions: parseAskQuestions(input),
+        questions,
         deadline: Date.now() + PERMISSION_TIMEOUT_MS
       })
       return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
@@ -2220,6 +2239,15 @@ ${lines}
     if (this.opts.planning && toolName.startsWith('mcp__planning__')) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
+    // Comando destrutivo (lista fixa em tasks/destructiveCommand.ts) vai ao
+    // usuário com o prazo normal, ANTES do bypassAll e do "sempre permitir", em
+    // TODA sessão: "Permitir tudo" é confiar no modelo para trabalhar, não para
+    // fazer o que não se desfaz. O detector nunca lança; o que não reconhece passa.
+    if (destructiveCommandReason(toolName, input, this.opts.cwd)) {
+      const id = nextId()
+      this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS })
+      return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve, true))
+    }
     // No Agent Manager, o Bash só é liberado pelo "Permitir tudo": sem ele, vai
     // ao usuário a cada comando (nem "sempre permitir" nem lista de leitura o
     // liberam). O que escreve fora do _sandbox já foi negado acima, sem perguntar.
@@ -2247,9 +2275,10 @@ ${lines}
     id: string,
     toolName: string,
     input: Record<string, unknown>,
-    resolve: (r: PermissionResult) => void
+    resolve: (r: PermissionResult) => void,
+    destructive = false
   ): void {
-    this.pendingPermissions.set(id, { toolName, input, resolve, timer: this.armExpiry(id) })
+    this.pendingPermissions.set(id, { toolName, input, resolve, timer: this.armExpiry(id), ...(destructive ? { destructive } : {}) })
   }
 
   private armExpiry(id: string): ReturnType<typeof setTimeout> {
@@ -2422,6 +2451,14 @@ ${lines}
         // sentinela; na troca por cota o modelo muda no meio da tarefa).
         const model = this.responseModel(message)
         this.recordLlmCall(message, blocks, track, model)
+        // Conversa de handoff: "ATENÇÃO:"/"DESVIO DO PLANO:" no início de uma linha
+        // do agente principal vira aviso em tempo real (toast + celular).
+        if (this.opts.handoff && !this.opts.planning && parentToolUseId === null) {
+          for (const block of blocks) {
+            if (block.type !== 'text' || typeof block.text !== 'string') continue
+            for (const line of attentionLines(block.text)) publishHandoffNotice(this.opts.convId, 'atencao', line)
+          }
+        }
         this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track, model)
         break
       }

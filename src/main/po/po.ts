@@ -11,11 +11,13 @@ import { listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
   PO_COOLDOWN_MS,
   PO_MAX_CALLS,
+  PO_MAX_ENVIO_ETAPAS,
   PO_MAX_ORPHANS,
   PO_MAX_RETRIES,
   PO_RETRY_DELAY_MS,
   summarizeCall,
   type PoCall,
+  type PoEnvioEtapa,
   type PoOrphanEtapa,
   type PoPhase
 } from './poPrompt'
@@ -73,6 +75,8 @@ export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
   queueRoutine?(convId: string, routine: PoRoutineRequest): Promise<void>
   /** As etapas do prompt sem cartão no quadro (handoffTracking/handoffOrphans.ts): o fechamento cria o `[id]` delas. */
   orphanEtapas?(convId: string): Promise<PoOrphanEtapa[]>
+  /** O placar do envio corrente — TODA etapa, com cartão e aceite (mesmo módulo): o fechamento confere cada uma. */
+  envioEtapas?(convId: string): Promise<PoEnvioEtapa[]>
 }
 
 interface ConvState {
@@ -396,8 +400,9 @@ export class Po {
       const merged = mergeDeferred(taken, turn)
       const ledgerTasks = await listConvTasks(this.deps, convId)
       const digestCards = poDigestCards(cards)
-      // Só as que o digest lista: o parser libera FEITA/NOVA [id] apenas para elas.
+      // Só as que o digest lista: o parser libera FEITA/NOVA [id] (órfãs) e ETAPA [id] (placar) apenas para elas.
       const orphans = phase === 'close' ? ((await this.deps.orphanEtapas?.(convId).catch(() => null)) ?? []).slice(0, PO_MAX_ORPHANS) : []
+      const envioEtapas = phase === 'close' ? ((await this.deps.envioEtapas?.(convId).catch(() => null)) ?? []).slice(0, PO_MAX_ENVIO_ETAPAS) : []
 
       // O gate do TypeSafe vê o MESMO material que o modelo veria (pedido
       // mesclado, quadro, ações, registro, resposta) e roda antes de qualquer rota. Um
@@ -417,10 +422,10 @@ export class Po {
         turnRunning: force && conv.userText !== null && !conv.fired
       })
 
-      // Com etapa sem cartão o gate não decide: ele não a vê, e o "não" a deixaria sem cartão.
-      // Com cartão a fechar também não: o "não" (ex.: "o push já tinha sido feito",
-      // lido como só conversa) deixava o cartão entregue de volta em "a fazer".
-      const worthIt = orphans.length > 0 || returned.length > 0 ? null : await askBoardGate(this.deps, {
+      // Com etapa sem cartão (ou placar a conferir) o gate não decide: ele não as vê, e o "não"
+      // deixaria a órfã sem cartão e o placar sem conferência. Com cartão a fechar também não: o
+      // "não" (ex.: "o push já tinha sido feito", lido como só conversa) deixava o entregue em "a fazer".
+      const worthIt = orphans.length > 0 || envioEtapas.length > 0 || returned.length > 0 ? null : await askBoardGate(this.deps, {
         phase,
         userText: merged.userText,
         cards: digestCards.map(({ title, status }) => ({ title, status })),
@@ -439,7 +444,7 @@ export class Po {
       const authorization = await this.deps.authorization?.(convId).catch(() => null)
       const request = buildPoRequest({
         config: cfg, convId, cwd: turn.cwd, projectId, phase, cards, userText: merged.userText, calls: merged.calls,
-        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, orphans, correlationId: this.nextCorrelationId()
+        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, orphans, envioEtapas, correlationId: this.nextCorrelationId()
       })
 
       diagnostic(this.deps, request, 'claude-started', 'claude')
@@ -465,7 +470,7 @@ export class Po {
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
-        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans }
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans, envioEtapas }
         await applyPoVerdict(this.deps, target, text, cards, progress)
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.

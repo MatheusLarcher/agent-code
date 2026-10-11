@@ -1,4 +1,5 @@
-import { isEnvioSent, type HandoffEnvio } from '../../shared/handoffTracking'
+import { isEnvioSent, isStallMotivo, type HandoffEnvio } from '../../shared/handoffTracking'
+import { forgetResume, noteResume } from './handoffResumes'
 import type { BoardItem } from '../../shared/ipc'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffRepository } from '../persistence/types'
 import {
@@ -10,7 +11,7 @@ import {
   type EntregaTimeOutcome
 } from './entregaEstimate'
 import * as deadline from './handoffDeadline'
-import { orphanEtapas, type OrphanEtapa } from './handoffOrphans'
+import { envioEtapasForPo, orphanEtapas, type OrphanEtapa, type PoEnvioEtapa } from './handoffOrphans'
 import { projectCards, syncEnvio } from './handoffReconcile'
 import * as rules from './handoffRules'
 import type { ConvState, SeenSend } from './handoffState'
@@ -77,6 +78,22 @@ export class HandoffJobs {
     }
   }
 
+  /**
+   * Para o PO no fechamento: o PLACAR do envio corrente — toda etapa, com o
+   * cartão que fala por ela e o aceite da seção dela (handoffOrphans.ts). Como
+   * `orphanEtapas`: só lê, fora da fila, e nunca lança — falha é lista vazia.
+   */
+  async envioEtapas(convId: string): Promise<PoEnvioEtapa[]> {
+    try {
+      const current = await this.currentEnvio(convId)
+      const cards = current ? await this.projectCards(convId, current) : null
+      return current && cards ? envioEtapasForPo(current, cards) : []
+    } catch (err) {
+      this.ctx.warn?.('envioEtapas', err)
+      return []
+    }
+  }
+
   async turnStart(convId: string, at: number): Promise<void> {
     const repo = this.ctx.repo()
     if (!repo) return
@@ -122,6 +139,54 @@ export class HandoffJobs {
     // `error` de um turno parado pelo usuário também não: Stop não é erro.
     const patch = stopped ? rules.stopPatch(current) : recoverable ? rules.permissionPatch(current, false) : rules.errorPatch(current, text)
     await this.writeEnvio(repo, convId, current, patch)
+  }
+
+  /** A sessão morreu com o turno aberto (sem `result`/`error`): o envio corrente para
+   *  por inatividade (ou pelo Stop, se o usuário parou) — handoffRules.sessionEndedPatch. */
+  async sessionEnded(convId: string, stoppedByUser: boolean): Promise<void> {
+    const repo = this.ctx.repo()
+    if (!repo) return
+    const current = rules.currentEnvio(await this.load(repo, convId))
+    if (!current) return
+    await this.writeEnvio(repo, convId, current, rules.sessionEndedPatch(current, stoppedByUser))
+  }
+
+  /** O despacho do renderer falhou depois de `dispatched`: o envio volta à fila
+   *  (handoffRules.undispatchPatch). `false` quando já não cabe: outro estado, ou o
+   *  prompt chegou a rodar — turno aberto, turn-start visto depois da marca ou
+   *  `iniciadoEm` posterior a ela no banco (handoffRules.turnStartedAfterDispatch). */
+  async undispatched(convId: string, envioId: string): Promise<boolean> {
+    const repo = this.ctx.repo()
+    const s = this.ctx.state(convId)
+    if (!repo || s?.turnRunning) return false
+    const envio = (await this.load(repo, convId)).find((e) => e.id === envioId)
+    const patch = envio ? rules.undispatchPatch(envio) : null
+    if (!envio || !patch) return false
+    const started = rules.turnStartedAfterDispatch(envio, {
+      turnRunning: false,
+      turnStartedAt: s?.turnStartedAt ?? null,
+      dispatchedAt: s?.dispatched?.envioId === envioId ? s.dispatched.at : null
+    })
+    if (started) return false
+    if (patch.status === 'parada') forgetResume(envio.id)
+    if (s?.dispatched?.envioId === envioId) s.dispatched = null
+    await this.writeEnvio(repo, convId, envio, patch)
+    return true
+  }
+
+  /** A conversa foi apagada: os envios dela que não concluíram param com o motivo
+   *  (handoffRules.deletedConversationPatch) — o plano sai da fila do projeto. */
+  async conversationDeleted(convId: string): Promise<void> {
+    const repo = this.ctx.repo()
+    if (!repo) return
+    let wrote = false
+    for (const envio of await this.load(repo, convId)) {
+      const patch = rules.deletedConversationPatch(envio)
+      if (!patch) continue
+      await repo.updateHandoffEnvio(envio.id, patch)
+      wrote = true
+    }
+    if (wrote) this.ctx.changed(convId)
   }
 
   /** O Stop pegou o prompt antes de o turno começar (não vem `result`): o envio fica parado. */
@@ -186,8 +251,20 @@ export class HandoffJobs {
     const repo = this.ctx.repo()
     if (!repo) return false
     const envio = (await this.load(repo, convId)).find((e) => e.id === envioId)
-    if (!envio || isEnvioSent(envio)) return false
-    await repo.updateHandoffEnvio(envio.id, { status: 'enviado', enviadoEm: iso(at), motivo: null })
+    if (!envio) return false
+    // A RETOMADA (handoffQueue.decideQueue): o mesmo envio, parado por
+    // inatividade, sai de novo — sem envio novo no banco; volta a `enviado`
+    // e o `enviadoEm` original fica (o tempo do envio é um só).
+    if (isEnvioSent(envio)) {
+      if (envio.status !== 'parada' || !isStallMotivo(envio.motivo)) return false
+      await repo.updateHandoffEnvio(envio.id, { status: 'enviado', motivo: null })
+      noteResume(envio.id)
+    } else {
+      await repo.updateHandoffEnvio(envio.id, { status: 'enviado', enviadoEm: iso(at), motivo: null })
+    }
+    // A marca em memória: desfazer (undispatched) compara o próximo turn-start com ela.
+    const s = this.ctx.state(convId)
+    if (s) s.dispatched = { envioId: envio.id, at }
     this.ctx.changed(convId)
     return true
   }
@@ -271,16 +348,19 @@ export class HandoffJobs {
     return notice?.text ?? null
   }
 
-  /** Marca `parada` o que passou do limite sem turno (contado desde a última
-   *  atividade da CONVERSA — a deste processo e a escrita mais recente em
-   *  qualquer envio dela —, nunca antes de `notBefore`, o início do tracker).
-   *  Devolve os envios que marcou (a varredura agenda o reconciliador deles). */
+  /** Marca `parada` o que passou do limite sem turno, contado desde a última
+   *  atividade REAL da CONVERSA — a vista neste processo e a escrita mais recente
+   *  em qualquer envio dela. Nada antes de `notBefore` (a carência depois do boot:
+   *  a recuperação do turno precisa de tempo para subir), mas o boot em si não
+   *  conta como atividade. Devolve os envios que marcou (a varredura agenda o
+   *  reconciliador deles). */
   async markStalled(convId: string, notBefore: number): Promise<HandoffEnvio[]> {
     const s = this.ctx.state(convId)
     const repo = this.ctx.repo()
-    if (!s || !repo || s.turnRunning || s.pending.size > 0) return []
+    if (!s || !repo || s.turnRunning || s.pending.size > 0 || this.ctx.now() < notBefore) return []
     const envios = await this.load(repo, convId)
-    const lastActivityMs = Math.max(s.lastActivity, notBefore, rules.conversationLastWriteMs(envios))
+    // A mesma fonte de atividade da fila do projeto (handoffActivity.lastActivityMs).
+    const lastActivityMs = rules.lastActivityMs(s.lastActivity, envios)
     const stall = { turnRunning: false, pending: false, lastActivityMs, now: this.ctx.now(), limitMs: this.ctx.stallMs }
     const stalled: HandoffEnvio[] = []
     let open = 0

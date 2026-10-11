@@ -43,16 +43,12 @@ afterEach(() => {
 })
 
 describe('Configurações → Geral: interruptores do envio para implementação', () => {
-  it('"Ciclo completo nos handoffs": desligado por padrão, explica o que faz e grava só o campo', async () => {
-    const api = stubApi({ ...DEFAULT_CONFIG })
+  it('"Ciclo completo" e "Exigir o plano" não aparecem mais', async () => {
+    stubApi({ ...DEFAULT_CONFIG })
     await view()
-    await waitFor(() => expect(toggle(/Ciclo completo nos handoffs/).matches(':disabled')).toBe(false))
-    expect(toggle(/Ciclo completo nos handoffs/).checked).toBe(false)
-    expect(screen.getByText(/plan → test → implement → review → verify → remember → improve/)).toBeTruthy()
-
-    fireEvent.click(toggle(/Ciclo completo nos handoffs/))
-    expect(api.setConfig).toHaveBeenLastCalledWith({ handoff: { ciclo: true } })
-    expect(toggle(/Ciclo completo nos handoffs/).checked).toBe(true)
+    await waitFor(() => expect(toggle(/Leitura guiada/).matches(':disabled')).toBe(false))
+    expect(screen.queryByText(/Ciclo completo nos handoffs/)).toBeNull()
+    expect(screen.queryByText(/Exigir o plano antes de escrever/)).toBeNull()
   })
 
   it('"Leitura guiada": desligada por padrão, explica o que faz e grava só o campo', async () => {
@@ -66,13 +62,5 @@ describe('Configurações → Geral: interruptores do envio para implementação
     fireEvent.click(toggle(/Leitura guiada/))
     expect(api.setConfig).toHaveBeenLastCalledWith({ handoff: { leituraGuiada: true } })
     expect(toggle(/Leitura guiada/).checked).toBe(true)
-    // O outro interruptor não muda.
-    expect(toggle(/Ciclo completo nos handoffs/).checked).toBe(false)
-  })
-
-  it('config salva com o ciclo ligado: o interruptor aparece ligado', async () => {
-    stubApi({ ...DEFAULT_CONFIG, handoff: { ciclo: true, leituraGuiada: false } })
-    await view()
-    await waitFor(() => expect(toggle(/Ciclo completo nos handoffs/).checked).toBe(true))
   })
 })

@@ -2,6 +2,7 @@ import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
 import type { BoardItem, BoardItemStatus } from '../../shared/ipc'
 import { BOARD_USER_ACTION_MAX_CHARS } from '../board/boardUserAction'
 import { etapaIdFromTitle } from '../handoffTracking/handoffCardMatch'
+import { parseEtapaLine } from './poEtapas'
 import { clamp, PO_MAX_TITLE_CHARS, type PoPhase } from './poPrompt'
 import { PO_MAX_OPS } from './poPromptText'
 
@@ -26,6 +27,11 @@ export type PoOp =
    *  fazer". Não muda o status — só troca a frase genérica pelo motivo real.
    *  `userAction`: o campo VOCÊ (ver `splitUserAction`); ausente, o cartão espera o agente. */
   | { kind: 'justify'; id: string; reason: string; userAction?: string }
+  /** ETAPA [id] | PENDENTE: a CONTESTAÇÃO — o agente concluiu o cartão da etapa
+   *  e a evidência diz que ela não foi feita. Grava `poStatus` "a fazer" com o
+   *  motivo LIVRE (sem a frase do fim de turno): é o que `poContestReason`
+   *  reconhece e o placar mostra como "o PO contestou: <motivo>". */
+  | { kind: 'contest'; id: string; reason: string }
   /** O status com que o cartão nasce: `in_progress` na abertura (o trabalho está
    *  começando), `pending` no fechamento (ficou faltando) e `completed` no
    *  FEITA (aconteceu neste turno e ninguém registrou). `parentId`: a NOVA do
@@ -99,26 +105,52 @@ function splitUserAction(text: string): { body: string; userAction?: string } {
  * (só no fechamento). A FEITA/NOVA com o prefixo `[id]` de uma delas leva o
  * `etapaId`, vale uma por etapa e fica FORA do teto de operações — a lista é
  * do app, não invenção do modelo, e cortar uma etapa a deixaria sem cartão.
+ *
+ * `envioEtapas`: o placar que o digest listou (só no fechamento), etapa em
+ * minúsculas → cartão. `ETAPA [id] | CONCLUÍDA | motivo` vira `complete` no
+ * cartão e `ETAPA [id] | PENDENTE | motivo` vira `contest` — uma por etapa,
+ * fora do teto pelo mesmo motivo das órfãs, e só para etapa do mapa cujo
+ * cartão está no quadro: etapa desconhecida, sem cartão ou linha sem motivo é
+ * descartada (poEtapas.ts lê a linha).
  */
 export function parsePoVerdict(
   raw: string,
   knownIds: Iterable<string>,
   phase: PoPhase = 'close',
-  orphanEtapas: Iterable<string> = []
+  orphanEtapas: Iterable<string> = [],
+  envioEtapas: ReadonlyMap<string, string> = new Map()
 ): PoOp[] {
   const ids = new Set(knownIds)
   const etapas = new Set(phase === 'close' ? [...orphanEtapas].map((id) => id.toLowerCase()) : [])
+  const placar = new Map(phase === 'close' ? [...envioEtapas].map(([etapa, card]) => [etapa.toLowerCase(), card] as const) : [])
   const ops: PoOp[] = []
   const seen = new Set<string>()
   let exempt = 0
   for (const line of (raw ?? '').split(/\r?\n/)) {
     const full = ops.length - exempt >= PO_MAX_OPS
-    if (full && etapas.size === 0) break
+    if (full && etapas.size === 0 && placar.size === 0) break
     const clean = line.replace(/^[`\s>*-]+/, '').trim()
     if (!clean || /^OK\b/i.test(clean)) continue
     // O VOCÊ sai de toda linha (num CONCLUIR ele só sujaria o motivo), mas só
     // o PENDENTE e a NOVA que nasce "a fazer" o guardam.
     const { body: text, userAction } = splitUserAction(clean)
+
+    // O placar: a linha fala da etapa, a operação é no cartão dela. O CONCLUIR
+    // e a contestação do mesmo cartão valem uma vez, venham de onde vierem.
+    const etapa = parseEtapaLine(text)
+    if (etapa) {
+      const cardId = placar.get(etapa.etapaId)
+      if (!cardId || !ids.has(cardId) || !etapa.reason || seen.has(`pl:${etapa.etapaId}`)) continue
+      const key = etapa.verdict === 'complete' ? `c:${cardId}` : `x:${cardId}`
+      if (seen.has(key)) continue
+      seen.add(`pl:${etapa.etapaId}`)
+      seen.add(key)
+      exempt++
+      const reason = clamp(etapa.reason, 160)
+      ops.push(etapa.verdict === 'complete' ? { kind: 'complete', id: cardId, reason } : { kind: 'contest', id: cardId, reason })
+      continue
+    }
+
     const create = CREATE_LINE.exec(text)
     const prefix = create ? etapaIdFromTitle(create[3]) : null
     const orphan = prefix !== null && etapas.has(prefix) ? prefix : null
@@ -247,6 +279,8 @@ export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[], phase: PoPhase 
   // segundo `start`, e `applyPo` seria chamado duas vezes à toa para o mesmo id.
   const startedIds = new Set(ops.filter((op) => op.kind === 'start').map((op) => op.id))
   const concluded = new Set(ops.filter((op) => op.kind === 'complete').map((op) => op.id))
+  /** Os ids que já saem com PENDENTE — a contestação convertida não o duplica. */
+  const justified = new Set(ops.filter((op) => op.kind === 'justify').map((op) => op.id))
   /** Os títulos que ESTA resposta já cria. */
   const created = new Set<string>()
 
@@ -300,6 +334,22 @@ export function rejectUnsafeOps(ops: PoOp[], cards: BoardItem[], phase: PoPhase 
       // está em andamento é escrita à toa, e "reabrir" o que foi concluído é o
       // PO desfazendo um fato que o agente já registrou.
       if (boardItemStatus(card) === 'pending') out.push(op)
+      continue
+    }
+    if (op.kind === 'contest') {
+      // A contestação só cabe no cartão CONCLUÍDO: é o PO dizendo que a evidência
+      // contradiz o que o agente declarou. CONCLUIR na mesma resposta vence — o
+      // PO se contradisse, e a contestação cai. No cartão ainda em andamento, ou
+      // devolvido pelo fim de turno, não há o que contestar: vira o PENDENTE
+      // comum (justify) com o mesmo motivo, salvo se a resposta já o justificou.
+      // Nos demais ("a fazer" que nunca começou, movido pelo usuário), descartada.
+      if (concluded.has(op.id)) continue
+      const status = boardItemStatus(card)
+      if (status === 'completed') out.push(op)
+      else if ((status === 'in_progress' || boardItemTurnEndKind(card) !== null) && !justified.has(op.id)) {
+        justified.add(op.id)
+        out.push({ kind: 'justify', id: op.id, reason: op.reason })
+      }
       continue
     }
     // Concluir: tudo o que ainda não está concluído.

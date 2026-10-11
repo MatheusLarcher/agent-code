@@ -56,6 +56,34 @@ function replaceAt(list: ChatMsg[], i: number, m: ChatMsg): ChatMsg[] {
 }
 
 /**
+ * Uma lista recém-chegada (leve) herda o detalhe inteiro que o celular já tinha
+ * carregado: a mesma mensagem (id) que em `prev` já não era `light` fica a de `prev`.
+ * Ressincronização/paginação nunca faz o usuário baixar de novo o que já abriu.
+ */
+export function keepDetails(prev: readonly ChatMsg[], next: ChatMsg[]): ChatMsg[] {
+  if (!next.some((m) => m.light)) return next
+  const full = new Map<string, ChatMsg>()
+  for (const m of prev) if (m.id && !m.light && (m.kind === 'tool-use' || m.kind === 'thinking')) full.set(m.id, m)
+  if (!full.size) return next
+  return next.map((m) => (m.light && m.id && full.has(m.id) ? (full.get(m.id) as ChatMsg) : m))
+}
+
+/** Os detalhes inteiros (`/api/history-details`) no lugar das versões leves de mesmo id; a mesma lista se nada mudou. */
+export function mergeDetails(list: ChatMsg[], details: readonly ChatMsg[]): ChatMsg[] {
+  const byId = new Map<string, ChatMsg>()
+  for (const d of details) if (d.id) byId.set(d.id, d)
+  if (!byId.size) return list
+  let changed = false
+  const out = list.map((m) => {
+    const d = m.light && m.id ? byId.get(m.id) : undefined
+    if (!d) return m
+    changed = true
+    return { ...d, light: false }
+  })
+  return changed ? out : list
+}
+
+/**
  * Reconcilia os ecos "Na fila" com a fila que o PC publica para a conversa: some
  * o que o PC já tirou da fila, entra o que está lá e o celular ainda não mostra
  * (ex.: enviado offline ou pelo próprio PC).

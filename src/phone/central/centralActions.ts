@@ -146,7 +146,7 @@ function setTools(id: string, t: TurnTools): void {
   centralUi.set((s) => ({ tools: { ...s.tools, [id]: t } }))
 }
 
-/** As ações do turno, lidas do destino: `/api/history`; âncora fora das últimas mensagens, a janela em volta dela. */
+/** As ações do turno, lidas do destino: `/api/history` (inteiras, `full=1`: os cartões abrem sem pedir detalhe); âncora fora das últimas mensagens, a janela em volta dela. */
 export function loadTurnTools(r: RemoteCentralReply): void {
   const prev = centralUi.get().tools[r.id]
   if (prev?.loading) return
@@ -155,12 +155,12 @@ export function loadTurnTools(r: RemoteCentralReply): void {
   const conv = encodeURIComponent(r.anchor.convId)
   const msgId = r.anchor.msgId ?? ''
   client
-    .request<{ messages?: ChatMsg[] }>(`/api/history?conv=${conv}`)
+    .request<{ messages?: ChatMsg[] }>(`/api/history?conv=${conv}&full=1`)
     .then(async (data) => {
       const msgs = data?.messages ?? []
       if (anchorAt(msgs, msgId) >= 0) return { msgs, partial: false }
       try {
-        const w = await client.request<{ messages?: ChatMsg[] }>(`/api/history-window?conv=${conv}&message=${encodeURIComponent(msgId)}`)
+        const w = await client.request<{ messages?: ChatMsg[] }>(`/api/history-window?conv=${conv}&message=${encodeURIComponent(msgId)}&full=1`)
         return { msgs: w?.messages ?? [], partial: true }
       } catch (err) {
         if (statusOf(err) === 404) return { msgs: [] as ChatMsg[], partial: true }

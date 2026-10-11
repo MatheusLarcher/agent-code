@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { MAX_ESTIMATIVA_MIN } from '../../shared/planningEstimate'
 import { STAGE_STATUSES, type Roteiro, type RoteiroStage, type StageStatus } from './planningModel'
 import { HANDOFF_DISCARD_DIR } from './handoffStale'
+import { handoffAceiteProblem } from './handoffAceite'
 import { RoteiroConflictError, type OpenedPlan, type RoteiroDraft } from './planningStore'
 import { Body, erase, guard, Name, Title, type AnyTool } from './planningToolKit'
 import { estimativaText, etapaLines, text, totalEstimativaText } from './planningToolText'
@@ -159,6 +160,8 @@ export function buildRoteiroTools(deps: RoteiroToolDeps): RoteiroTools {
           const plan = await open()
           const problem = handoffEtapasProblem(plan.roteiro, a.etapas)
           if (problem) return text(`Handoff não gravado: ${problem}`)
+          const aceite = handoffAceiteProblem(a.conteudo, a.etapas)
+          if (aceite) return text(`Handoff não gravado: ${aceite}`)
           if (!a.manter) {
             const stale = await deps.staleHandoffs()
             if (stale.length > 0) return text(staleRefusal(stale))

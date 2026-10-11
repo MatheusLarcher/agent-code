@@ -28,6 +28,9 @@ type PullMode = 'hidden' | 'pulling' | 'ready' | 'refreshing'
 export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promise<unknown>; resolveRef?: CardRefResolver | null }): JSX.Element {
   const messages = useStore(client.store, (s) => s.messages)
   const loading = useStore(client.store, (s) => s.historyLoading)
+  const hasOlder = useStore(client.store, (s) => s.hasOlder)
+  const olderLoading = useStore(client.store, (s) => s.olderLoading)
+  const hasNewer = useStore(client.store, (s) => s.hasNewer)
   const convId = useStore(client.store, (s) => s.convId)
   const scrollTo = useStore(client.store, (s) => s.scrollToMsg)
   const voiceReady = useStore(client.store, (s) => s.voiceReady)
@@ -67,6 +70,8 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   const [flash, setFlash] = useState<string | null>(null)
   const [pull, setPull] = useState<PullMode>('hidden')
   const pullRef = useRef({ active: false, startY: 0, over: false })
+  // "Carregar anteriores": a página entra NA FRENTE — a rolagem fica na mesma mensagem (compensa a altura que entrou acima).
+  const anchor = useRef<{ top: number; height: number } | null>(null)
 
   const measure = useCallback(() => {
     const box = boxRef.current
@@ -85,6 +90,13 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   useLayoutEffect(() => {
     const box = boxRef.current
     if (!box || loading) return
+    if (anchor.current && !olderLoading) {
+      const a = anchor.current
+      anchor.current = null
+      box.scrollTop = a.top + (box.scrollHeight - a.height)
+      measure()
+      return
+    }
     if (scrollTo) {
       const el = box.querySelector<HTMLElement>(`[data-mid="${CSS.escape(scrollTo)}"]`)
       if (el) {
@@ -98,13 +110,26 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
     }
     if (nearBottom.current) box.scrollTop = box.scrollHeight
     measure()
-  }, [messages, loading, scrollTo, measure])
+  }, [messages, loading, scrollTo, olderLoading, measure])
 
+  /** "Ir para o final": numa janela do mapa (há mensagens depois dela), recarrega as últimas e desce. */
   const toBottom = (): void => {
     const box = boxRef.current
     if (!box) return
+    if (hasNewer && convId) {
+      nearBottom.current = true
+      void client.loadHistory(convId, true).catch(() => undefined)
+      return
+    }
     box.scrollTop = box.scrollHeight
     measure()
+  }
+
+  const loadOlder = (): void => {
+    const box = boxRef.current
+    if (!box || olderLoading) return
+    anchor.current = { top: box.scrollTop, height: box.scrollHeight }
+    void client.loadOlder().catch(() => undefined)
   }
 
   // ---- puxar para atualizar --------------------------------------------------------
@@ -177,20 +202,27 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
         ) : rows.length === 0 ? (
           <div className="messages-empty">Nenhuma mensagem ainda. Envie um comando para começar.</div>
         ) : (
-          blocks.map((b) =>
-            b.kind === 'turn' ? (
-              <Turn
-                key={b.key}
-                rows={b.rows}
-                model={model}
-                live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince } : null}
-                isFresh={isFresh}
-                renderRow={renderRow}
-              />
-            ) : (
-              renderRow(b.row, isFresh(b.key))
-            )
-          )
+          <>
+            {hasOlder && (
+              <button type="button" className="load-older" disabled={olderLoading} onClick={loadOlder}>
+                {olderLoading ? <><span className="spinner" /> Carregando…</> : <><Icon name="up" size={14} /> Carregar mensagens anteriores</>}
+              </button>
+            )}
+            {blocks.map((b) =>
+              b.kind === 'turn' ? (
+                <Turn
+                  key={b.key}
+                  rows={b.rows}
+                  model={model}
+                  live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince } : null}
+                  isFresh={isFresh}
+                  renderRow={renderRow}
+                />
+              ) : (
+                renderRow(b.row, isFresh(b.key))
+              )
+            )}
+          </>
         )}
       </div>
       <QuestionMap />

@@ -45,6 +45,9 @@ export interface ConvState {
   /** O usuário parou este turno (Stop): o fim dele deixa o envio PARADO — a fila
    *  não anda sozinha. Vale até o próximo turno começar. */
   stoppedByUser: boolean
+  /** A última marca "despachado" (HandoffJobs.dispatched): o envio e o instante.
+   *  Desfazer o despacho (undispatched) só cabe sem turno começado depois dela. */
+  dispatched: { envioId: string; at: number } | null
 }
 
 /** Textos lembrados por conversa (o registro atrasado leva segundos, não horas). */
@@ -68,7 +71,8 @@ export function newConvState(cwd: string, now: number): ConvState {
     noticeAt: 0,
     noticeCarry: null,
     noticeBusy: false,
-    stoppedByUser: false
+    stoppedByUser: false,
+    dispatched: null
   }
 }
 
@@ -89,12 +93,13 @@ export function closeSlice(s: ConvState, at: number, mutate: () => void = () => 
 /**
  * A varredura só lê o banco da conversa que PODE ter parado: sem turno nem
  * pergunta aberta, com atividade nova desde a última varredura que nada achou e
- * há o limite desde a última atividade (contada a partir de `notBefore`, o
- * início do tracker) — antes disso nada pode estar parado.
+ * há o limite desde a última atividade vista NESTE processo (0 = nenhuma: o
+ * banco diz — HandoffJobs.markStalled relê a escrita mais recente). Nunca antes
+ * de `notBefore`: a carência depois do boot, para a recuperação do turno subir.
  */
 export function mayHaveStalled(s: ConvState, at: number, notBefore: number, stallMs: number): boolean {
-  if (s.turnRunning || s.pending.size > 0 || s.dormantAt === s.lastActivity) return false
-  return at - Math.max(s.lastActivity, notBefore) >= stallMs
+  if (at < notBefore || s.turnRunning || s.pending.size > 0 || s.dormantAt === s.lastActivity) return false
+  return at - s.lastActivity >= stallMs
 }
 
 /**

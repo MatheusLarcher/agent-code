@@ -15,7 +15,7 @@ export function registerContextIpc(deps: Dependencies): void {
   deps.handle(Channels.contextTurnsList, async (_e, convId) => {
     if (!valid(convId)) return []
     try { return await deps.repository().listContextTurns(convId, CONTEXT_TURNS_ON_SCREEN) }
-    catch { return [] }
+    catch { throw new Error('Histórico de contexto indisponível.') }
   })
   deps.handle(Channels.contextTurnsRead, async (_e, convId, turnId, parentToolUseId) => {
     if (!valid(convId) || !valid(turnId) || (parentToolUseId !== undefined && !valid(parentToolUseId))) return null
@@ -24,7 +24,7 @@ export function registerContextIpc(deps: Dependencies): void {
     try {
       const detail = await deps.repository().readContextTurn(convId, turnId)
       return detail ? filterDetail(detail, parentToolUseId) : null
-    } catch { return null }
+    } catch { throw new Error('Histórico de contexto indisponível.') }
   })
   deps.handle(Channels.contextTurnsCountExact, async (_e, convId): Promise<ContextExactCount> => {
     if (!valid(convId)) return { ok: false, usage: null, reason: 'Identificador de conversa inválido.' }

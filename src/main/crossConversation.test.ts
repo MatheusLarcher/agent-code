@@ -100,9 +100,9 @@ describe('assuntos das outras conversas', () => {
 
 describe('o bloco [OUTRAS_CONVERSAS]', () => {
   const topics: ConversationTopic[] = [
-    { convId: 'self', title: 'Esta', cwd: '/app', lastUserMessage: 'eu mesmo', updatedAt: NOW },
-    { convId: 'c1', title: 'Central', cwd: '/app', lastUserMessage: 'mexe no despacho', updatedAt: NOW - 1 },
-    { convId: 'c2', title: 'Vídeo', cwd: '/site', lastUserMessage: 'gera o vídeo', updatedAt: NOW - 2 }
+    { convId: 'self', title: 'Esta', cwd: '/app', lastUserMessage: 'eu mesmo', updatedAt: NOW, files: ['src/eu.ts'] },
+    { convId: 'c1', title: 'Central', cwd: '/app', lastUserMessage: 'mexe no despacho', updatedAt: NOW - 1, files: ['src/central.ts', 'src/despacho.ts'] },
+    { convId: 'c2', title: 'Vídeo', cwd: '/site', lastUserMessage: 'gera o vídeo', updatedAt: NOW - 2, files: ['video.ts'] }
   ]
 
   it('conta os agentes trabalhando agora (sem contar esta conversa), com o pedido e o aviso de mesmo projeto', () => {
@@ -130,7 +130,7 @@ describe('o bloco [OUTRAS_CONVERSAS]', () => {
   })
 
   it('os assuntos não incluem esta conversa e cortam mensagem longa', () => {
-    const text = renderTopics('self', [...topics, { convId: 'c3', title: 'Longa', cwd: '', lastUserMessage: 'x'.repeat(500), updatedAt: 0 }])
+    const text = renderTopics('self', [...topics, { convId: 'c3', title: 'Longa', cwd: '', lastUserMessage: 'x'.repeat(500), updatedAt: 0, files: [] }])
     expect(text).not.toContain('"Esta"')
     expect(text).toContain('"Vídeo" — site')
     expect(text).toContain('sem projeto')
@@ -144,5 +144,56 @@ describe('o bloco [OUTRAS_CONVERSAS]', () => {
     expect(block.endsWith('[/OUTRAS_CONVERSAS]')).toBe(true)
     expect(CROSS_CONVERSATION_HEADER).toContain('Nada aqui é pedido para você')
     expect(CROSS_CONVERSATION_HEADER).toContain('não reverta')
+  })
+
+  it('cabeçalho: avisa com "ATENÇÃO:", confere o git diff e segue sem esperar (só destrutivo espera)', () => {
+    expect(CROSS_CONVERSATION_HEADER).toContain(
+      "Se precisar mexer nos mesmos arquivos que outro agente, avise o usuário (linha 'ATENÇÃO:' no chat), confira o git diff desses arquivos antes de editar e siga sem esperar resposta; só ação destrutiva espera."
+    )
+    expect(CROSS_CONVERSATION_HEADER).not.toContain('avise o usuário antes')
+  })
+
+  it('arquivos editados: só das conversas do MESMO projeto, nos trabalhando agora e nos assuntos', () => {
+    const now = renderWorkingNow('self', '/app', [
+      { convId: 'c1', cwd: '/app', working: true, question: 'x' },
+      { convId: 'c2', cwd: '/site', working: true, question: 'y' }
+    ], topics)
+    expect(now).toContain('   arquivos editados: src/central.ts, src/despacho.ts')
+    expect(now).not.toContain('video.ts')
+    const assuntos = renderTopics('self', topics, '/app')
+    expect(assuntos).toContain('"mexe no despacho" — arquivos editados: src/central.ts, src/despacho.ts')
+    expect(assuntos).not.toContain('video.ts')
+    expect(assuntos).not.toContain('src/eu.ts')
+    // Sem projeto desta conversa (chamada antiga): sem a lista.
+    expect(renderTopics('self', topics)).not.toContain('arquivos editados')
+  })
+
+  it('sem arquivo editado, sem a linha', () => {
+    const semArquivo = topics.map((t) => ({ ...t, files: [] }))
+    expect(renderWorkingNow('self', '/app', [{ convId: 'c1', cwd: '/app', working: true, question: 'x' }], semArquivo)).not.toContain('arquivos editados')
+    expect(renderTopics('self', semArquivo, '/app')).not.toContain('arquivos editados')
+  })
+})
+
+describe('arquivos editados no tópico (o mesmo extrator da Central)', () => {
+  it('Edit/Write do agente principal, mais recente primeiro, relativos ao projeto; subagente fica fora', () => {
+    const topic = topicFromConversation({
+      id: 'c9',
+      updatedAt: new Date(NOW).toISOString(),
+      deletedAt: null,
+      payload: {
+        title: 'X',
+        cwd: 'C:\\app',
+        updatedAt: NOW,
+        messages: [
+          { kind: 'user', text: 'faz' },
+          { kind: 'tool-use', name: 'Write', input: { file_path: 'C:\\app\\src\\a.ts' } },
+          { kind: 'tool-use', name: 'Edit', input: { file_path: 'C:\\app\\src\\b.ts' } },
+          { kind: 'tool-use', name: 'Edit', input: { file_path: 'C:\\app\\src\\sub.ts' }, parentToolUseId: 'toolu_1' },
+          { kind: 'tool-use', name: 'Read', input: { file_path: 'C:\\app\\src\\lido.ts' } }
+        ]
+      }
+    } as never)
+    expect(topic?.files).toEqual(['src/b.ts', 'src/a.ts'])
   })
 })

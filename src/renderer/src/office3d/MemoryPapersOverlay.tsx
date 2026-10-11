@@ -31,6 +31,8 @@ export interface MemoryPapersOverlayProps {
   /** As memórias que ele leu (relPaths, na ordem da 1ª leitura). */
   reads: readonly string[]
   onClose: () => void
+  /** A pasta de memórias (o caminho completo no hover do caminho); sem ela, só o relativo. */
+  memoriesDir?: string | null
   /** Só testes: a api (padrão: window.api). */
   api?: MemoryPapersApi
 }
@@ -49,7 +51,7 @@ export function OfficeMemoryPapers({ engine, feed, ownerKey, onClose }: { engine
     if (gone) onClose()
   }, [gone, onClose])
   if (gone) return <></>
-  return <MemoryPapersOverlay key={ownerKey} agent={conv?.title || 'Agente'} reads={reads} onClose={onClose} />
+  return <MemoryPapersOverlay key={ownerKey} agent={conv?.title || 'Agente'} reads={reads} memoriesDir={engine.scene.errands.memoriesDir} onClose={onClose} />
 }
 
 type Body ={ state: 'loading' } | { state: 'ok'; text: string } | { state: 'missing' } | { state: 'error' }
@@ -58,7 +60,7 @@ const REVEAL_FAIL = 'Não deu para abrir a pasta de memórias.'
 /** O clique, a roda e a seleção no painel não descem para o escritório. */
 const stop = (e: SyntheticEvent): void => e.stopPropagation()
 
-export function MemoryPapersOverlay({ agent, reads, onClose, api }: MemoryPapersOverlayProps): JSX.Element {
+export function MemoryPapersOverlay({ agent, reads, onClose, memoriesDir, api }: MemoryPapersOverlayProps): JSX.Element {
   const [a] = useState(() => api ?? appApi())
   const ui = useContext(UiContext)
   const [titles, setTitles] = useState<ReadonlyMap<string, string>>(new Map())
@@ -119,6 +121,7 @@ export function MemoryPapersOverlay({ agent, reads, onClose, api }: MemoryPapers
   }
 
   const title = (rel: string): string => titles.get(rel) ?? rel
+  const fullPath = (rel: string): string => (memoriesDir ? `${memoriesDir.replace(/[\\/]+$/, '')}\\${rel.replace(/\//g, '\\')}` : rel)
   return (
     <div className="o3d-mempapers" role="dialog" aria-label={`Memórias lidas por ${agent}`} data-testid="memory-papers" onPointerDown={stop} onWheel={stop} onDoubleClick={stop}>
       <header className="o3d-mempapers-head">
@@ -149,7 +152,15 @@ export function MemoryPapersOverlay({ agent, reads, onClose, api }: MemoryPapers
       {open ? (
         <article className="o3d-mempaper" data-testid="memory-paper">
           <h2>{title(open)}</h2>
-          <p className="o3d-mempaper-path">{open}</p>
+          {a.revealFile ? (
+            <button type="button" className="o3d-mempaper-path o3d-mempaper-path-btn" onClick={() => void reveal(open)} title={`${fullPath(open)}\nClique para abrir na pasta`} data-testid="memory-paper-path">
+              {open}
+            </button>
+          ) : (
+            <p className="o3d-mempaper-path" title={fullPath(open)}>
+              {open}
+            </p>
+          )}
           {note ? (
             <p className="o3d-mempaper-note" role="alert">
               {note}

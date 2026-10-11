@@ -161,8 +161,9 @@ function userRequests(messages: unknown[]): string[] {
   return requests
 }
 
-/** Até 8 arquivos criados/editados pelo agente principal, o mais recente primeiro e sem repetir. */
-function editedFiles(messages: unknown[], cwd: string): string[] {
+/** Até 8 arquivos criados/editados pelo agente principal, o mais recente primeiro e sem repetir.
+ *  Também é o "arquivos editados" do bloco OUTRAS_CONVERSAS (crossConversation.ts). */
+export function editedFiles(messages: unknown[], cwd: string): string[] {
   const files: string[] = []
   const seen = new Set<string>()
   for (let i = messages.length - 1; i >= 0 && files.length < MAX_FILES; i--) {

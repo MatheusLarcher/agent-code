@@ -1,5 +1,6 @@
 import {
   currentEnvio,
+  isEnvioOfDeletedConversation,
   isEnvioRemoved,
   isEnvioSent,
   type HandoffEnvio,
@@ -7,6 +8,7 @@ import {
   type HandoffQueuedPrompt
 } from '../../shared/handoffTracking'
 import type { HandoffProjectPlanState } from '../../shared/handoffProject'
+import { inBootGrace, lastActivityMs } from './handoffActivity'
 import { decideQueue, holdReason, queuedEnvios } from './handoffQueue'
 
 /**
@@ -38,6 +40,9 @@ export interface PlanView {
   envios: HandoffEnvio[]
   state: HandoffProjectPlanState | 'terminado'
   started: boolean
+  /** O envio corrente consta rodando no banco, mas sem sinal de vida há tantos
+   *  minutos: o plano está `parado` por isso (minutesWithoutTurn). */
+  semTurnoMin?: number
 }
 
 /** Um plano está parado há este tempo e outro espera: entra o PO. */
@@ -46,22 +51,64 @@ export const PROJECT_STOP_WAIT_MS = 30 * 60_000
 export const PROJECT_REEVALUATE_MS = 30 * 60_000
 /** Teto da lista de arquivos do anterior no 1º prompt (o resto vira "+N"). */
 export const DIRTY_LIST_MAX = 200
+/** Sem turno neste processo, o envio que consta rodando só está vivo com escrita
+ *  (ou atividade) recente — a conversa rodando em OUTRO PC com o banco
+ *  compartilhado grava tempo a cada passada da varredura (60 s). A FONTE da
+ *  atividade é a mesma da varredura (handoffActivity.lastActivityMs); só o
+ *  limite é menor que o dela (HANDOFF_STALL_MS): aqui se deixa de mostrar
+ *  "rodando", lá se marca `parada`. */
+export const PROJECT_QUEUE_LIVE_MS = 3 * 60_000
 
-export function planState(envios: readonly HandoffEnvio[]): PlanView['state'] {
-  // Tirado da fila conta como fora do plano: o que sobrou concluído termina o plano.
-  if (envios.length === 0 || envios.every((e) => e.status === 'concluida' || isEnvioRemoved(e))) return 'terminado'
+/** O sinal de vida que o serviço dá às regras: o turno NESTE processo, a última atividade vista nele e o boot. */
+export interface PlanLiveness {
+  turnRunning(conversationId: string): boolean
+  /** Última atividade da conversa vista neste processo (ms); ausente/`null` = nenhuma. */
+  lastActivityMs?(conversationId: string): number | null
+  /** O instante do boot deste processo (ms): dentro da carência (BOOT_GRACE_MS, a
+   *  mesma da varredura) o envio que consta rodando continua `rodando` — a
+   *  retomada automática das sessões ainda não emitiu o turn-start. Ausente = sem carência. */
+  bootedAt?: number
+  now: number
+}
+
+/**
+ * Minutos sem sinal de vida do envio corrente que consta `enviado`/`em_execucao`;
+ * `null` = vivo (turno rodando aqui, carência do boot, ou escrita/atividade há
+ * menos de PROJECT_QUEUE_LIVE_MS), ou não consta rodando. O status gravado
+ * sozinho não basta: ele só sai do banco por `result`, Stop ou varredura — app
+ * fechado no meio do turno, sessão descartada ou despacho que falhou o deixam lá.
+ */
+export function minutesWithoutTurn(current: HandoffEnvio, live: PlanLiveness): number | null {
+  if (current.status !== 'enviado' && current.status !== 'em_execucao') return null
+  if (live.turnRunning(current.conversationId)) return null
+  if (live.bootedAt !== undefined && inBootGrace(live.bootedAt, live.now)) return null
+  const idle = live.now - lastActivityMs(live.lastActivityMs?.(current.conversationId), [current])
+  return idle < PROJECT_QUEUE_LIVE_MS ? null : Math.max(1, Math.round(idle / 60_000))
+}
+
+export function noTurnReason(min: number): string {
+  return `sem turno rodando há ${min} min`
+}
+
+export function planState(envios: readonly HandoffEnvio[], live: PlanLiveness): PlanView['state'] {
+  // Tirado da fila (ou conversa apagada) conta como fora do plano: o que sobrou concluído termina o plano.
+  if (envios.length === 0 || envios.every((e) => e.status === 'concluida' || isEnvioRemoved(e) || isEnvioOfDeletedConversation(e))) return 'terminado'
   if (!envios.some(isEnvioSent)) return 'na_fila'
   const current = currentEnvio(envios)
-  if (current && (current.status === 'enviado' || current.status === 'em_execucao')) return 'rodando'
+  if (current && (current.status === 'enviado' || current.status === 'em_execucao')) {
+    return minutesWithoutTurn(current, live) === null ? 'rodando' : 'parado'
+  }
   return decideQueue(envios).kind === 'next' ? 'entre_prompts' : 'parado'
 }
 
 /** Os planos da pasta, na ordem, sem os terminados (eles saem da fila). */
-export function viewFolder(plans: readonly StoredPlan[], enviosOf: (loteId: string) => HandoffEnvio[]): PlanView[] {
+export function viewFolder(plans: readonly StoredPlan[], enviosOf: (loteId: string) => HandoffEnvio[], live: PlanLiveness): PlanView[] {
   return plans
     .map((plan): PlanView => {
       const envios = enviosOf(plan.loteId)
-      return { plan, envios, state: planState(envios), started: envios.some(isEnvioSent) }
+      const current = currentEnvio(envios)
+      const semTurnoMin = current ? minutesWithoutTurn(current, live) : null
+      return { plan, envios, state: planState(envios, live), started: envios.some(isEnvioSent), ...(semTurnoMin === null ? {} : { semTurnoMin }) }
     })
     .filter((view) => view.state !== 'terminado')
 }
@@ -77,9 +124,10 @@ export function queuedPrompt(envio: HandoffEnvio, conteudo = envio.conteudo): Ha
 
 const ordinal = (n: number): string => `${n}º`
 
-/** O motivo de quem espera a vez de outro plano. */
+/** O motivo de quem espera a vez de outro plano (e por que o da vez está parado sem turno, quando é o caso). */
 export function waitingReason(position: number, holder: PlanView): string {
-  return `na fila do projeto (${ordinal(position)}): esperando o plano "${holder.plan.planTitulo}" terminar`
+  const base = `na fila do projeto (${ordinal(position)}): esperando o plano "${holder.plan.planTitulo}" terminar`
+  return holder.semTurnoMin === undefined ? base : `${base} — ele consta rodando, mas está ${noTurnReason(holder.semTurnoMin)}`
 }
 
 export function dirtyReason(count: number): string {
@@ -89,7 +137,8 @@ export function dirtyReason(count: number): string {
 /**
  * O passo da fila do projeto para um plano. `start`: é a vez dele, ninguém roda
  * e nenhum prompt saiu ainda — o serviço confere a pasta (git status) e chama
- * `startDecision`. O resto já sai decidido.
+ * `startDecision`. O resto já sai decidido. `force` ("Enviar/Começar mesmo
+ * assim") é o usuário mandando: vence a vez de outro plano e o outro rodando.
  */
 export type ProjectStep =
   | { kind: 'decided'; decision: HandoffQueueDecision }
@@ -102,13 +151,18 @@ export function projectStep(views: readonly PlanView[], loteId: string, opts: { 
   const next = nextEnvio(view)
   if (!next) return { kind: 'decided', decision: { kind: 'none' } }
   const hold = (motivo: string): ProjectStep => ({ kind: 'decided', decision: { kind: 'hold', envio: queuedPrompt(next), motivo } })
-  // Planos não se intercalam: só o 1º da fila anda.
-  if (index > 0) return hold(waitingReason(index + 1, views[0]))
-  // A vez é dele, mas outro plano ainda roda um prompt (o A que recuperou a vez espera o prompt atual do B).
-  const other = views.find((v, i) => i !== index && v.state === 'rodando')
-  if (other) return hold(`esperando o prompt atual do plano "${other.plan.planTitulo}" terminar`)
+  if (!opts.force) {
+    // Planos não se intercalam: só o 1º da fila anda.
+    if (index > 0) return hold(waitingReason(index + 1, views[0]))
+    // A vez é dele, mas outro plano ainda roda um prompt (o A que recuperou a vez espera o prompt atual do B).
+    const other = views.find((v, i) => i !== index && v.state === 'rodando')
+    if (other) return hold(`esperando o prompt atual do plano "${other.plan.planTitulo}" terminar`)
+  }
   if (!view.started) return { kind: 'start', view, first: next }
-  return { kind: 'decided', decision: decideQueue(view.envios, opts) }
+  const decision = decideQueue(view.envios, opts)
+  // O corrente consta rodando sem turno: o motivo é esse (não "ainda está rodando") — a tela mostra "Enviar mesmo assim".
+  if (decision.kind === 'hold' && view.semTurnoMin !== undefined) return hold(`o prompt anterior consta rodando, mas está ${noTurnReason(view.semTurnoMin)}`)
+  return { kind: 'decided', decision }
 }
 
 /** O aviso que o código monta no 1º prompt do B quando o PO o começou com a pasta suja. */
@@ -168,6 +222,9 @@ const STOP_TEXT: Partial<Record<HandoffEnvio['status'], string>> = {
 export function stopReason(view: PlanView): string {
   const current = currentEnvio(view.envios)
   if (!current) return 'o plano não começou'
+  if (view.semTurnoMin !== undefined) {
+    return `o prompt ${current.ordem} de ${view.envios.length} (${current.arquivo}) consta rodando no banco, mas está ${noTurnReason(view.semTurnoMin)}`
+  }
   const text = STOP_TEXT[current.status]
   if (!text) return holdReason(current)
   const detail = current.motivo?.trim()

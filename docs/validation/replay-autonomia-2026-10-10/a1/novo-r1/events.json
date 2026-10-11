@@ -1,0 +1,18 @@
+[
+  {
+    "at": 1791639883900,
+    "conv": "cmv2g433v4rynj",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && git status --short && echo \\\"---LOG\\\" && git log --oneline -5 && echo \\\"---SANDBOX\\\" && ls docs/spec/plano-20261006-1026/_sandbox 2>&1; ls D:/agent-code-replay/a1/agent-code/docs/spec/ 2>&1; ls D:/agent-code-replay/runs/a1-novo-r1/agent-code/plann…"
+  },
+  {
+    "at": 1791639932119,
+    "conv": "cmv2g433v4rynj",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && wc -l src/renderer/src/office3d/{chairModel,poses,reach,officePlan,layout,meetingRoom,scene,crowd,gestures,reactions,party,destinations.test,seatedPose.test,agentCast.test,decorBack,agentPoses.test,poses.test}.ts && ls resources/office-agents && g…"
+  }
+]

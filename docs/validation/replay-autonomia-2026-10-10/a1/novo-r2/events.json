@@ -1,0 +1,26 @@
+[
+  {
+    "at": 1791645575721,
+    "conv": "cmv2jhw5a06sso",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code && git status --short && git log --oneline -5 && grep -n \\\"_sandbox\\\\|docs/spec\\\" .gitignore\",\"description\":\"Show git status, recent commits and sandbox ignore rule\"}"
+  },
+  {
+    "at": 1791645629938,
+    "conv": "cmv2jhw5a06sso",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"cd D:/agent-code-replay/a1/agent-code/src/renderer/src/office3d && wc -l layout.ts meetingRoom.ts scene.ts crowd.ts brain.ts destinations.test.ts chairModel.ts poses.ts reach.ts gestures.ts reactions.ts seatedPose.test.ts officePlan.ts motionPick.ts agentCast.test.ts && grep -n \\\"upsert\\…"
+  },
+  {
+    "at": 1791645654053,
+    "conv": "cmv2jhw5a06sso",
+    "kind": "allow",
+    "tool": "Bash",
+    "reason": "comando de shell dentro da rodada",
+    "input": "{\"command\":\"ls -la D:/agent-code-replay/a1/agent-code/docs/spec/plano-20261006-1026/_sandbox 2>&1; ls D:/agent-code-replay/a1/agent-code/docs/spec/ 2>&1; ls D:/agent-code-replay/a1/agent-code/resources/office-agents 2>&1 | head -20\",\"description\":\"List sandbox, spec folders and avatar GLBs\"}"
+  }
+]

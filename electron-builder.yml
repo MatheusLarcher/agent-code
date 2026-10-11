@@ -30,7 +30,6 @@ files:
   - .agents/skills/**
   # Kits de skills atrás de um interruptor (main/skillKits.ts): vão em todo
   # instalador e só chegam ao cache com o interruptor do kit ligado.
-  - .agents/skills-ciclo/**
   - .agents/skills-ecc/**
   # Skills que o usuário instalou no cache da máquina de build
   # (scripts/stage-skills.mjs). Semeiam o cache de instalações novas.

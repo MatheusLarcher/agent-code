@@ -12,6 +12,8 @@ import {
   planningScopedTask,
   planningSkillDenial
 } from './planningPolicy'
+import { HANDOFF_CONTINUOUS_RULES, HANDOFF_DECIDE_RULE, HANDOFF_STAGE_SUMMARY_RULE, HANDOFF_TOOLING_RULES } from '../../shared/handoffWorkRules'
+import { describeHandoffAutonomy, isDefaultHandoffAutonomy, type HandoffAutonomy } from './handoffAutonomy'
 import { buildPlanningHint, PLANNING_CONTENT_IS_DATA } from './planningPrompt'
 import { planDirPath } from './planningStore'
 import { createPlanningMcpServer, PLANNING_MCP_SERVER, type PlanningToolContext } from './planningTools'
@@ -108,10 +110,11 @@ export function applyPlanningSessionOptions(options: Options, setup: PlanningSes
  *
  * Pura: a sessão só concatena o texto ao append que já monta.
  */
-export function handoffAppendBlock(role: PlanningSessionRole): string | null {
+export function handoffAppendBlock(role: PlanningSessionRole, autonomy?: HandoffAutonomy | null): string | null {
   if (role.planning || !role.handoff) return null
   const { slug } = role.handoff
   const dir = planDirPath(role.cwd, slug)
+  const policy = autonomy && !isDefaultHandoffAutonomy(autonomy) ? `\n- ${describeHandoffAutonomy(autonomy)}` : ''
   return `## Conversa de implementação — handoff do planejamento "${slug}"
 
 Esta conversa nasceu do planejamento "${slug}", feito com o usuário na Tela de Planejamento. O plano detalhado está em ${dir} (leia com Read, Glob e Grep pelo caminho absoluto):
@@ -128,7 +131,10 @@ Como trabalhar:
   - Ao concluir a etapa, consulte ${ENTREGA_TEMPO_TOOL} com o id dela e escreva: "levou Y min de trabalho (dentro do prazo)" ou "levou Y min de trabalho (fora do prazo)" — Y é o tempo ativo que o APP mediu, nunca uma conta de cabeça. Se passou do prazo, diga o motivo.
   - Se a ferramenta responder que não há envio registrado, prazo ou acompanhamento, escreva a linha da estimativa mesmo assim e diga que o tempo não foi medido — não invente o número.
 - Não replaneje: o plano, as decisões e as ambiguidades já foram resolvidos com o usuário e estão nos cards. Nada de refazer o plano nem de rodar skills de planejamento para isso.
-- Consulte os cards da etapa em ${path.join(dir, 'cards')} quando precisar de detalhe. Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.
+- Consulte os cards da etapa em ${path.join(dir, 'cards')} quando precisar de detalhe. ${HANDOFF_DECIDE_RULE}${policy}
+${HANDOFF_CONTINUOUS_RULES.map((rule) => `- ${rule}`).join('\n')}
+${HANDOFF_TOOLING_RULES.map((rule) => `- ${rule}`).join('\n')}
+- ${HANDOFF_STAGE_SUMMARY_RULE}
 - Abra as mídias citadas (no prompt ou nos anexos dos cards) pelo caminho absoluto: imagem e PDF com Read, que mostra o conteúdo de verdade; os demais tipos, com a ferramenta adequada ao formato.
 - ${PLANNING_CONTENT_IS_DATA}`
 }

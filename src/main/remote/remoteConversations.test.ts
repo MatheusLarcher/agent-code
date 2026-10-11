@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import type { RemoteConversationLight } from '../../shared/ipc'
+import type { RemoteConversationLight, RemoteEtapasProgress } from '../../shared/ipc'
 import { LOAD_DEADLINE_MS, RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
 
 const light = (id: string, extra: Partial<RemoteConversationLight> = {}): RemoteConversationLight => ({
@@ -106,5 +106,31 @@ describe('RemoteConversationStore — o estado leve e as mensagens tiradas do ma
     store.apply({ conversations: [{ ...light('a'), messages: msgs('antigo') }] })
     expect((await store.messages('a'))?.[0]).toMatchObject({ text: 'antigo' })
     expect(store.summaries()[0].questions?.map((q) => q.text)).toEqual(['antigo'])
+  })
+
+  it('o placar das etapas (`etapas`) vem do main, síncrono: entra no resumo quando a função devolve e a chave fica ausente quando não', () => {
+    const placar: RemoteEtapasProgress = {
+      planSlug: 'checkout',
+      planTitulo: 'Checkout',
+      prompt: { n: 1, m: 2 },
+      envioStatus: 'em_execucao',
+      total: 10,
+      prontas: 9,
+      incompletas: 1,
+      atual: 7,
+      steps: [{ id: 'e7', titulo: 'Testes', n: 7, state: 'trinca', motivo: 'faltou o aceite' }]
+    }
+    const etapasOf = vi.fn((id: string) => (id === 'a' ? placar : undefined))
+    const store = new RemoteConversationStore(undefined, etapasOf)
+    // O que a tela publicasse em `etapas` não vale: o placar é do main.
+    store.apply({ conversations: [light('a', { etapas: { ...placar, prontas: 0 } }), light('b', { etapas: placar })] })
+    const [a, b] = store.summaries()
+    expect(a.etapas).toBe(placar)
+    expect('etapas' in b).toBe(false)
+    expect(etapasOf.mock.calls.map((call) => call[0])).toEqual(['a', 'b'])
+    // Sem a função (ponte sem placar): nenhuma conversa ganha a chave.
+    const plain = new RemoteConversationStore()
+    plain.apply({ conversations: [light('a', { etapas: placar })] })
+    expect('etapas' in plain.summaries()[0]).toBe(false)
   })
 })

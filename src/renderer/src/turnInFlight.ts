@@ -47,8 +47,10 @@ export function turnMark(
   }
 }
 
-export function withTurnInFlight(conv: Conversation, mark: TurnInFlight): Conversation {
-  return { ...conv, turnInFlight: mark }
+export function withTurnInFlight(conv: Conversation, mark: TurnInFlight, sdkUuid?: string): Conversation {
+  const messages = sdkUuid ? conv.messages.map((m) => m.kind === 'user' && m.id === mark.msgId && !m.injected
+    ? { ...m, sdkUuid, turnIds: [...new Set([...(m.turnIds ?? []), sdkUuid])] } : m) : conv.messages
+  return { ...conv, messages, turnInFlight: mark }
 }
 
 /** O envio do turno `msgId` saiu. Outra marca (ou nenhuma) fica como está. */

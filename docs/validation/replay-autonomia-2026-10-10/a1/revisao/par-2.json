@@ -1,0 +1,76 @@
+{
+  "par": 2,
+  "labels": {
+    "A": "novo",
+    "B": "referencia"
+  },
+  "comparacao": "B é melhor: faz tudo o que o pedido pede sem falhar nenhum teste de referência, mantém quem espera a TV na sua cadeira, põe o pé no chão em todos os corpos e não deixa lixo no repositório. A não guarda a cadeira de quem espera, deixa pés na ponta, falha na colisão do cochilo e deixa um teste temporário que quebra o npm test.",
+  "novo": {
+    "label": "A",
+    "notas": {
+      "atende": 3,
+      "bugs": 2,
+      "bordas": 3,
+      "regras": 2,
+      "justificativa": "Entrega o principal: SEAT_HEIGHT.chair 0.46, cadeira derivada de SEAT_TOP (ARM_TOP, BACK_CENTER_Y, coluna a gás até a base do estofado), managerChairs com memória em layout.ts, scene.ts guardando roomOrder e reaplicando meetingSpots no sync, home novo → init em crowd.ts, testes de regressão e seatedReach.test.ts. Faltas: (1) meetingSpots não lembra quem espera, então a cada Manager que sai ou chega os chamados levantam e trocam de cadeira, contra o critério 'cada agente fica na sua cadeira'. (2) sitLower só deixa a coxa descer 6 cm, e o boneco 0,85 e os avatares de perna curta continuam na ponta do pé. (3) Para quem tem braço curto, typingReach troca o alvo por KEYS_NEAR: o punho fica antes do teclado, não nele, e 'reached' aceita o braço quase esticado. (4) No napDesk a cabeça apoia nas mãos e não nos braços, e a colisão sentada do boneco falha (f7/f8). Bugs e regras: ficou um rascunho, _tmpGlbNap.test.ts (207 linhas, pesado, timeout de 900 s), que chama writeFileSync(process.env.TMP_OUT!) com a variável indefinida e por isso quebra o npm test. Em poses.test.ts continua a asserção footL<0, que depende de arredondamento. index.html mudou só nos fins de linha. Rodou o phone:build sem prova de que a outra implementação já tinha commitado. Arquivos abaixo de 500 linhas (crowd.ts com 499)."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/office3d/agentCast.test.ts > (arquivo não carregou)",
+        "tipo": "nome",
+        "motivo": "readGlb, buildScene e bindHeight existem em A, só que em agentGlbFixture.ts (com AVATAR_DIR) e não em ./testGlb (AGENTS_DIR). O comportamento é o mesmo."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela",
+        "tipo": "nome",
+        "motivo": "O teste depende da classe MeetingVenues, que A não tem. Mas o scene.ts de A reaplica meetingSpots com as cadeiras reais dos Managers a cada sync, e quem espera na cabeceira vai para a próxima livre (A tem o mesmo cenário no teste dele)."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre",
+        "tipo": "nome",
+        "motivo": "managerChairs com memória (prev.managerOf) e o filtro de offstage em A fazem p2 ficar na cadeira 1 e p3 pegar a 0. Só falhou porque o teste instancia MeetingVenues."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda",
+        "tipo": "nome",
+        "motivo": "Os estados finais que o teste confere (todos sentados, b ao lado da TV, c sentado, sem cadeira dupla) saem da lógica de A. Ele remaneja quem espera, mas sem dobrar. A falha vem da classe MeetingVenues, que não existe em A."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto",
+        "tipo": "comportamento",
+        "motivo": "O meetingSpots de A não lembra a cadeira de quem espera. Quando o plano de p1 é enviado, a cabeceira volta a ser a 1ª livre de WAIT_CHAIRS, e b e c levantam e trocam de cadeira (o teste exige sit=1 o tempo todo e as mesmas cadeiras)."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo",
+        "tipo": "nome",
+        "motivo": "crowd.upsert de A também volta o modo para 'init' quando o home de um personagem 'fixed' muda mais de 5 cm (testado com a estante de memória). Só falhou porque o teste instancia MeetingVenues."
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedPose.test.ts > pose sentada da estação em type, typeFast, readScreen, sitIdle, drum, sip e no cochilo nenhuma parte do boneco atravessa tampo, monitor, divisória, teclado, assento ou encosto",
+        "tipo": "comportamento",
+        "motivo": "É a mesma checagem de colisão, e em A até mais branda: ARM_Y não existe, a caixa do braço vira NaN e nunca acusa nada. Para o boneco, a única pose sentada que muda entre as duas implementações é o napDesk novo de A, então algo atravessa a mobília. Não é diferença de nome."
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedPose.test.ts > pose sentada da estação as reações curtas feitas sentado (susto, comemorar, facepalm, relógio, pasta, tchau…) também não atravessam a mesa nem deitam no encosto",
+        "tipo": "comportamento",
+        "motivo": "É a mesma colisão de f7, agora com as reações por cima. A pose sentada de A (o cochilo) bate na mobília, e nenhuma diferença de nome explica a falha."
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedReach.test.ts > (arquivo não carregou)",
+        "tipo": "comportamento",
+        "motivo": "Além de faltarem testGlb, typingArm e REACH_SLACK, A não deixa o pé apoiado no boneco 0,85 nem nos avatares de perna curta (a coxa desce no máximo 6 cm, então ficam na ponta do pé). A também não exige folga no braço: aceita o braço quase esticado e, para o braço curto, tira o punho do teclado (KEYS_NEAR)."
+      }
+    ]
+  },
+  "referencia": {
+    "label": "B",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 4,
+      "justificativa": "Cobre todas as etapas. chairModel.ts segue a tabela do pedido (ARM_Y=SEAT_TOP+0.205, BACK_CENTER_Y) e ganhou chairModel.test.ts (braços abaixo do tampo e nada dentro do estofado). sitLower deixa a coxa descer até 10 cm e o joelho subir até 4 cm acima do quadril, então o pé fica no chão em todos os corpos. Em reach.ts, seatedLean inclina o tronco só o que falta (até 0,35) para o braço curto alcançar com 3% de folga, e typingArm é reaproveitado no teste. napDesk tem ângulos próprios para o boneco e para os GLB. Na sala de reunião: managerChairs com memória, e a classe MeetingVenues junta a fila da TV e as cadeiras reais. Ela é refeita a cada layout com 'prev', então quem espera só sai da cadeira se um Manager chegar nela. crowd.upsert faz home novo → init. Os 5 cenários de destinations.test.ts verificam a cada passo que nenhuma cadeira tem dois agentes. testGlb.ts foi extraído do agentCast e usado no seatedReach, que confere punho, antebraço ±20°, joelho e pé no chão. Nenhuma falha de referência. Pontos menores: mexeu em scripts/office-agents/app-harness.mjs, fora do escopo declarado, porque a assinatura de meetingSpots mudou e para tirar as fotos dos clipes sentados. crowd.ts fica com exatamente 500 linhas. phone:build ficou pendente, o que o pedido aceita."
+    },
+    "falhas": []
+  }
+}

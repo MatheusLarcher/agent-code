@@ -2,7 +2,11 @@ import {
   CARD_ETAPA_PREFIX,
   currentEntrega,
   currentEnvio,
+  HANDOFF_CONVERSATION_DELETED_MOTIVO,
+  HANDOFF_SESSION_ENDED_MOTIVO,
+  isEnvioOfDeletedConversation,
   isEnvioSent,
+  isStallMotivo,
   parseMs,
   type HandoffEntrega,
   type HandoffEnvio,
@@ -10,8 +14,12 @@ import {
 } from '../../shared/handoffTracking'
 import { boardItemStatus, type BoardItem } from '../../shared/ipc'
 import type { HandoffEntregaPatch, HandoffEnvioPatch, HandoffTimeAdd } from '../persistence/types'
-import { STALL_ABORT_MS } from '../stallWatch'
+import { HANDOFF_STALL_MS, isStallable } from './handoffActivity'
 import { blockReason, cardForEtapa, poContestReason } from './handoffCardMatch'
+
+// O sinal de vida (atividade, parada, carência do boot) mora em handoffActivity.ts
+// — a fila do projeto lê a mesma fonte. Re-exportado para quem já importava daqui.
+export { BOOT_GRACE_MS, conversationLastWriteMs, HANDOFF_STALL_MS, isStallable, lastActivityMs, stallReason, type StallContext } from './handoffActivity'
 
 /**
  * As regras do acompanhamento dos envios de handoff, puras: nada aqui lê banco,
@@ -23,10 +31,6 @@ import { blockReason, cardForEtapa, poContestReason } from './handoffCardMatch'
  * etapa foi feita é o cartão dela no Quadro, concluído e não contestado pelo PO.
  */
 
-/** Sem turno nem pergunta por tanto tempo, o envio está parado: o mesmo teto do
- *  travamento definitivo do turno (stallWatch.ts). */
-export const HANDOFF_STALL_MS = STALL_ABORT_MS
-
 /** Teto do texto de erro guardado como motivo (o resto é do log). */
 export const HANDOFF_ERROR_MOTIVO_MAX = 500
 /** Teto do motivo do envio incompleto (a lista do que faltou). */
@@ -37,15 +41,6 @@ export const HANDOFF_ENVIO_MOTIVO_MAX = 2000
 export const TURN_ERROR_PREFIX = 'o turno terminou com erro'
 
 export const CORRECTED_BY_USER = 'corrigido por você'
-
-/** Status de envio que a varredura pode marcar como parada. `aguardando_voce`
- *  só chega à regra sem pergunta aberta em memória (a varredura pula a conversa
- *  que tem uma): o app fechou com a pergunta aberta e ninguém mais a responde. */
-const STALLABLE: ReadonlySet<HandoffEnvioStatus> = new Set(['na_fila', 'enviado', 'em_execucao', 'aguardando_voce'])
-
-export function isStallable(status: HandoffEnvioStatus): boolean {
-  return STALLABLE.has(status)
-}
 
 /** Ainda em curso — o que a varredura carrega no início do processo. */
 export const HANDOFF_OPEN_STATUSES: readonly HandoffEnvioStatus[] = ['na_fila', 'enviado', 'em_execucao', 'aguardando_voce']
@@ -327,6 +322,66 @@ export function errorPatch(envio: HandoffEnvio, text: string): HandoffEnvioPatch
   return envio.status === 'falhou' && envio.motivo === motivo ? null : { status: 'falhou', motivo }
 }
 
+/**
+ * A sessão morreu com o turno ABERTO e sem `result`/`error` (descarte, lease
+ * perdido, troca de sessão): o envio corrente que rodava (ou esperava você)
+ * fica parado por inatividade — a fila o retoma sozinha. Depois de um Stop do
+ * usuário vale o Stop (a fila espera ele). Só o turno vivo em memória chama
+ * isto: sem turno, não há o que encerrar.
+ */
+export function sessionEndedPatch(envio: HandoffEnvio, stoppedByUser: boolean): HandoffEnvioPatch | null {
+  if (stoppedByUser) return stopPatch(envio)
+  if (!isEnvioSent(envio) || !isStallable(envio.status)) return null
+  return { status: 'parada', motivo: HANDOFF_SESSION_ENDED_MOTIVO }
+}
+
+/** O que se sabe do despacho e do turno na hora de desfazer (HandoffJobs.undispatched). */
+export interface UndispatchContext {
+  /** Turno aberto em memória agora. */
+  turnRunning: boolean
+  /** Início do ÚLTIMO turno visto neste processo (ms), mesmo que já tenha acabado. */
+  turnStartedAt: number | null
+  /** O instante da marca "despachado" deste envio, em memória (ms); `null` = não se sabe. */
+  dispatchedAt: number | null
+}
+
+/**
+ * O prompt chegou a rodar depois da marca? Aí desfazer não cabe: o turno está
+ * aberto; ou um turn-start chegou aqui DEPOIS do despacho (o job do turn-start
+ * pode não ter gravado — banco fora — e o status ainda constar `enviado`); ou o
+ * banco já tem `iniciadoEm` posterior ao despacho (gravado por este ou por outro
+ * processo). Sem a marca em memória, o despacho de um prompt novo é o `enviadoEm`;
+ * o retomado (já tinha `iniciadoEm`) só se julga pelo turno em memória.
+ */
+export function turnStartedAfterDispatch(envio: HandoffEnvio, ctx: UndispatchContext): boolean {
+  if (ctx.turnRunning) return true
+  const dispatchedAt = ctx.dispatchedAt ?? (envio.iniciadoEm === null ? parseMs(envio.enviadoEm) : null)
+  if (dispatchedAt === null) return false
+  if (ctx.turnStartedAt !== null && ctx.turnStartedAt >= dispatchedAt) return true
+  const started = parseMs(envio.iniciadoEm)
+  return started !== null && started >= dispatchedAt
+}
+
+/**
+ * O despacho do renderer falhou DEPOIS da marca "despachado" (HandoffJobs.dispatched)
+ * e nenhum turno começou: o prompt que nunca rodou volta à fila como estava; o
+ * RETOMADO (já tem `iniciadoEm`) volta a parado por inatividade, e a retomada
+ * perdida não conta. `null` = já não cabe desfazer.
+ */
+export function undispatchPatch(envio: HandoffEnvio): HandoffEnvioPatch | null {
+  if (envio.status !== 'enviado') return null
+  if (envio.iniciadoEm === null) return { status: 'na_fila', enviadoEm: null, motivo: null }
+  return { status: 'parada', motivo: HANDOFF_SESSION_ENDED_MOTIVO }
+}
+
+/** A conversa foi apagada: tudo que não concluiu para com o motivo (inclusive o
+ *  parado por inatividade, para a retomada nunca mandar nada a uma conversa que não existe). */
+export function deletedConversationPatch(envio: HandoffEnvio): HandoffEnvioPatch | null {
+  if (envio.status === 'concluida' || isEnvioOfDeletedConversation(envio)) return null
+  if (envio.status === 'parada' && !isStallMotivo(envio.motivo)) return null
+  return { status: 'parada', motivo: HANDOFF_CONVERSATION_DELETED_MOTIVO }
+}
+
 // ---------------------------------------------------------------------------
 // Tempo
 // ---------------------------------------------------------------------------
@@ -363,51 +418,6 @@ export function timeDistribution(
   }
   const entregas = envio.entregas.filter((e) => cardInProgress.has(e.id)).map((e) => ({ id: e.id, retrabalhoMs: slice }))
   return { envioId: envio.id, retrabalhoMs: slice, entregas }
-}
-
-// ---------------------------------------------------------------------------
-// Parada
-// ---------------------------------------------------------------------------
-
-export interface StallContext {
-  turnRunning: boolean
-  /** Pergunta/permissão aberta EM MEMÓRIA (neste processo). */
-  pending: boolean
-  /** Última atividade da conversa: a vista neste processo (ou o início do
-   *  tracker) e a escrita mais recente nos envios dela (conversationLastWriteMs), em ms. */
-  lastActivityMs: number
-  now: number
-  limitMs?: number
-}
-
-/**
- * A escrita mais recente nos envios da conversa, em ms (0 sem nenhuma). Com o
- * banco compartilhado, é a atividade da conversa que roda em OUTRO PC: ele grava
- * tempo no envio corrente a cada passada — e o prompt na fila atrás dele espera
- * o mesmo turno, então a parada é julgada pela conversa, não pelo envio.
- */
-export function conversationLastWriteMs(envios: readonly HandoffEnvio[]): number {
-  let last = 0
-  for (const envio of envios) last = Math.max(last, parseMs(envio.updatedAt) ?? 0)
-  return last
-}
-
-/**
- * Por que o envio está parado, ou `null`. Na fila/enviado sem turno começar, em
- * execução sem turno rodando e sem conclusão, ou esperando você sem pergunta
- * aberta em memória, há o limite desde a última atividade (a do envio também
- * conta).
- */
-export function stallReason(envio: HandoffEnvio, ctx: StallContext): string | null {
-  if (ctx.turnRunning || ctx.pending || !STALLABLE.has(envio.status)) return null
-  const limitMs = ctx.limitMs ?? HANDOFF_STALL_MS
-  const since = Math.max(ctx.lastActivityMs, parseMs(envio.updatedAt) ?? 0)
-  if (ctx.now - since < limitMs) return null
-  const min = Math.max(1, Math.round(limitMs / 60_000))
-  if (envio.status === 'na_fila') return `o prompt ficou ${min} min na fila sem ser enviado`
-  if (envio.status === 'enviado') return `o prompt foi enviado, mas nenhum turno começou em ${min} min`
-  if (envio.status === 'aguardando_voce') return `esperava você, mas não há pergunta aberta nem turno rodando há ${min} min`
-  return `nenhum turno rodando há ${min} min, sem pergunta pendente e sem conclusão`
 }
 
 // ---------------------------------------------------------------------------

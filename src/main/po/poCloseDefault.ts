@@ -1,5 +1,6 @@
 import { boardItemStatus, boardItemTurnEndKind, parseBoardTurnEndReason, type BoardItem } from '../../shared/ipc'
 import { RESUME_REASON } from '../board/boardService'
+import { parseEtapaLine } from './poEtapas'
 import { PO_MAX_CARDS, PO_MAX_RETURNED_CARDS } from './poPrompt'
 
 /**
@@ -81,7 +82,7 @@ export function poReturnedCards(input: PoReturnedInput): BoardItem[] {
     .slice(0, PO_MAX_RETURNED_CARDS)
 }
 
-const VERB_LINE = /^(OK|CONCLUIR|ANDAMENTO|TITULO|PENDENTE|FEITA|NOVA|SEGURAR)\b/i
+const VERB_LINE = /^(OK|CONCLUIR|ANDAMENTO|TITULO|PENDENTE|FEITA|NOVA|SEGURAR|ETAPA)\b/i
 
 function cleanLines(raw: string): string[] {
   return (raw ?? '').split(/\r?\n/).map((line) => line.replace(/^[`\s>*-]+/, '').trim())
@@ -95,20 +96,29 @@ export function isReadablePoVerdict(raw: string): boolean {
 
 /** Os ids que o veredito já julgou: CONCLUIR e PENDENTE, inclusive o PENDENTE
  *  sem motivo que o parser descarta — o modelo quis segurar o cartão, e
- *  concluí-lo pelo padrão seria o contrário do que ele disse. */
-function judgedIds(raw: string): Set<string> {
+ *  concluí-lo pelo padrão seria o contrário do que ele disse. A linha do placar
+ *  (`ETAPA [id] | …`, poEtapas.ts) julga o cartão da etapa, pelo mapa. */
+function judgedIds(raw: string, envioEtapas?: ReadonlyMap<string, string>): Set<string> {
   const ids = new Set<string>()
   for (const line of cleanLines(raw)) {
     const match = /^(?:CONCLUIR|PENDENTE)\s+([^\s|]+)/i.exec(line)
     if (match) ids.add(match[1])
+    const etapa = envioEtapas?.size ? parseEtapaLine(line) : null
+    const card = etapa ? envioEtapas?.get(etapa.etapaId) : undefined
+    if (card) ids.add(card)
   }
   return ids
 }
 
-/** Os devolvidos que o veredito não citou: estes viram concluídos pelo padrão. */
-export function defaultCompletions(raw: string, returned: readonly BoardItem[]): BoardItem[] {
+/** Os devolvidos que o veredito não citou: estes viram concluídos pelo padrão.
+ *  `envioEtapas`: o mapa etapa → cartão do placar (só no fechamento com placar). */
+export function defaultCompletions(
+  raw: string,
+  returned: readonly BoardItem[],
+  envioEtapas?: ReadonlyMap<string, string>
+): BoardItem[] {
   if (!isReadablePoVerdict(raw)) return []
-  const judged = judgedIds(raw)
+  const judged = judgedIds(raw, envioEtapas)
   return returned.filter((card) => !judged.has(card.id))
 }
 

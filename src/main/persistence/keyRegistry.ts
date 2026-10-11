@@ -38,7 +38,6 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.board.requirePlan': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.board.po.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.board.po.model': { scope: 'device', source: 'main-kv', store: 'local' },
-  'config.handoff.ciclo': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.handoff.leituraGuiada': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.skillCatalog.tiered': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.skillCatalog.overrides': { scope: 'device', source: 'main-kv', store: 'local' },

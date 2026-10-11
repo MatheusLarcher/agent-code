@@ -116,6 +116,9 @@ describe('descartar', () => {
   })
 })
 
+/** Prompt com a seção da etapa, Aceite e Verificar com (o plan_handoff_write confere). */
+const VALID = '# Novo\n\n### [requisitos] Requisitos\n\nAceite: x\nVerificar com: y\n'
+
 describe('Agent Manager — plan_handoff_write confere antes; plan_handoff_limpar descarta', () => {
   it('recusa com a lista dos antigos e manda perguntar; manter: true grava; limpar move e libera', async () => {
     const a = path.basename(await writeHandoff(cwd, SLUG, '# A\n', new Date(2026, 9, 6), ['requisitos']))
@@ -123,7 +126,7 @@ describe('Agent Manager — plan_handoff_write confere antes; plan_handoff_limpa
     await touchPlan()
     notify.mockClear()
 
-    const refused = await call('plan_handoff_write', { conteudo: '# Novo\n', etapas: ['requisitos'] })
+    const refused = await call('plan_handoff_write', { conteudo: VALID, etapas: ['requisitos'] })
     expect(refused).toContain('Handoff não gravado: há 1 prompt antigo não enviado(s) em _handoff/')
     expect(refused).toContain(`- _handoff/${a}`)
     expect(refused).toContain('Pergunte ao usuário antes de seguir')
@@ -132,18 +135,18 @@ describe('Agent Manager — plan_handoff_write confere antes; plan_handoff_limpa
     expect((await listHandoffs(cwd, SLUG)).map((h) => h.name)).toEqual([a])
     expect(notify).not.toHaveBeenCalled()
 
-    expect(await call('plan_handoff_write', { conteudo: '# Novo\n', etapas: ['requisitos'], manter: true })).toMatch(/^Handoff gravado em /)
+    expect(await call('plan_handoff_write', { conteudo: VALID, etapas: ['requisitos'], manter: true })).toMatch(/^Handoff gravado em /)
     expect(await listHandoffs(cwd, SLUG)).toHaveLength(2)
 
     expect(await call('plan_handoff_limpar', {})).toBe(
       `Movidos para _handoff/${HANDOFF_DISCARD_DIR}/ (1): ${a}. Agora grave os prompts novos com plan_handoff_write.`
     )
     expect((await listHandoffs(cwd, SLUG)).map((h) => h.name)).not.toContain(a)
-    expect(await call('plan_handoff_write', { conteudo: '# Outro\n', etapas: ['requisitos'] })).toMatch(/^Handoff gravado em /)
+    expect(await call('plan_handoff_write', { conteudo: `# Outro\n${VALID}`, etapas: ['requisitos'] })).toMatch(/^Handoff gravado em /)
     expect(await call('plan_handoff_limpar', {})).toBe('Nenhum prompt antigo não enviado em _handoff/: nada foi movido.')
   })
 
   it('sem prompt antigo, plan_handoff_write grava como sempre', async () => {
-    expect(await call('plan_handoff_write', { conteudo: '# Novo\n', etapas: ['requisitos'] })).toMatch(/^Handoff gravado em /)
+    expect(await call('plan_handoff_write', { conteudo: VALID, etapas: ['requisitos'] })).toMatch(/^Handoff gravado em /)
   })
 })

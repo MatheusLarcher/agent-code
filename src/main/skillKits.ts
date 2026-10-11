@@ -16,8 +16,6 @@ import { directoryDigest, skillNames } from './skillDirs'
 type KitConfig = Partial<Pick<AppConfig, 'handoff' | 'skillCatalog'>>
 
 export const SKILL_KITS = [
-  // As skills do ciclo plan → … → improve (shared/handoffGuidance.ts) vindas do ECC.
-  { id: 'ciclo', dir: 'skills-ciclo', enabled: (config: KitConfig): boolean => config.handoff?.ciclo === true },
   // A curadoria do ECC (docs/validation/skills-ecc-curadoria-*.md): só com o
   // catálogo em níveis, que as põe como nome por categoria em vez de inflar o prompt.
   { id: 'ecc', dir: 'skills-ecc', enabled: (config: KitConfig): boolean => config.skillCatalog?.tiered === true }

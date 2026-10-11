@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG } from '../../shared/ipc'
-import { defaultAppConfig, mergeAppConfig, normalizeAllowedAutoModels, parseStoredAppConfig } from './configData'
+import { defaultAppConfig, mergeAppConfig, normalizeAllowedAutoModels, normalizeSkillOverrides, parseStoredAppConfig } from './configData'
 
 describe('configuração persistida', () => {
   it('mantém o cofre DESLIGADO por padrão e preserva a ativação explícita', () => {
@@ -102,18 +102,26 @@ describe('configuração persistida', () => {
     expect(() => mergeAppConfig(atual, { planning: { temperatura: 1 } })).toThrow()
   })
 
-  it('handoff: ciclo completo e leitura guiada DESLIGADOS por padrão; merge por campo', () => {
-    expect(defaultAppConfig().handoff).toEqual({ ciclo: false, leituraGuiada: false })
+  it('handoff: leitura guiada DESLIGADA por padrão; merge por campo', () => {
+    expect(defaultAppConfig().handoff).toEqual({ leituraGuiada: false })
     // Config antiga, gravada antes dos interruptores: cai no padrão.
-    expect(parseStoredAppConfig('{}').handoff).toEqual({ ciclo: false, leituraGuiada: false })
+    expect(parseStoredAppConfig('{}').handoff).toEqual({ leituraGuiada: false })
     // Config salva com ativação explícita não é sobrescrita pelo novo padrão.
-    expect(parseStoredAppConfig(JSON.stringify({ handoff: { ciclo: true } })).handoff).toEqual({ ciclo: true, leituraGuiada: false })
-    // Gravar só um interruptor não apaga o outro (armadilha do spread raso).
-    const semCiclo = mergeAppConfig(defaultAppConfig(), { handoff: { ciclo: false } })
-    expect(mergeAppConfig(semCiclo, { handoff: { leituraGuiada: true } }).handoff).toEqual({ ciclo: false, leituraGuiada: true })
+    expect(parseStoredAppConfig(JSON.stringify({ handoff: { leituraGuiada: true } })).handoff).toEqual({ leituraGuiada: true })
+    expect(mergeAppConfig(defaultAppConfig(), { handoff: { leituraGuiada: true } }).handoff).toEqual({ leituraGuiada: true })
     expect(defaultAppConfig().handoff).not.toBe(defaultAppConfig().handoff)
-    expect(() => mergeAppConfig(defaultAppConfig(), { handoff: { ciclo: 'sim' } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { handoff: { leituraGuiada: 'sim' } })).toThrow()
     expect(() => mergeAppConfig(defaultAppConfig(), { handoff: { outro: true } })).toThrow()
+  })
+
+  it('config antiga com handoff.ciclo (interruptor removido) carrega SEM cair no padrão: o ciclo é descartado, o resto fica', () => {
+    const antiga = JSON.stringify({ skipPermissions: true, handoff: { ciclo: true, leituraGuiada: true } })
+    const cfg = parseStoredAppConfig(antiga)
+    expect(cfg.skipPermissions).toBe(true)
+    expect(cfg.handoff).toEqual({ leituraGuiada: true })
+    expect('ciclo' in cfg.handoff).toBe(false)
+    // Patch antigo (renderer de outra versão) também não derruba a gravação.
+    expect(mergeAppConfig(defaultAppConfig(), { handoff: { ciclo: false, leituraGuiada: true } }).handoff).toEqual({ leituraGuiada: true })
   })
 
   it('catálogo de skills: em níveis DESLIGADO por padrão; ajustes por skill validados e com merge por campo', () => {
@@ -125,6 +133,12 @@ describe('configuração persistida', () => {
     expect(() => mergeAppConfig(defaultAppConfig(), { skillCatalog: { overrides: { brag: { tier: 'altíssima', category: 'Outras' } } } })).toThrow()
     expect(() => mergeAppConfig(defaultAppConfig(), { skillCatalog: { overrides: { brag: { tier: 'low', category: 'Inventada' } } } })).toThrow()
     expect(defaultAppConfig().skillCatalog).not.toBe(defaultAppConfig().skillCatalog)
+  })
+
+  it('ajuste salvo com o nome antigo do nível alto ("critical") vira "high" em vez de sumir', () => {
+    expect(
+      normalizeSkillOverrides({ brag: { tier: 'critical', category: 'Vídeo e mídia' }, x: { tier: 'altíssima', category: 'Outras' } })
+    ).toEqual({ brag: { tier: 'high', category: 'Vídeo e mídia' } })
   })
 
   it('preenche campos ausentes e faz merge profundo dos grupos', () => {

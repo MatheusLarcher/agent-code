@@ -9,6 +9,8 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 // A LEITURA do veredito (`parsePoVerdict`, `rejectUnsafeOps`) mora em
 // poVerdict.ts, que importa daqui; por isso ela NÃO sai reexportada.
 import {
+  PO_ETAPA_RULES,
+  PO_ETAPA_SECTION,
   PO_ORPHAN_RULES,
   PO_ORPHAN_SECTION,
   PO_RESUMED_MARK,
@@ -19,6 +21,8 @@ import {
 import { formatPoGitEvidence, type PoGitEvidence } from './poGit'
 export {
   PO_AWAITING_AUTHORIZATION_REASON,
+  PO_ETAPA_RULES,
+  PO_ETAPA_SECTION,
   PO_MAX_OPS,
   PO_ORPHAN_RULES,
   PO_ORPHAN_SECTION,
@@ -27,6 +31,9 @@ export {
   PO_SYSTEM_PROMPT_CLOSE,
   PO_SYSTEM_PROMPT_OPEN
 } from './poPromptText'
+// Só o TIPO (apagado na compilação): poPrompt.ts continua sem importar código do acompanhamento.
+import type { PoEnvioEtapa } from '../handoffTracking/handoffOrphans'
+export type { PoEnvioEtapa } from '../handoffTracking/handoffOrphans'
 
 /**
  * As regras puras do PO — o agente que audita o quadro.
@@ -371,6 +378,46 @@ export function formatPoOrphanEtapas(orphans: readonly PoOrphanEtapa[]): string 
   return [PO_ORPHAN_SECTION, ...lines, PO_ORPHAN_RULES].join('\n')
 }
 
+/** Teto da seção do placar (`PoEnvioEtapa`, handoffOrphans.ts). Um prompt de
+ *  handoff raramente passa de uma dúzia de etapas; passando, entram as
+ *  primeiras do envio — a ordem do roteiro. */
+export const PO_MAX_ENVIO_ETAPAS = 12
+/** Teto de UMA linha do placar: `[id] título — placar — cartão — aceite —
+ *  verificar com`. O começo (id, título no corte do cartão, placar e cartão)
+ *  vai inteiro; o que sobra é repartido entre o aceite e o "verificar com",
+ *  para o segundo não sumir atrás de um aceite comprido. */
+export const PO_MAX_ETAPA_LINE_CHARS = 320
+
+const ENTREGA_LABEL: Record<PoEnvioEtapa['status'], string> = {
+  pendente: 'pendente',
+  em_andamento: 'em andamento',
+  concluida: 'concluída',
+  incompleta: 'incompleta'
+}
+const NOT_DECLARED = 'não declarado'
+
+/** Reparte `budget` entre dois textos: cada um tem direito à metade, e a sobra
+ *  do mais curto vai para o outro. */
+function share(a: string, b: string, budget: number): [string, string] {
+  const half = Math.floor(budget / 2)
+  return [clamp(a, Math.max(1, half, budget - b.length)), clamp(b, Math.max(1, budget - half, budget - a.length))]
+}
+
+/** A seção do placar, com a regra ETAPA CONCLUÍDA/PENDENTE junto (poPromptText.ts). */
+export function formatPoEnvioEtapas(etapas: readonly PoEnvioEtapa[]): string {
+  const lines = etapas.slice(0, PO_MAX_ENVIO_ETAPAS).map((etapa) => {
+    const card = etapa.card
+      ? `cartão ${etapa.card.id}: ${statusLabel(etapa.card.status)}${etapa.card.contested ? ', contestado pelo PO' : ''}`
+      : `cartão: nenhum (resolva na seção ${PO_ORPHAN_SECTION.replace(/:$/, '')})`
+    const head = `[${etapa.etapaId}] ${clamp(etapa.titulo, PO_MAX_TITLE_CHARS)} — placar: ${ENTREGA_LABEL[etapa.status]} — ${card} — aceite: `
+    const sep = ' — verificar com: '
+    const budget = PO_MAX_ETAPA_LINE_CHARS - head.length - sep.length
+    const [aceite, verificarCom] = share(etapa.aceite ?? NOT_DECLARED, etapa.verificarCom ?? NOT_DECLARED, budget)
+    return `${LIST_MARK}${clamp(`${head}${aceite}${sep}${verificarCom}`, PO_MAX_ETAPA_LINE_CHARS)}`
+  })
+  return [PO_ETAPA_SECTION, ...lines, PO_ETAPA_RULES].join('\n')
+}
+
 export function buildPoPrompt(
   input: Parameters<typeof buildPoDigest>[0] & {
     /** O git da pasta (poGit.ts). Fica DEPOIS do digest e com teto próprio
@@ -379,11 +426,16 @@ export function buildPoPrompt(
     /** Só no fechamento: as etapas do prompt sem cartão. Como o git, fica
      *  depois do digest e com teto próprio (PO_MAX_ORPHANS); vazia, a seção some. */
     orphans?: readonly PoOrphanEtapa[]
+    /** Só no fechamento: o placar do envio corrente (toda etapa, com cartão e
+     *  aceite). Como as órfãs: depois do digest, teto próprio
+     *  (PO_MAX_ENVIO_ETAPAS); vazio, a seção some e o prompt fica como era. */
+    envioEtapas?: readonly PoEnvioEtapa[]
   }
 ): string {
   const rules = input.phase === 'open' ? PO_SYSTEM_PROMPT_OPEN : PO_SYSTEM_PROMPT_CLOSE
   const close = (input.phase ?? 'close') === 'close'
+  const placar = close && input.envioEtapas?.length ? `\n\n${formatPoEnvioEtapas(input.envioEtapas)}` : ''
   const orphans = close && input.orphans?.length ? `\n\n${formatPoOrphanEtapas(input.orphans)}` : ''
   const git = input.git ? `\n\n${formatPoGitEvidence(input.git)}` : ''
-  return `${rules}\n\n---\n\n${buildPoDigest(input)}${orphans}${git}`
+  return `${rules}\n\n---\n\n${buildPoDigest(input)}${placar}${orphans}${git}`
 }

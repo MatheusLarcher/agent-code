@@ -17,7 +17,7 @@ interface Props {
   patchConfig: (patch: { skillCatalog: Partial<SkillCatalogConfig> }) => Promise<void>
 }
 
-const TIER_LABEL: Record<SkillTier, string> = { critical: 'Crítica', medium: 'Média', low: 'Baixa' }
+const TIER_LABEL: Record<SkillTier, string> = { low: 'Baixo', medium: 'Médio', high: 'Alto' }
 const fold = (s: string): string => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
 
 /**
@@ -70,8 +70,8 @@ export function SkillCatalogSection({ cfg, setCfg, patchConfig }: Props): JSX.El
           <span className="settings-switch-text">
             <strong>Catálogo de skills em níveis</strong>
             <span className="settings-desc">
-              Em vez de mandar todas as skills ao modelo em todo pedido: a crítica vai inteira no prompt, as médias como
-              hoje e as baixas só o nome, por categoria — o agente acha a baixa por uma busca e lê o SKILL.md. Liga
+              Em vez de mandar todas as skills ao modelo em todo pedido: as de nível alto vão inteiras no prompt, as de
+              nível médio como hoje e as de nível baixo só o nome, por categoria — o agente acha a de nível baixo por uma busca e lê o SKILL.md. Liga
               também as skills da curadoria do ECC. Desligado, tudo fica como antes. Vale para as conversas novas.
             </span>
           </span>
@@ -84,7 +84,7 @@ export function SkillCatalogSection({ cfg, setCfg, patchConfig }: Props): JSX.El
         <div className="settings-row">
           <span>
             <strong>Nível e categoria de cada skill</strong>
-            <span className="settings-desc">Skill nova entra como média até você classificar.</span>
+            <span className="settings-desc">Skill nova entra no nível médio até você classificar.</span>
           </span>
           <input className="settings-input" type="search" placeholder="Filtrar skills" value={filter} onChange={(e) => setFilter(e.target.value)} />
         </div>

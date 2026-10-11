@@ -47,6 +47,32 @@ prefixo [id] é o que liga o cartão à etapa:
 - Sem essa evidência, ou ela não foi feita: NOVA | [id] Título | <motivo>
 Estas linhas não contam no limite de operações.`
 
+/** O rótulo da seção do fechamento com o PLACAR do prompt deste turno: toda
+ *  etapa do envio, com o status que o usuário vê, o cartão que fala por ela e o
+ *  aceite dela (handoffOrphans.ts, `envioEtapasForPo`). */
+export const PO_ETAPA_SECTION = 'ETAPAS DO PROMPT DESTE TURNO (O PLACAR DO PLANO):'
+
+/** A regra que vai JUNTO com o placar, e só com ele: sem etapa no envio, o
+ *  prompt de fechamento fica exatamente como era. */
+export const PO_ETAPA_RULES = `Cada linha acima é uma etapa do prompt deste turno. O "placar" é o status REAL da etapa — o
+que o usuário acompanha; o "cartão [id]" é só o que o agente declarou. Confira CADA etapa contra
+o aceite dela usando as AÇÕES DESTE TURNO, a ÚLTIMA RESPOSTA DO AGENTE, o GIT DA PASTA e as
+TAREFAS DO REGISTRO, e responda uma linha por etapa que precise de correção:
+- ETAPA [id] | CONCLUÍDA | <evidência> — só quando o aceite foi atendido COM evidência (a resposta
+  relata o resultado, ou as ações mostram o "verificar com" rodando e passando) e o cartão ainda
+  NÃO está concluído. Isso conclui o cartão.
+- ETAPA [id] | PENDENTE | <o que falta> — só quando o cartão ESTÁ concluído mas a evidência diz que
+  a etapa NÃO foi feita: o agente diz que pulou, adiou, deixou pela metade ou não conseguiu, ou o
+  "verificar com" falhou e ninguém corrigiu. Isso devolve a etapa a não concluída, com esse motivo
+  visível ao usuário.
+- A etapa é o TRABALHO pedido, não o resultado dele: uma validação feita e relatada com resultado
+  negativo (teste reprovado, meta não atingida) é CONCLUÍDA — o resultado vai no motivo.
+- Não cite a etapa cujo cartão já diz a verdade. Sem evidência contra, o cartão do agente vale:
+  PENDENTE sem a declaração do agente ou sem verificação falhando é PROIBIDO; CONCLUÍDA sem
+  evidência também. Na dúvida, não cite.
+- Etapa com "cartão: nenhum" é resolvida na seção ETAPAS DO PROMPT SEM CARTÃO, não aqui.
+Estas linhas não contam no limite de operações.`
+
 export const PO_SYSTEM_PROMPT_OPEN = `Você é o PO (product owner) de um quadro de tarefas.
 
 O usuário ACABOU de pedir uma coisa e um agente de programação vai começar agora. Seu
@@ -234,4 +260,6 @@ Regras inegociáveis:
 - Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA", uma tarefa marcada [done] ali é
   evidência de conclusão tão válida quanto uma ação direta desta lista — use para CONCLUIR ou
   FEITA mesmo sem ver o arquivo sendo escrito nas AÇÕES DESTE TURNO.
+- Se houver a seção "${PO_ETAPA_SECTION}", ela tem regra própria, escrita logo abaixo dela
+  (ETAPA [id] | CONCLUÍDA/PENDENTE): o placar das etapas é conferido por ela, não pelas regras acima.
 - No máximo ${PO_MAX_OPS} operações. Sem texto fora das linhas de operação.`

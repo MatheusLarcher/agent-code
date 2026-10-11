@@ -1,0 +1,117 @@
+{
+  "task": "a1",
+  "side": "novo",
+  "round": 1,
+  "switches": {
+    "leituraGuiada": true,
+    "tiered": true
+  },
+  "manager": {
+    "model": "claude-opus-5-5",
+    "effort": "xhigh"
+  },
+  "timeoutMs": 3600000,
+  "startedAt": "2026-10-10T12:19:04.355Z",
+  "memoryBefore": {
+    "waitedMs": 0,
+    "free": 7.430110931396484
+  },
+  "config": {
+    "leituraGuiada": true,
+    "tiered": true,
+    "planning": {
+      "model": "claude-opus-5-5",
+      "effort": "xhigh"
+    }
+  },
+  "handoff": {
+    "prompts": 1,
+    "ms": 403548,
+    "nudges": 0,
+    "secs": 404
+  },
+  "implementationStarted": true,
+  "implementation": {
+    "status": "done",
+    "convId": "cmv2dbhx84rpv1",
+    "nudges": 0,
+    "ms": 1905591,
+    "workMs": 1843985,
+    "finalText": "Os dois estão rodando em segundo plano (testes do office3d + typecheck web, e as fotos das poses sentadas pelo harness); sigo quando terminarem.",
+    "model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "fastMode": false
+  },
+  "endedAt": "2026-10-10T12:58:42.387Z",
+  "diff": {
+    "files": 17,
+    "add": 465,
+    "del": 171,
+    "tests": [
+      "src/renderer/src/office3d/agentCast.test.ts",
+      "src/renderer/src/office3d/agentPoses.test.ts",
+      "src/renderer/src/office3d/destinations.test.ts",
+      "src/renderer/src/office3d/poses.test.ts",
+      "src/renderer/src/office3d/seatedPose.test.ts",
+      "src/renderer/src/office3d/seatedReach.test.ts"
+    ],
+    "outside": {
+      "stash": 0,
+      "worktrees": 0,
+      "branches": 1
+    }
+  },
+  "memoryBeforeEval": {
+    "waitedMs": 0,
+    "free": 8.411262512207031
+  },
+  "time": {
+    "firstEdit": {
+      "pedidos": 1,
+      "secsToFirstEdit": 318,
+      "callsToFirstEdit": 20,
+      "readsToFirstEdit": 30
+    },
+    "totals": {
+      "file": "6af9c011-3924-449c-bfb9-f0e8c20f3ad4.jsonl",
+      "subagents": 0,
+      "secsTotal": 1837,
+      "secsToFirstEditAny": 318,
+      "calls": 124,
+      "callsMain": 124,
+      "edits": 58,
+      "tools": {
+        "ToolSearch": 3,
+        "Read": 62,
+        "TaskCreate": 8,
+        "TaskUpdate": 11,
+        "PowerShell": 31,
+        "Grep": 29,
+        "mcp__entregas__entrega_estimar": 6,
+        "Write": 6,
+        "mcp__entregas__entrega_tempo": 5,
+        "TaskList": 1,
+        "Edit": 53,
+        "Glob": 1,
+        "Bash": 12
+      }
+    }
+  },
+  "autonomy": {
+    "turns": 1,
+    "handoffPrompts": 1,
+    "lateHandoffPrompts": 0,
+    "askUserQuestion": 0,
+    "expired7min": 0,
+    "turnsEndingInQuestion": 0,
+    "activeSecs": 1837,
+    "wallSecs": 1837,
+    "calls": 124,
+    "avgContextTokens": 116455,
+    "atencaoLines": 0,
+    "desvioLines": 0,
+    "firstAt": "2026-10-10T12:26:09.372Z",
+    "lastAt": "2026-10-10T12:56:46.871Z",
+    "firstRequest": "# Arquivos\n\nAbra TODOS os arquivos de \"Ler antes de começar\" numa única resposta, com as leituras em paralelo. Não reexplore o que a lista cobre; use Grep/Glob só para o que faltar. As linhas são pista: o código pode ter mudado desde o planejamento.\n\nCaminhos relativos à raiz do projeto `D:\\agent-co"
+  }
+}

@@ -2,6 +2,8 @@
 // Keep this file type-only so it can be imported from main, preload and renderer.
 import type { PlanMediaDto } from './planningMedia'
 import type { RemoteCentral } from './central'
+import type { HandoffEnvioStatus } from './handoffTracking'
+import type { StepState } from './stepProgress'
 
 /**
  * Identidade de turno: os `messageUuid` (o que o renderer passa ao `agent:send`) de
@@ -1394,24 +1396,23 @@ export const PO_MODELS = VIGIA_MODELS
  * valem só para handoffs e conversas novos (ver shared/handoffGuidance.ts).
  */
 export interface HandoffConfig {
-  /** Cada prompt exige plan → test → implement → review → verify → remember →
-   *  improve por etapa, e as skills do ciclo (kit .agents/skills-ciclo) ficam
-   *  disponíveis. Ligado por padrão: pedido explícito do usuário. */
-  ciclo: boolean
   /** Seção "Arquivos" no topo de cada prompt, leitura em lote e o Fast mode no
    *  envio. Desligado por padrão até o teste final aprovar. */
   leituraGuiada: boolean
 }
 
-/** Nível de uma skill no catálogo em níveis: `critical` vai inteira no prompt de
- *  sistema; `medium` como hoje (nome, descrição, caminho); `low` só o nome, por
- *  categoria, achada por skills_buscar/skills_listar. */
-export type SkillTier = 'critical' | 'medium' | 'low'
-export const SKILL_TIERS: readonly SkillTier[] = ['critical', 'medium', 'low']
+/** Nível de uma skill no catálogo em níveis (alto, médio, baixo): `high` vai
+ *  inteira no prompt de sistema; `medium` como hoje (nome, descrição, caminho);
+ *  `low` só o nome, por categoria, achada por skills_buscar/skills_listar. */
+export type SkillTier = 'high' | 'medium' | 'low'
+export const SKILL_TIERS: readonly SkillTier[] = ['low', 'medium', 'high']
 
-/** As categorias fixas do catálogo em níveis (decisão do usuário). */
+/** As categorias fixas do catálogo em níveis (decisão do usuário). "Outras" fica
+ *  só como último recurso de skill nova que nenhuma regra reconheceu. */
 export const SKILL_CATEGORIES = [
   'Planejamento e processo',
+  'IA e agentes',
+  'Git e DevOps',
   'Frontend',
   'Backend',
   'Banco de dados',
@@ -1420,9 +1421,14 @@ export const SKILL_CATEGORIES = [
   'Segurança',
   'Mobile',
   'Python',
+  'Redes e infraestrutura',
   'Vídeo e mídia',
+  'Modelagem 3D',
   'Documentos',
+  'Marketing e conteúdo',
   'Regras de negócio (ERP)',
+  'Ciência e saúde',
+  'Web3 e cripto',
   'Outras'
 ] as const
 export type SkillCategory = (typeof SKILL_CATEGORIES)[number]
@@ -2049,9 +2055,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   // que ele mais importa, e sem o PO ninguém fecha o cartão que o agente
   // esqueceu — as duas metades do que torna o quadro confiável.
   board: { requirePlan: true, po: { enabled: true, model: 'claude-sonnet-5-5' } },
-  // O ciclo é pedido do usuário e só aumenta o rigor; a leitura guiada espera o
-  // teste em tarefas reais antes de virar padrão.
-  handoff: { ciclo: false, leituraGuiada: false },
+  // A leitura guiada espera o teste em tarefas reais antes de virar padrão.
+  handoff: { leituraGuiada: false },
   // Desligado até o teste de acerto de skill (e o teste final) aprovarem.
   skillCatalog: { tiered: false, overrides: {} },
   // Desligado por padrão, ao contrário dos observadores acima: depende de um
@@ -2270,6 +2275,8 @@ export const Channels = {
   handoffQueueGate: 'handoff:queueGate',
   /** Fila do quadro: o despachante vai mandar ESTE envio (marcado pelo id). */
   handoffQueueDispatched: 'handoff:queueDispatched',
+  /** Fila do quadro: o despacho falhou no renderer depois da marca — o envio volta à fila (shared/handoffTracking.ts). */
+  handoffQueueUndispatch: 'handoff:queueUndispatch',
   /** Fila do quadro: os prompts que ainda não saíram, por pasta de projeto (faixa "Próximos prompts"). */
   handoffQueueList: 'handoff:queueList',
   /** Fila do projeto: a foto (planos por pasta, avaliação do PO, resposta guardada). */
@@ -2280,6 +2287,8 @@ export const Channels = {
   handoffProjectReply: 'handoff:projectReply',
   /** Main → renderer: a foto nova da fila do projeto. */
   handoffProjectChanged: 'handoff:projectChanged',
+  /** Main → renderer: aviso de handoff em tempo real (decisão sozinha, ATENÇÃO, fila) — handoffNotice.ts. */
+  handoffNotice: 'handoff:notice',
   /** Faixa "Próximos prompts": tirar da fila ou editar o texto de um prompt que não saiu. */
   handoffQueueEdit: 'handoff:queueEdit',
   /** Faixa: a ordem nova dos prompts que esperam num plano. */
@@ -2591,6 +2600,27 @@ export interface RemotePairedDevice {
   pairedAt: number
 }
 
+/**
+ * O PLACAR DAS ETAPAS DO PLANO de uma conversa de handoff, como o celular o
+ * mostra: o main lê do banco o acompanhamento das entregas e o roteiro
+ * (handoffTracking/handoffEtapasView.ts) e conta pela regra única de
+ * shared/stepProgress.planProgress — a numeração é a posição no plano.
+ */
+export interface RemoteEtapasProgress {
+  planSlug: string
+  planTitulo: string
+  /** "Prompt n de m": a posição do envio corrente da conversa no lote dele (envioPosition). */
+  prompt: { n: number; m: number }
+  envioStatus: HandoffEnvioStatus
+  total: number
+  prontas: number
+  incompletas: number
+  /** A posição (n) da etapa atual DESTA conversa; null sem ela (nada em andamento, ou tudo pronto). */
+  atual: number | null
+  /** Na ordem do plano. `motivo` só na trinca (entrega incompleta), cortado para caber na tela. */
+  steps: { id: string; titulo: string; n: number; state: StepState; motivo: string | null }[]
+}
+
 /** One conversation as mirrored to the phone (history + live status). The
  *  `messages` are the renderer's UIMessage objects, passed through as JSON. */
 export interface RemoteConversation {
@@ -2621,6 +2651,12 @@ export interface RemoteConversation {
   fastModeAvailable?: boolean
   /** The agent's live task plan (TodoWrite / TaskCreate), same shape the desktop card renders. */
   todoPlan?: { items: { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm: string }[]; active: boolean }
+  /** O placar do PLANO da conversa de handoff, lido do banco pelo MAIN (a tela não
+   *  o publica; a ponte o põe no `/api/state`): prontas/total das etapas do roteiro.
+   *  A lista de tarefas do agente (`todoPlan`) NUNCA é o contador — ela recomeça a
+   *  numeração a cada sessão nova (compactação, troca de provedor) e já mostrou
+   *  "10/25 etapas" num plano de 10 etapas todas concluídas no banco. */
+  etapas?: RemoteEtapasProgress
   /** Epoch ms since the running turn went silent (stall watchdog), if stalled. */
   stalledSince?: number
   /** Context/output/cost accounting shown in the desktop header. */

@@ -42,8 +42,15 @@ describe('regras compartilhadas do prazo (shared/handoffTracking)', () => {
 describe('deadlineView', () => {
   it('etapa atual, tempo ativo contra o prazo e a estimativa do agente, do banco', () => {
     const view = deadlineView({ envios: [running(12 * MIN)], error: null })
-    expect(view).toMatchObject({ level: 'ok', etapa: 'Etapa 1 de 2: Registro no banco', tempo: '12 de 30 min', agente: 'agente 20 min' })
+    expect(view).toMatchObject({
+      level: 'ok',
+      etapa: 'Etapa 1 de 2: Registro no banco',
+      placar: { prontas: 0, total: 2, incompletas: 0 },
+      tempo: '12 de 30 min',
+      agente: 'agente 20 min'
+    })
     expect(view?.title).toContain('Etapa atual: Etapa 1 de 2: Registro no banco [registro-no-banco] — em andamento.')
+    expect(view?.title).toContain('0 de 2 etapas prontas, 0 incompletas.')
     expect(view?.title).toContain('Prazo (estimativa do plano): 30 min.')
     expect(view?.title).toContain('Estimativa do agente: 20 min — dois backends.')
     expect(view?.title).toContain('Tempo ativo: 12 min (40% do prazo — dentro do prazo).')
@@ -60,9 +67,10 @@ describe('deadlineView', () => {
 
   it('estados neutros: carregando (nada), erro, sem envio, sem etapas, etapa sem estimativa do plano', () => {
     expect(deadlineView({ envios: null, error: null })).toBeNull()
-    expect(deadlineView({ envios: null, error: 'banco fora do ar' })).toMatchObject({ level: 'neutro', tempo: 'prazo indisponível' })
-    expect(deadlineView({ envios: [], error: null })).toMatchObject({ level: 'neutro', tempo: 'sem prazo', etapa: null })
-    expect(deadlineView({ envios: [envio({ entregas: [] })], error: null })).toMatchObject({ level: 'neutro', tempo: 'sem prazo' })
+    expect(deadlineView({ envios: null, error: 'banco fora do ar' })).toMatchObject({ level: 'neutro', tempo: 'prazo indisponível', placar: null })
+    // Sem envio: nem etapa nem placar.
+    expect(deadlineView({ envios: [], error: null })).toMatchObject({ level: 'neutro', tempo: 'sem prazo', etapa: null, placar: null })
+    expect(deadlineView({ envios: [envio({ entregas: [] })], error: null })).toMatchObject({ level: 'neutro', tempo: 'sem prazo', etapa: null, placar: null })
     const semPrazo = deadlineView({ envios: [running(7 * MIN, { estimativaPlano: null, estimativaAgente: null })], error: null })
     expect(semPrazo).toMatchObject({ level: 'neutro', tempo: '7 min · sem prazo', agente: 'agente: sem estimativa' })
   })
@@ -74,7 +82,13 @@ describe('deadlineView', () => {
       tempoAtivoMs: 26 * MIN,
       entregas: [entrega({ status: 'concluida', tempoAtivoMs: 26 * MIN })]
     })
-    expect(deadlineView({ envios: [done], error: null })).toMatchObject({ level: 'alerta', etapa: 'Etapas concluídas', tempo: '26 de 30 min', agente: null })
+    expect(deadlineView({ envios: [done], error: null })).toMatchObject({
+      level: 'alerta',
+      etapa: 'Etapas concluídas',
+      placar: { prontas: 1, total: 1, incompletas: 0 },
+      tempo: '26 de 30 min',
+      agente: null
+    })
   })
 
   describe('"Etapa N de M" é a posição no PLANO (planProgress/stepLabel), não no prompt', () => {
@@ -100,11 +114,13 @@ describe('deadlineView', () => {
 
     it('com os envios do plano no projeto (de qualquer conversa): a 1ª etapa deste prompt é a 3ª do plano', () => {
       const view = deadlineView({ envios: [parte2], error: null }, { envios: [parte1, parte2], roteiro: null })
-      expect(view).toMatchObject({ etapa: 'Etapa 3 de 4: Pix', tempo: '6 de 30 min' })
+      expect(view).toMatchObject({ etapa: 'Etapa 3 de 4: Pix', placar: { prontas: 2, total: 4, incompletas: 0 }, tempo: '6 de 30 min' })
     })
 
     it('com o roteiro: o total é o do plano (etapas ainda não enviadas contam)', () => {
-      expect(deadlineView({ envios: [parte2], error: null }, { envios: [parte1, parte2], roteiro })?.etapa).toBe('Etapa 3 de 5: Pix')
+      const view = deadlineView({ envios: [parte2], error: null }, { envios: [parte1, parte2], roteiro })
+      expect(view).toMatchObject({ etapa: 'Etapa 3 de 5: Pix', placar: { prontas: 2, total: 5, incompletas: 0 } })
+      expect(view?.title).toContain('2 de 5 etapas prontas, 0 incompletas.')
       // Os envios do plano ainda não chegaram: o roteiro já dá a posição.
       expect(deadlineView({ envios: [parte2], error: null }, { envios: null, roteiro })?.etapa).toBe('Etapa 3 de 5: Pix')
     })
@@ -117,6 +133,39 @@ describe('deadlineView', () => {
       const outro = envio({ id: 'x', planSlug: 'login', entregas: [entrega({ etapaId: 'x1' }), entrega({ etapaId: 'x2', ordem: 2 })] })
       const fora = envio({ id: 'y', projectCwd: 'D:/outro', entregas: [entrega({ etapaId: 'y1' })] })
       expect(deadlineView({ envios: [parte2], error: null }, { envios: [outro, fora, parte2], roteiro: null })?.etapa).toBe('Etapa 1 de 2: Pix')
+    })
+  })
+
+  describe('o placar do plano ("✓ N/M") sai da MESMA conta de planProgress que a etapa', () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `e${i + 1}`)
+    const roteiro = ids.map((id) => ({ id, titulo: id.toUpperCase() }))
+    // A parte 1 (e1..e5) saiu de outra conversa e está toda concluída; esta conversa faz a parte 2 (e6..e10).
+    const parte1 = envio({
+      id: 'he-0', conversationId: 'conv-0', status: 'concluida', loteId: 'hl-0', criadoEm: '2026-10-05T11:00:00.000Z', enviadoEm: '2026-10-05T11:00:00.000Z',
+      entregas: ids.slice(0, 5).map((id, i) => entrega({ etapaId: id, etapaTitulo: id.toUpperCase(), ordem: i + 1, status: 'concluida' }))
+    })
+    const parte2 = (ultima: 'concluida' | 'incompleta'): ReturnType<typeof envio> =>
+      envio({
+        status: ultima,
+        entregas: ids.slice(5).map((id, i) =>
+          entrega({ etapaId: id, etapaTitulo: id.toUpperCase(), ordem: i + 1, status: i === 4 ? ultima : 'concluida', tempoAtivoMs: 8 * MIN })
+        )
+      })
+
+    it('9 prontas de 10 com 1 incompleta: placar {9, 10, 1} e a linha no title', () => {
+      const view = deadlineView({ envios: [parte2('incompleta')], error: null }, { envios: [parte1], roteiro })
+      expect(view).toMatchObject({ etapa: 'Etapa 10 de 10: E10', placar: { prontas: 9, total: 10, incompletas: 1 } })
+      expect(view?.title).toContain('9 de 10 etapas prontas, 1 incompleta.')
+    })
+
+    it('o caso do celular: plano de 10 etapas concluídas é 10/10 (as entregas do banco, não a lista de tarefas do agente)', () => {
+      const view = deadlineView({ envios: [parte2('concluida')], error: null }, { envios: [parte1], roteiro })
+      expect(view).toMatchObject({ etapa: 'Etapas concluídas', placar: { prontas: 10, total: 10, incompletas: 0 } })
+      expect(view?.title).toContain('10 de 10 etapas prontas, 0 incompletas.')
+    })
+
+    it('sem o roteiro e sem os envios do projeto: só os desta conversa contam', () => {
+      expect(deadlineView({ envios: [parte2('incompleta')], error: null })?.placar).toEqual({ prontas: 4, total: 5, incompletas: 1 })
     })
   })
 })

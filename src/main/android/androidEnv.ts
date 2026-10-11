@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { mkdir, readdir, readFile, rename, rm, stat, access } from 'node:fs/promises'
 import { Readable } from 'node:stream'
@@ -224,11 +224,29 @@ export async function detect(): Promise<DetectResult> {
   }
 }
 
-/** Run a tool, streaming each stdout/stderr line to onLine; resolves with the exit code. */
+/** Exit code spawnTool reports when `timeoutMs` elapsed and the process was killed. */
+export const TIMEOUT_EXIT_CODE = -2
+
+/** Kill a child and everything it spawned (gradlew.bat → cmd → java on Windows). */
+function killTree(child: ChildProcess): void {
+  if (child.pid == null) return
+  if (WIN) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => undefined)
+  else {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Run a tool, streaming each stdout/stderr line to onLine; resolves with the exit code.
+ *  With `timeoutMs`, a process still running after that long is killed (whole tree) and the
+ *  call resolves with TIMEOUT_EXIT_CODE instead of hanging the agent's turn forever. */
 export function spawnTool(
   cmd: string,
   args: string[],
-  opts: { env?: NodeJS.ProcessEnv; cwd?: string; onLine?: Progress; input?: string } = {}
+  opts: { env?: NodeJS.ProcessEnv; cwd?: string; onLine?: Progress; input?: string; timeoutMs?: number } = {}
 ): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
@@ -238,6 +256,12 @@ export function spawnTool(
       shell: WIN && /\.bat$/i.test(cmd)
     })
     let out = ''
+    let timer: NodeJS.Timeout | null = null
+    const done = (code: number): void => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      resolve({ code, out })
+    }
     const onData = (buf: Buffer): void => {
       const s = buf.toString()
       out += s
@@ -249,11 +273,18 @@ export function spawnTool(
       child.stdin.write(opts.input)
       child.stdin.end()
     }
+    if (opts.timeoutMs && opts.timeoutMs > 0) {
+      timer = setTimeout(() => {
+        out += `\n[tempo esgotado após ${Math.round(opts.timeoutMs! / 60000)} min; processo encerrado]`
+        killTree(child)
+        done(TIMEOUT_EXIT_CODE)
+      }, opts.timeoutMs)
+    }
     child.on('error', (err) => {
       out += String(err)
-      resolve({ code: -1, out })
+      done(-1)
     })
-    child.on('close', (code) => resolve({ code: code ?? -1, out }))
+    child.on('close', (code) => done(code ?? -1))
   })
 }
 

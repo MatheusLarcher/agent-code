@@ -1,0 +1,32 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 1 | sem edição: 1 | edição delegada a executor: 0
+handoff: 1 pedidos | p50 318s, 20 chamadas, 30 Read, 27 arquivos, 6 buscas, 21335 tokens de saída
+pedido comum: 0 pedidos | p50 0s, 0 chamadas, 0 Read, 0 arquivos, 0 buscas, 0 tokens de saída
+  H claude-opus-5-5 @ xhigh            1 pedidos (1 handoff) | p50 318s, 20 chamadas, 21335 tokens saída, 10.0 s/chamada
+segundos de modelo por chamada: p50 10.0 | p90 10.0
+
+métrica (até o 1º Edit)      p50        p75        p90        máx
+secs                              318        318        318        318
+calls                              20         20         20         20
+model                             200        200        200        200
+toolSecs                          118        118        118        118
+agentSecs                           0          0          0          0
+reads                              30         30         30         30
+grep                                6          6          6          6
+glob                                0          0          0          0
+bash                                0          0          0          0
+agents                              0          0          0          0
+files                              27         27         27         27
+ctxFirst                        65765      65765      65765      65765
+ctxAtEdit                       76178      76178      76178      76178
+tokensSum                     2133062    2133062    2133062    2133062
+outTokens                       21335      21335      21335      21335
+thinkingChars                     638        638        638        638
+
+chamadas ao modelo com UMA ferramenta só (leitura em série): 11/20 (55%)
+tempo até o 1º Edit: modelo 63% | ferramentas 37% (inclui espera de permissão e subagentes)
+
+por projeto: projeto | pedidos com edição | p50 segs | p50 chamadas | p50 Reads
+  D--agent-code-replay-a1-agent-code          1      318       20       30
+
+15 mais lentos até o 1º Edit:
+  2026-10-10T12:26 D--agent-code-replay-a   318s  20 chamadas  30 Read   6 busca  0 subag.     0s em subag. | # Arquivos Abra TODOS os arquivos de "Ler antes de começar" numa única resposta, com as le

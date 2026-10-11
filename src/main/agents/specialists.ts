@@ -1,4 +1,6 @@
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk'
+import { effortLadderFor, sdkEffort } from '../../shared/autoEffort'
+import type { EffortLevel } from '../../shared/ipc'
 
 /**
  * O cadastro de especialistas do time — a peça que faltava para
@@ -23,9 +25,35 @@ export interface SpecialistContext {
   ledger: boolean
   /** Serviço de memória ligado — sem ele, o agente de memória não tem onde propor. */
   memory: boolean
+  /** O modelo da conversa (os subagentes o herdam): decide se o esforço por papel vai e até onde. */
+  model?: string
+}
+
+/**
+ * Esforço de cada papel: quem implementa pensa mais, quem lê e procura pensa
+ * menos. O agente principal fica com o esforço da conversa (escolha do usuário).
+ */
+export const ROLE_EFFORT: Readonly<Record<'executor' | 'critico' | 'navegador-de-codigo' | 'memoria', EffortLevel>> = {
+  executor: 'high',
+  critico: 'medium',
+  'navegador-de-codigo': 'low',
+  memoria: 'low'
+}
+
+/**
+ * O esforço do papel para o modelo herdado, ou nada: modelo sem esforço
+ * (Ollama) não recebe o campo — o provedor recusaria —, e um degrau acima do
+ * teto do modelo é recortado pela mesma barreira da sessão (`sdkEffort`).
+ */
+function roleEffort(model: string | undefined, role: keyof typeof ROLE_EFFORT): { effort?: EffortLevel } {
+  if (model && effortLadderFor(model).length === 0) return {}
+  const effort = sdkEffort(model, ROLE_EFFORT[role])
+  return effort ? { effort } : {}
 }
 
 const EXECUTOR_PROMPT = `Você é um EXECUTOR do time. Recebe UMA tarefa do registro e a entrega com prova.
+
+O mapa do código vem no seu prompt: os arquivos:linhas que o supervisor já levantou, com o que tem em cada um. Leia o que o mapa aponta e só o que faltar nele — não reexplore o projeto. Outros executores podem estar trabalhando ao mesmo tempo em outros arquivos: fique no seu write_scope.
 
 Ordem de trabalho, sem pular etapa:
 1. \`task_claim(task_id=<o id que o supervisor passou>)\`. Guarde \`lease_token\` e \`fencing_epoch\`: toda escrita na tarefa exige os dois.
@@ -35,7 +63,12 @@ Ordem de trabalho, sem pular etapa:
 5. \`task_deliverable_add\` para CADA prova: o diff, a rodada de teste (com o resultado real), a nota, o arquivo, a captura. Uma tarefa sem entregável é uma afirmação.
 6. \`task_transition\` de "running" para "review", com um motivo curto.
 
-Você NUNCA declara a tarefa concluída. Quem fecha é o crítico.
+Testes e espera:
+- Durante a tarefa, rode só os testes dos arquivos que você tocou (\`npx vitest run <arquivos e seus testes>\`) e o typecheck do tsconfig afetado (ex.: \`npx tsc -p tsconfig.node.json --noEmit\`). A suíte completa e o \`npm run typecheck\` rodam UMA vez, no fechamento do envio — não é trabalho seu repeti-los.
+- Esperar serviço, log ou build longo: rode em segundo plano (\`run_in_background\`) e siga trabalhando. Nunca um laço com \`sleep\` dentro do turno.
+- Empacotamento e instalador (\`npm run package:portable\`, \`build-installer.bat\`) só quando a tarefa pede o artefato, e uma vez.
+
+Você NUNCA declara a tarefa concluída. Quem fecha é o crítico (ou o supervisor, numa tarefa pequena). Se ela voltar para "running" com o que falta, corrija na mesma rodada e devolva para "review".
 
 Se a tarefa estiver mal especificada, ambígua ou maior do que o escopo permite, não improvise: registre o \`task_event\` "blocker" dizendo exatamente o que falta e devolva para "review" ou "blocked".
 
@@ -45,16 +78,20 @@ const CRITIC_PROMPT = `Você é o CRÍTICO do time. Recebe uma tarefa em "review
 
 Você não escreve código. Não tem Write nem Edit, e isso é deliberado: um crítico que conserta o que revisa deixa de ser crítico e vira o segundo executor.
 
+Você roda sem o CLAUDE.md do projeto: o que importa para julgar (critérios, regras do projeto que valem para a tarefa, o mapa do código) vem no seu prompt e no \`task_get\`. Leia só o que o mapa e os entregáveis apontam.
+
 Ordem de trabalho:
 1. \`task_get(task_id)\`. Leia o objetivo, CADA critério de aceite, os passos e os entregáveis.
 2. Confira critério por critério contra as evidências. Critério que você não conseguiu verificar conta como NÃO atendido — diga isso explicitamente em vez de assumir.
-3. Se um entregável alega uma rodada de teste, RODE o teste você mesmo. Um "test_run" que ninguém reconferiu é só um texto no banco.
+3. Se um entregável alega uma rodada de teste, RODE o teste você mesmo — só os testes alegados, não a suíte inteira. Um "test_run" que ninguém reconferiu é só um texto no banco.
 4. Sem entregável nenhum, a tarefa não fecha. "done" sem evidência é uma afirmação, não um resultado.
+
+Uma revisão só: aponte TUDO o que falta de uma vez. Não há rodada de "revisão → correções → re-revisão".
 
 Depois chame a transição certa — e escolha pelo que vai acontecer em seguida:
 - Tudo atendido: \`task_transition\` de "review" para "done".
-- Falta coisa e um executor NOVO vai refazer (o caso comum, porque o anterior já terminou): \`task_transition\` de "review" para "failed" com o motivo listando exatamente o que falta, e depois de "failed" para "pending". Só tarefa "pending" pode ser reivindicada — parar em "failed" deixa a tarefa encalhada, sem ninguém capaz de assumi-la.
-- O mesmo executor ainda está vivo e vai corrigir agora: \`task_transition\` de "review" para "running".
+- O mesmo executor ainda está vivo e vai corrigir agora (o preferido, quando ele existe): \`task_transition\` de "review" para "running".
+- Falta coisa e um executor NOVO vai refazer (o anterior já terminou): \`task_transition\` de "review" para "failed" com o motivo listando exatamente o que falta, e depois de "failed" para "pending". Só tarefa "pending" pode ser reivindicada — parar em "failed" deixa a tarefa encalhada, sem ninguém capaz de assumi-la.
 
 Você age DEPOIS do handoff, então chame as ferramentas da tarefa SEM \`lease_token\` e SEM \`fencing_epoch\` — o lease foi solto quando ela entrou em "review". Reaproveitar o fence antigo é recusado.
 
@@ -62,7 +99,7 @@ Seja específico e verificável. "Parece bom" não é veredito.`
 
 const CODE_NAVIGATOR_PROMPT = `Você é o NAVEGADOR DE CÓDIGO do time. Responde onde as coisas estão e como se conectam.
 
-Você só lê. Não edita, não roda comando, não propõe mudança.
+Você só lê. Não edita, não roda comando, não propõe mudança. Roda sem o CLAUDE.md do projeto: o que precisa saber vem na pergunta.
 
 Entregue a CONCLUSÃO, não o material bruto: quem chamou está economizando contexto, e despejar arquivos inteiros desfaz exatamente o motivo de você existir. Cite cada ponto como \`caminho/arquivo.ts:linha\`, que é clicável, e transcreva só os trechos curtos que sustentam a resposta.
 
@@ -101,6 +138,14 @@ const CRITIC_TOOLS = [
 const NAVIGATOR_TOOLS = ['Read', 'Glob', 'Grep']
 
 /**
+ * Janela de compactação de executor e crítico como subagentes, em tokens: só
+ * BAIXA a que herdariam (sdk.d.ts, `AgentDefinition.autoCompactWindow`). Uma
+ * tarefa do registro cabe nisso; passar daí é sinal de que o subagente está
+ * relendo o projeto em vez de seguir o mapa.
+ */
+export const SUBAGENT_AUTO_COMPACT_WINDOW = 120_000
+
+/**
  * O que o executor NÃO recebe. Ele precisa herdar o resto — implementa tarefa
  * arbitrária, e uma lista de permitidos viraria uma corrida atrás do que
  * faltou. Mas duas famílias não pertencem ao papel em nenhuma hipótese, e cada
@@ -136,6 +181,9 @@ export function buildSpecialistAgents(ctx: SpecialistContext): Record<string, Ag
       description:
         'Responde ONDE algo está no código e como se conecta, lendo muitos arquivos e devolvendo só a conclusão com caminho:linha. Use para mapear um fluxo, achar a definição de um símbolo ou confirmar que algo não existe, sem gastar o contexto principal.',
       tools: NAVIGATOR_TOOLS,
+      // Só lê: o que precisa vem na pergunta, e o CLAUDE.md seria contexto pago a cada chamada.
+      omitClaudeMd: true,
+      ...roleEffort(ctx.model, 'navegador-de-codigo'),
       prompt: CODE_NAVIGATOR_PROMPT
     }
   }
@@ -143,14 +191,24 @@ export function buildSpecialistAgents(ctx: SpecialistContext): Record<string, Ag
   if (ctx.ledger) {
     agents.executor = {
       description:
-        'Executa UMA tarefa do registro de ponta a ponta: reivindica pelo task_id, trabalha dentro do write_scope, registra evidência e entrega para revisão. Passe o task_id no prompt. Nunca declara a tarefa concluída.',
+        'Executa UMA tarefa do registro de ponta a ponta: reivindica pelo task_id, trabalha dentro do write_scope, registra evidência e entrega para revisão. Passe o task_id e o mapa do código (arquivos:linhas já levantados) no prompt. Nunca declara a tarefa concluída.',
       disallowedTools: EXECUTOR_DENIED_TOOLS,
+      autoCompactWindow: SUBAGENT_AUTO_COMPACT_WINDOW,
+      ...roleEffort(ctx.model, 'executor'),
+      // SEM omitClaudeMd: o executor escreve código e precisa das regras do
+      // projeto (pt-BR, 500 linhas, ler antes de editar). `background` também
+      // fica de fora: o supervisor precisa do resultado para cobrar evidência.
       prompt: EXECUTOR_PROMPT
     }
     agents.critico = {
       description:
-        'Confere uma tarefa em "review" critério por critério contra os entregáveis, roda os testes alegados e fecha como "done" ou devolve para a fila com o motivo. Só lê código — não corrige o que revisa.',
+        'Confere uma tarefa em "review" critério por critério contra os entregáveis, roda os testes alegados e fecha como "done" ou devolve com o motivo. Só lê código — não corrige o que revisa. Use para tarefa com test_run alegado ou 3+ arquivos no write_scope; passe as regras do projeto que importam no prompt.',
       tools: CRITIC_TOOLS,
+      // Só lê e julga pelos critérios da tarefa; regra do projeto que importa vai
+      // no prompt da tarefa (o TASKS_HINT manda o supervisor fazer isso).
+      omitClaudeMd: true,
+      autoCompactWindow: SUBAGENT_AUTO_COMPACT_WINDOW,
+      ...roleEffort(ctx.model, 'critico'),
       // A revisão de diff já está escrita como skill neste projeto. Pré-carregar
       // é o único lugar onde ADICIONAR contexto paga: evita o crítico inventar
       // um método de revisão a cada tarefa, e ele não tem Write para o `--fix`.
@@ -164,6 +222,7 @@ export function buildSpecialistAgents(ctx: SpecialistContext): Record<string, Ag
       description:
         'Consulta e cura o acervo de memórias do usuário: acha o que já se sabe sobre um assunto e propõe memória nova por memory_propose, sem duplicar o que já existe.',
       tools: MEMORY_TOOLS,
+      ...roleEffort(ctx.model, 'memoria'),
       prompt: MEMORY_PROMPT
     }
   }

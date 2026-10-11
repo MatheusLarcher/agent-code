@@ -30,6 +30,12 @@
   color: var(--text);
   text-overflow: ellipsis;
 }
+/* O placar do plano ("✓ 3/5"), logo depois da etapa: discreto, e nunca espremido
+   (só a etapa encolhe). */
+.deadline-placar {
+  flex: none;
+  color: var(--muted);
+}
 .deadline-tempo,
 .deadline-agente {
   flex: none;

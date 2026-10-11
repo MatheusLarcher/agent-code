@@ -109,14 +109,27 @@ export const isTestFile = (file) => /\.test\.(ts|tsx|mjs|js)$/.test(file) || /(^
  * do usuário (lidos com `git show`, só leitura). Sem `files`: todos os que o commit
  * mudou — o pai + isso é exatamente a árvore da referência. Apagados no commit somem.
  */
+/**
+ * O que a referência mudou: um commit (`git show`) ou uma faixa `pai..ponta` (`git diff`),
+ * quando a entrega original foi mais de um commit seguido. O conteúdo vem sempre da ponta.
+ */
+function referenceChanges(repo, ref) {
+  const [base, tip] = String(ref).includes('..') ? String(ref).split('..') : [null, ref]
+  const args = base ? ['diff', '--name-status', base, tip] : ['show', '--name-status', '--format=', tip]
+  return {
+    tip,
+    changes: git(repo, args)
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => l.split('\t'))
+      .map(([status, a, b]) => ({ status: status[0], file: b ?? a, old: status[0] === 'R' ? a : null }))
+  }
+}
+
 export function applyCommitFiles(repo, dir, ref, files = null) {
   assertReplayWorktree(dir)
-  const changes = git(repo, ['show', '--name-status', '--format=', ref])
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => l.split('\t'))
-    .map(([status, a, b]) => ({ status: status[0], file: b ?? a, old: status[0] === 'R' ? a : null }))
-    .filter((c) => !files || files.includes(c.file))
+  const { tip, changes: all } = referenceChanges(repo, ref)
+  const changes = all.filter((c) => !files || files.includes(c.file))
   for (const c of changes) {
     const target = path.join(dir, c.file)
     if (c.old) rmSync(path.join(dir, c.old), { force: true })
@@ -125,15 +138,14 @@ export function applyCommitFiles(repo, dir, ref, files = null) {
       continue
     }
     mkdirSync(path.dirname(target), { recursive: true })
-    writeFileSync(target, execFileSync('git', ['-C', repo, 'show', `${ref}:${c.file}`], { maxBuffer: 512 * 1024 * 1024 }))
+    writeFileSync(target, execFileSync('git', ['-C', repo, 'show', `${tip}:${c.file}`], { maxBuffer: 512 * 1024 * 1024 }))
   }
   return changes.length
 }
 
-/** Arquivos de teste (e apoio de teste) do commit de referência. */
+/** Arquivos de teste (e apoio de teste) do commit (ou da faixa `pai..ponta`) de referência. */
 export function referenceTestFiles(repo, hash) {
-  return git(repo, ['show', '--name-only', '--format=', hash])
-    .split('\n')
-    .map((f) => f.trim())
+  return referenceChanges(repo, hash)
+    .changes.map((c) => c.file.trim())
     .filter((f) => f && isTestFile(f))
 }

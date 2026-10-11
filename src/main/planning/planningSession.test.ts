@@ -231,6 +231,57 @@ describe('handoffAppendBlock', () => {
     expect(block).toMatch(/não substituem as do usuário/)
   })
 
+  it('autonomia: decide pelos cards, DESVIO DO PLANO, nunca termina em pergunta (sem "pergunte antes de desviar")', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain('procure a resposta nos cards')
+    expect(block).toMatch(/decida|decisão/)
+    expect(block).toContain('DESVIO DO PLANO')
+    expect(block).toContain('Nunca termine o turno com pergunta')
+    expect(block).toContain('Pergunte (AskUserQuestion) só para ação destrutiva')
+    expect(block).not.toContain('pergunte antes de desviar')
+  })
+
+  it('avaliação contínua (a)-(e): git status/diff + OUTRAS_CONVERSAS → "ATENÇÃO: ", DESVIO, autocheck de 3 linhas, Atenções, nada é pergunta', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain('`git status --short` e `git diff --stat`')
+    expect(block).toContain('OUTRAS_CONVERSAS')
+    expect(block).toContain('"ATENÇÃO: "')
+    expect(block).toContain('"DESVIO DO PLANO: "')
+    expect(block).toContain('"Pode quebrar: …", "Não testei: …", "Olhe isto: …"')
+    expect(block).toContain('seção "Atenções"')
+    expect(block).toContain('Nada disso é pergunta')
+  })
+
+  it('política padrão não entra no bloco; política diferente entra com o texto do card', () => {
+    const padrao = handoffAppendBlock({ cwd, handoff: { slug } }, { perguntas: 'nenhuma', permissoes: 'tudo_exceto_destrutivo' }) ?? ''
+    expect(padrao).not.toContain('Autonomia deste plano')
+    const lista = handoffAppendBlock({ cwd, handoff: { slug } }, { perguntas: { lista: ['migração'] }, permissoes: 'como_hoje' }) ?? ''
+    expect(lista).toContain('Autonomia deste plano')
+    expect(lista).toContain('- migração')
+  })
+
+  it('ferramentas: testes dos tocados, suíte completa uma vez no fechamento, espera em background, empacotar só quando pedido', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain('só os arquivos que ela tocou e os testes deles (`npx vitest run <arquivos>`)')
+    expect(block).toContain('`npx tsc -p tsconfig.node.json --noEmit`')
+    expect(block).toContain('Suíte completa e `npm run typecheck` UMA vez, no fechamento do envio')
+    expect(block).toContain('(`run_in_background`)')
+    expect(block).toContain('nunca um laço com `sleep` dentro do turno')
+    expect(block).toContain('só quando o plano pede o artefato, e uma vez')
+  })
+
+  it('contexto: resumo de 5 linhas ao fechar cada item (antes do autocheck) e não reler resultado antigo', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain('resumo de 5 linhas da etapa')
+    expect(block).toContain('logo depois, o autocheck de 3 linhas')
+    expect(block).toContain('Não releia resultados antigos de ferramenta')
+  })
+
+  it('golden do bloco do handoff (caminhos normalizados)', async () => {
+    const block = (handoffAppendBlock({ cwd, handoff: { slug } }) ?? '').split(cwd).join('<cwd>').replace(/\\/g, '/')
+    await expect(block).toMatchFileSnapshot('./__golden__/handoff-block.txt')
+  })
+
   it('sessão normal e a do Agent Manager: null (nada muda no prompt delas)', () => {
     expect(handoffAppendBlock({ cwd })).toBeNull()
     expect(handoffAppendBlock({ cwd, planning: { slug } })).toBeNull()

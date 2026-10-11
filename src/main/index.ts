@@ -103,6 +103,7 @@ import type { RemoteSearchResult } from '../shared/remoteSearch'
 import { devDataDir } from './devDataDir'
 import { installDevHooks } from './devHooks'
 import { createConversationWriteQueue, registerConversationQueueIpc } from './persistence/writeQueue/conversationQueueSetup'
+import { parseConversationChanges } from './persistence/writeQueue/conversationChange'
 import { CENTRAL_ID } from '../shared/central'
 import { ConversationLeaseKeeper } from './persistence/leaseKeeper'
 import { DownloadAllowlist, downloadablesFromMessages } from './downloadAllowlist'
@@ -117,6 +118,8 @@ import { createProjectQueue } from './handoffTracking/projectQueueBoot'
 import { holdQueued, nextQueuedPrompt } from './handoffTracking/handoffQueueEdit'
 import { createPoAuthorizations } from './po/poAuthorizationBoot'
 import { HandoffTracker } from './handoffTracking/handoffTracker'
+import { HandoffEtapasCache } from './handoffTracking/handoffEtapasView'
+import { onHandoffNotice } from './handoffTracking/handoffNotices'
 import { startHandoffSweep } from './handoffTracking/handoffSweep'
 import { exportFlowPdf } from './planning/flowPdfExport'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
@@ -504,6 +507,7 @@ const po = new Po({
   // (handoffTracking/handoffOrphans.ts). Referência preguiçosa: o acompanhamento
   // é declarado abaixo, e isto só roda no fim de um turno.
   orphanEtapas: (convId) => handoffTracker.orphanEtapas(convId),
+  envioEtapas: (convId) => handoffTracker.envioEtapas(convId), // e confere o placar do envio (toda etapa) contra a evidência
   diagnose: (diagnostic) => send(Channels.poProviderDiagnostic, {
     ...diagnostic,
     id: randomUUID(),
@@ -534,6 +538,19 @@ const poCommitWatch = new PoCommitWatch({
   bootFolders: async () => (await storageLifecycle.repository().countConversationsByProject()).map((entry) => entry.cwd)
 })
 
+// O placar das etapas do plano para o celular (handoffTracking/handoffEtapasView.ts):
+// lido do banco (só leitura, como as ferramentas entrega_*) e guardado até a
+// próxima escrita do acompanhamento; o `/api/state` o lê sem esperar o banco.
+const etapasCache = new HandoffEtapasCache({
+  repository: () => {
+    try {
+      return storageLifecycle.repository()
+    } catch {
+      return null
+    }
+  }
+})
+
 // O acompanhamento dos envios de handoff (handoffTracking/): só conversas com
 // `opts.handoff`; observa turnos, perguntas e o Quadro e grava status e tempo.
 const handoffTracker = new HandoffTracker({
@@ -542,6 +559,8 @@ const handoffTracker = new HandoffTracker({
   poEnabled: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.enabled,
   onChanged: (conversationId) => {
     send(Channels.handoffChanged, { conversationId })
+    // O placar do celular relê o banco na próxima leitura do estado.
+    etapasCache.invalidate(conversationId)
     // A fila do projeto revê a pasta (um plano terminou → a vez é do próximo).
     projectQueue.changed(conversationId)
     // A autorização "desta fila" acaba quando a fila da implantação esvazia.
@@ -558,12 +577,17 @@ const projectQueue = createProjectQueue({
     (await storageLifecycle.repository().loadConversations({ ids: [id], includeDeleted: true }).catch(() => []))[0]?.payload ?? null,
   poModel: () => (loadConfig().board ?? DEFAULT_CONFIG.board).po.model,
   notify: (conversationId) => send(Channels.handoffChanged, { conversationId }),
-  publish: (snapshot) => send(Channels.handoffProjectChanged, snapshot)
+  publish: (snapshot) => send(Channels.handoffProjectChanged, snapshot),
+  // "Rodando" na fila do projeto exige sinal de vida: o turno vivo neste processo
+  // ou atividade recente — o status gravado sozinho não segura mais ninguém.
+  turnRunning: (conversationId) => handoffTracker.isTurnRunning(conversationId),
+  lastActivityMs: (conversationId) => handoffTracker.lastActivityMs(conversationId)
 })
 
 /** Uma escrita fora do acompanhamento (faixa, SEGURAR do PO): a tela relê e a fila do projeto revê a pasta. */
 function notifyHandoffChanged(conversationId: string): void {
   send(Channels.handoffChanged, { conversationId })
+  etapasCache.invalidate(conversationId)
   projectQueue.changed(conversationId)
   void poAuthorizations.expire(conversationId).catch(() => undefined)
 }
@@ -1219,6 +1243,9 @@ const remote = new RemoteServer({
   officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
   // `projectColors` no /api/state: só as cores já resolvidas; o resto é detectado em segundo plano.
   projectColors: (cwds) => projectColors.peek(cwds),
+  // `etapas` no /api/state: o placar do plano da conversa de handoff, do cache do main
+  // (a lista de tarefas do agente nunca é o contador).
+  etapasOf: (convId) => etapasCache.get(convId),
   // As mensagens para o celular saem daqui, não da tela: o instantâneo da fila de
   // gravação (o mais novo) e, para a conversa que não passou por ela, o banco.
   messageSource: {
@@ -1847,6 +1874,12 @@ export function registerIpc(): void {
     return conversationQueue.overlay(records, query)
   })
   registerConversationQueueIpc(ipcMain, conversationQueue)
+  // A conversa apagada (a tela manda a mudança `deleted` pela mesma fila): os
+  // envios de handoff abertos dela param e o plano sai da fila do projeto — o
+  // despachante exige a conversa existir, e o plano ficaria "rodando" para sempre.
+  ipcMain.on(Channels.conversationsSync, (_event, raw) => {
+    for (const change of parseConversationChanges(raw)) if (change.deleted) handoffTracker.conversationDeleted(change.id)
+  })
   ipcMain.handle(Channels.conversationsCountByProject, () =>
     storageLifecycle.repository().countConversationsByProject()
   )
@@ -3016,6 +3049,12 @@ app.whenReady().then(async () => {
   // Fora do registerIpc (que os testes chamam sem Electron): protocolo exige o app pronto.
   officeMockup = setupOfficeMockup({ handle: (channel, handler) => ipcMain.handle(channel, handler) })
   setupOfficeCalls()
+  // Avisos de handoff em tempo real (decisão sozinha, ATENÇÃO, fila): toast no
+  // app e, pela ponte, no celular pareado (handoffTracking/handoffNotices.ts).
+  onHandoffNotice((notice) => {
+    send(Channels.handoffNotice, notice)
+    remote.handoffNotices.notice(notice)
+  })
   // ChatGPT plan usage read off the Codex proxy responses. Account-level, so it
   // is not tied to any conversation: the renderer routes `rate-limit` events
   // straight into its global usage state without looking at `convId`.

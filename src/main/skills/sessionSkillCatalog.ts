@@ -34,8 +34,8 @@ export interface SkillCatalogStart {
   roots: string[]
   /** Valor de `Options.skills`: 'all' com o catálogo em níveis desligado. */
   sdkSkills: 'all' | string[]
-  /** Críticas inteiras para o system prompt ('' sem nenhuma) e o aviso de teto. */
-  critical: { text: string; warning: string | null }
+  /** As de nível alto inteiras para o system prompt ('' sem nenhuma) e o aviso de teto. */
+  high: { text: string; warning: string | null }
   /** Servidor `skills` (busca e listagem), só no modo em níveis. */
   mcpServer?: ReturnType<typeof createSkillsMcpServer>
 }
@@ -97,7 +97,7 @@ export class SessionSkillCatalog {
     return {
       roots: [...new Set(snapshot.skills.map((skill) => skill.root))],
       sdkSkills: this.policy.sdkSkills(snapshot.skills),
-      critical: this.policy.systemBlock(snapshot.skills),
+      high: this.policy.systemBlock(snapshot.skills),
       ...(this.policy.tiered
         ? { mcpServer: createSkillsMcpServer(() => resolveSkillTiers(this.discovered, catalogConfig.overrides)) }
         : {})
@@ -141,7 +141,7 @@ export class SessionSkillCatalog {
 
     const discovered = this.readSnapshot()
     this.discovered = discovered.skills
-    // Em níveis, o nativo só confirma críticas + médias; o catálogo anunciado é o dos níveis.
+    // Em níveis, o nativo só confirma os níveis alto + médio; o catálogo anunciado é o dos níveis.
     const snapshot = this.policy.tiered
       ? createSkillCatalogSnapshot(this.policy.nativeExpected(discovered.skills))
       : discovered

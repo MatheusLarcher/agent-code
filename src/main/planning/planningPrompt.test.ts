@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { HANDOFF_CYCLE_RULE, HANDOFF_FILES_RULE } from '../../shared/handoffGuidance'
+import { HANDOFF_FILES_RULE } from '../../shared/handoffGuidance'
 import { planningSandboxDir } from './planningPolicy'
 import { buildPlanningHint, PLANNING_CONTENT_IS_DATA } from './planningPrompt'
 import { PLANNING_TOOL_NAMES } from './planningTools'
@@ -130,24 +130,27 @@ describe('buildPlanningHint', () => {
   })
 
   it('interruptores desligados = sem eles (o golden da seção está em planningPrompt.golden.test.ts)', () => {
-    const off = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: false, leituraGuiada: false } })
+    const off = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { leituraGuiada: false } })
     expect(off).toBe(hint)
   })
 
-  it('ciclo ligado: a seção ### Handoff exige o mesmo ciclo do pedido de handoff', () => {
-    const on = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: true, leituraGuiada: false } })
-    const section = on.slice(on.indexOf('### Handoff'))
-    expect(section).toContain(HANDOFF_CYCLE_RULE)
-    // Só a seção de handoff muda.
-    expect(on.slice(0, on.indexOf('### Handoff'))).toBe(hint.slice(0, hint.indexOf('### Handoff')))
-    expect(section).not.toContain(HANDOFF_FILES_RULE)
+  it('o ciclo saiu: config antiga com ciclo ligado não muda a seção; o formato por etapa e o card de autonomia estão nela', () => {
+    const antigo = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: true, leituraGuiada: false } as never })
+    expect(antigo).toBe(hint)
+    const section = hint.slice(hint.indexOf('### Handoff'))
+    expect(section).not.toMatch(/Ciclo obrigatório|7 fases/)
+    expect(section).toContain('"Aceite:"')
+    expect(section).toContain('"Verificar com:"')
+    expect(section).toContain('"Decidido:"')
+    expect(section).toContain('`decisao-autonomia-handoff`')
+    expect(section).toContain('"ATENÇÃO: "')
   })
 
   it('leitura guiada ligada: a seção ### Handoff exige a mesma seção Arquivos do pedido', () => {
-    const on = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { ciclo: false, leituraGuiada: true } })
+    const on = buildPlanningHint({ slug: 'checkout', planDir, sandboxDir, guidance: { leituraGuiada: true } })
     const section = on.slice(on.indexOf('### Handoff'))
     expect(section).toContain(HANDOFF_FILES_RULE)
-    expect(section).not.toContain(HANDOFF_CYCLE_RULE)
+    expect(on.slice(0, on.indexOf('### Handoff'))).toBe(hint.slice(0, hint.indexOf('### Handoff')))
   })
 
   it('recusa slug inválido', () => {

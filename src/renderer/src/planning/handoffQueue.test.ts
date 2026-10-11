@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { HandoffQueueDecision } from '@shared/handoffTracking'
 import type { Conversation } from '../types'
-import { createHandoffQueueDispatcher, useHandoffQueue, type HandoffQueueDeps } from './handoffQueue'
+import { createHandoffQueueDispatcher, DISPATCH_FAILED_HOLD, useHandoffQueue, type HandoffQueueDeps } from './handoffQueue'
 import { launchHandoff } from './handoffFlow'
 
 /**
@@ -90,6 +90,63 @@ describe('createHandoffQueueDispatcher', () => {
     await dispatcher.check('c1')
     expect(api.handoffQueueGate).not.toHaveBeenCalled()
     expect(deps.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('o dispatch do App falhou depois da marca: o main devolve o envio à fila (undispatch) e a conferência não manda', async () => {
+    const undispatch = vi.fn(async () => ({ ok: true as const, undone: true }))
+    const { deps, api, dispatcher } = setup({
+      dispatch: vi.fn(async () => {
+        throw new Error('sessão não subiu')
+      })
+    })
+    ;(api as typeof api & { handoffQueueUndispatch: typeof undispatch }).handoffQueueUndispatch = undispatch
+    await dispatcher.check('c1')
+    expect(deps.dispatch).toHaveBeenCalledTimes(1)
+    expect(undispatch).toHaveBeenCalledWith({ conversationId: 'c1', envioId: 'env-2' })
+    // Sem o canal (versão antiga do preload): o despachante segue sem lançar.
+    delete (api as Partial<typeof api & { handoffQueueUndispatch: unknown }>).handoffQueueUndispatch
+    await expect(dispatcher.sendAnyway('c1')).resolves.toBe(false)
+  })
+
+  it('o dispatch do App devolveu `false` (ele engole a falha na bolha "Falha ao enviar"): o envio volta à fila do mesmo jeito', async () => {
+    const undispatch = vi.fn(async () => ({ ok: true as const, undone: true }))
+    const { deps, api, dispatcher } = setup({ dispatch: vi.fn(async () => false) })
+    ;(api as typeof api & { handoffQueueUndispatch: typeof undispatch }).handoffQueueUndispatch = undispatch
+    await dispatcher.check('c1')
+    expect(deps.dispatch).toHaveBeenCalledTimes(1)
+    expect(undispatch).toHaveBeenCalledWith({ conversationId: 'c1', envioId: 'env-2' })
+  })
+
+  it('o dispatch do App entregou (`true` ou nada): o envio fica despachado — nada de desfazer', async () => {
+    const undispatch = vi.fn(async () => ({ ok: true as const, undone: true }))
+    for (const dispatch of [vi.fn(async () => true), vi.fn(async () => undefined)]) {
+      const { api, dispatcher } = setup({ dispatch })
+      ;(api as typeof api & { handoffQueueUndispatch: typeof undispatch }).handoffQueueUndispatch = undispatch
+      await dispatcher.check('c1')
+      expect(dispatch).toHaveBeenCalledTimes(1)
+    }
+    expect(undispatch).not.toHaveBeenCalled()
+  })
+
+  it('depois de uma falha o despachante não reenvia sozinho (o desfazer dispara handoff:changed → check): segura com o motivo; "Enviar mesmo assim" manda', async () => {
+    const undispatch = vi.fn(async () => ({ ok: true as const, undone: true }))
+    const dispatch = vi.fn(async () => false)
+    const { deps, api, dispatcher } = setup({ dispatch })
+    ;(api as typeof api & { handoffQueueUndispatch: typeof undispatch }).handoffQueueUndispatch = undispatch
+    await dispatcher.check('c1')
+    expect(undispatch).toHaveBeenCalledTimes(1)
+    // O main devolveu o envio à fila e avisou: a conferência seguinte o veria como "next" de novo.
+    await dispatcher.check('c1')
+    await dispatcher.check('c1')
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(api.handoffQueueDispatched).toHaveBeenCalledTimes(1)
+    expect(deps.onHold).toHaveBeenLastCalledWith('c1', DISPATCH_FAILED_HOLD)
+    // O usuário mandou: sai de novo; entregue, a trava some.
+    dispatch.mockResolvedValueOnce(true)
+    expect(await dispatcher.sendAnyway('c1')).toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    await dispatcher.check('c1')
+    expect(dispatch).toHaveBeenCalledTimes(3)
   })
 
   it('outra conferência mandou antes (dispatched: false): não manda de novo', async () => {

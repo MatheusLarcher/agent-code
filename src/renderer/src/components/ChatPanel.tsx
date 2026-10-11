@@ -14,6 +14,8 @@ import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import { CrewChip } from './CrewChip'
+import { ChatAgentActivity } from './ChatAgentActivity'
+import type { TrackMap } from '../agentTracks'
 import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
@@ -28,6 +30,7 @@ import { useChatDisplay } from './chatDisplay'
 import { useQuoteComments } from './quoteComment/useQuoteComments'
 import { CentralBackButton } from '../central/CentralBackButton'
 import { ChatOpacityControl } from './ChatOpacityControl'
+import { ChatContextDetails } from './ChatContextDetails'
 
 /** Live elapsed time of the running task; when idle, the last task's duration. `totalMs`: o somado dos turnos já terminados. */
 function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: number | null; totalMs: number | null }): JSX.Element | null {
@@ -210,6 +213,8 @@ interface Props {
   crewWorking?: CrewMember[]
   /** Abre o painel de agentes (o chip é só o atalho pra ele). */
   onOpenAgents?: () => void
+  /** Trilhas dos subagentes desta conversa (só em memória) — os cartões acima do composer. */
+  agentTracks?: TrackMap
   backgroundTasks?: BackgroundTask[]
   queuedAfterInterrupt?: QueuedAfterInterrupt[]
   /** When the active conversation's task started (ms epoch), or null if idle. */
@@ -331,6 +336,7 @@ function ContextBar({ context, model }: { context: number; model: string }): JSX
 export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
   const { compact, hideWindowsBanner, hideLastUsage, usageMini, onComposerHasText } = useChatDisplay()
   // "Comentar" num bloco da resposta: "[trecho N]" inline no cursor do campo de mensagem.
@@ -375,6 +381,9 @@ export function ChatPanel(props: Props): JSX.Element {
               </button>
             </div>
           )}
+          <button type="button" className="chat-context-toggle" aria-label="Detalhar contexto recebido" aria-expanded={contextOpen} onClick={() => setContextOpen((v) => !v)}>
+            Contexto <IconChevronDown size={13} />
+          </button>
           <ChatOpacityControl />
         </div>
       )}
@@ -384,6 +393,8 @@ export function ChatPanel(props: Props): JSX.Element {
           <CentralBackButton onBack={props.onBackToCentral} />
         </div>
       )}
+
+      {!compact && contextOpen && <ChatContextDetails convId={props.convId} messages={messages} />}
 
       {!compact && tokenPanelOpen && (
         <div className="token-meter-panel">
@@ -429,6 +440,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       <MessageList
         key={`message-list:${props.convId ?? 'none'}`}
+        convId={props.convId}
         messages={messages}
         scrollToId={props.scrollToId}
         scrollSeq={props.scrollSeq}
@@ -470,6 +482,7 @@ export function ChatPanel(props: Props): JSX.Element {
           Some sozinho quando ninguém trabalha.
           Substitui a antiga linha "N subagentes trabalhando": mesma informação,
           com o papel de cada um, e sem duas faixas dizendo o mesmo. */}
+      {!compact && <ChatAgentActivity tracks={props.agentTracks} />}
       <CrewChip working={props.crewWorking ?? []} onOpen={() => props.onOpenAgents?.()} />
 
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />

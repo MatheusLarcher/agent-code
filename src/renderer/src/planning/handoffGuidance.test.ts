@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { HANDOFF_CYCLE_RULE, HANDOFF_FILES_RULE } from '@shared/handoffGuidance'
+import { HANDOFF_FILES_RULE } from '@shared/handoffGuidance'
 import { managerHandoffRequest } from './handoffFlow'
 
 /**
- * O texto de hoje do pedido de handoff ao Agent Manager, gravado ANTES dos
- * interruptores "Ciclo completo nos handoffs" e "Leitura guiada": com os dois
- * desligados, o pedido tem que continuar idêntico a estes arquivos.
+ * O texto de hoje do pedido de handoff ao Agent Manager, gravado ANTES do
+ * interruptor "Leitura guiada": com ele desligado, o pedido tem que continuar
+ * idêntico a estes arquivos. (O interruptor do ciclo saiu do app em 10/10.)
  */
 const DIR = 'D:\\dados\\agent-code\\planning\\app\\checkout'
 const CASES = [
@@ -14,7 +14,7 @@ const CASES = [
   { name: 'sem-ambiguidade-com-midia', amb: 0, media: 3 },
   { name: 'uma-ambiguidade-uma-midia', amb: 1, media: 1 }
 ] as const
-const OFF = { ciclo: false, leituraGuiada: false }
+const OFF = { leituraGuiada: false }
 
 describe('managerHandoffRequest — golden (interruptores desligados = texto de hoje)', () => {
   for (const c of CASES) {
@@ -25,58 +25,8 @@ describe('managerHandoffRequest — golden (interruptores desligados = texto de 
   }
 })
 
-describe('managerHandoffRequest — ciclo completo ligado', () => {
-  const text = managerHandoffRequest(DIR, 0, 0, { ciclo: true, leituraGuiada: false })
-
-  it('exige as 7 fases por etapa, na ordem', () => {
-    expect(text).toContain(HANDOFF_CYCLE_RULE)
-    const phases = ['plan', 'test', 'implement', 'review', 'verify', 'remember', 'improve'].map((p) => text.indexOf(`${p} —`))
-    expect(phases.every((i) => i > 0)).toBe(true)
-    expect([...phases].sort((a, b) => a - b)).toEqual(phases)
-    expect(text).toMatch(/CADA etapa/)
-  })
-
-  it('cita a skill de cada fase', () => {
-    for (const skill of [
-      'executing-plans',
-      'subagent-driven-development',
-      'test-driven-development',
-      'tdd-workflow',
-      'code-review',
-      'requesting-code-review',
-      'verification-before-completion',
-      'verification-loop',
-      'memory_propose',
-      'agent-self-evaluation'
-    ]) {
-      expect(text, skill).toContain(skill)
-    }
-  })
-
-  it('exige o mapa RED/GREEN, a declaração do teste pulado e as "Melhorias sugeridas" (só sugestão)', () => {
-    expect(text).toMatch(/etapa → teste → prova RED → prova GREEN/)
-    expect(text).toMatch(/teste pulado[^.]*"bug que já existia"[^.]*com o motivo/)
-    expect(text).toMatch(/"Melhorias sugeridas"/)
-    expect(text).toMatch(/só sugerir/)
-    expect(text).toMatch(/precisão, completude, clareza, ação e concisão/)
-  })
-
-  it('Quadro: um item por etapa, fase no activeForm; e a regra proporcional da etapa trivial', () => {
-    expect(text).toMatch(/um item por etapa/)
-    expect(text).toMatch(/activeForm/)
-    expect(text).toMatch(/nunca um item por fase/)
-    expect(text).toMatch(/etapa trivial[^.]*pode juntar test e verify, dizendo por quê/)
-  })
-
-  it('o resto do pedido continua igual: só acrescenta o ciclo', () => {
-    const base = managerHandoffRequest(DIR, 0, 0)
-    expect(text.replace(`\n\n${HANDOFF_CYCLE_RULE}`, '')).toBe(base)
-    expect(text).not.toContain(HANDOFF_FILES_RULE)
-  })
-})
-
 describe('managerHandoffRequest — leitura guiada ligada (seção Arquivos)', () => {
-  const text = managerHandoffRequest(DIR, 0, 0, { ciclo: false, leituraGuiada: true })
+  const text = managerHandoffRequest(DIR, 0, 0, { leituraGuiada: true })
 
   it('exige a seção "Arquivos" no TOPO de cada prompt, com as duas listas', () => {
     expect(text).toContain(HANDOFF_FILES_RULE)
@@ -98,10 +48,9 @@ describe('managerHandoffRequest — leitura guiada ligada (seção Arquivos)', (
     expect(HANDOFF_FILES_RULE).toMatch(/pasta do plano continua, como consulta pontual/)
   })
 
-  it('sem ciclo: o resto do pedido é o de hoje; com os dois, a seção Arquivos vem antes do ciclo', () => {
+  it('o resto do pedido é o de hoje; config antiga com o ciclo ligado não acrescenta nada', () => {
     expect(text.replace(`\n\n${HANDOFF_FILES_RULE}`, '')).toBe(managerHandoffRequest(DIR, 0, 0))
-    const both = managerHandoffRequest(DIR, 0, 0, { ciclo: true, leituraGuiada: true })
-    expect(both.indexOf(HANDOFF_FILES_RULE)).toBeGreaterThan(0)
-    expect(both.indexOf(HANDOFF_FILES_RULE)).toBeLessThan(both.indexOf(HANDOFF_CYCLE_RULE))
+    expect(managerHandoffRequest(DIR, 0, 0, { ciclo: true, leituraGuiada: true } as never)).toBe(text)
+    expect(text).not.toMatch(/Ciclo obrigatório|7 fases/)
   })
 })

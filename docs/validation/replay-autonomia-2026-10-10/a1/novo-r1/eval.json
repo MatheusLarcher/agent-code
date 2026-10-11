@@ -1,0 +1,58 @@
+{
+  "typecheck": {
+    "ok": true,
+    "errors": 0,
+    "ms": 10390,
+    "tail": ""
+  },
+  "suite": {
+    "total": 6419,
+    "failedTotal": 3,
+    "newFailures": [],
+    "flakyOnlyUnderLoad": [
+      "src/renderer/src/ui/VoiceComponentInstall.test.tsx > VoiceComponentInstall (Configurações › Voz) erro na instalação aparece e libera nova tentativa"
+    ],
+    "missingFromParent": [
+      "src/renderer/src/office3d/agentPoses.test.ts > poses com as medidas do modelo (BodyMetrics) na cadeira, a bacia fica na altura do assento (não flutua nem afunda); a ponta do pé fica a poucos cm do chão",
+      "src/renderer/src/office3d/seatedPose.test.ts > pose sentada da estação a pose: quadril sobre o assento, joelhos sob o tampo, pés no chão dentro da base de rodinhas, costas junto do encosto"
+    ],
+    "ms": 357773
+  },
+  "reference": {
+    "total": 36,
+    "passed": 31,
+    "failed": [
+      {
+        "id": "src/renderer/src/office3d/agentCast.test.ts > (arquivo não carregou)",
+        "message": "Failed to resolve import \"./testGlb\" from \"src/renderer/src/office3d/agentCast.test.ts\". Does the file exist?"
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)"
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)"
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)"
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)"
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo",
+        "message": "t-code/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20\n    at new Promise (<anonymous>)\n    at runWithCancel (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)\n    at file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///D:/agent-code-replay/a1/agent-code/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)"
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedReach.test.ts > (arquivo não carregou)",
+        "message": "Failed to resolve import \"./testGlb\" from \"src/renderer/src/office3d/seatedReach.test.ts\". Does the file exist?"
+      }
+    ],
+    "crashed": false,
+    "ms": 20856
+  },
+  "corePass": true
+}

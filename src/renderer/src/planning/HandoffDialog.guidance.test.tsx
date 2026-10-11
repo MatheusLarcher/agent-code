@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { HANDOFF_CYCLE_RULE, HANDOFF_FILES_RULE } from '@shared/handoffGuidance'
+import { HANDOFF_FILES_RULE } from '@shared/handoffGuidance'
 import { clearHandoffSession, managerHandoffRequest } from './handoffFlow'
 import { button, dialog, loaded, renderDialog } from './handoffDialogTestUtils'
 import { CWD, SLUG, makePlan, mockPlanningApi } from './planningTestUtils'
@@ -25,29 +25,28 @@ afterEach(() => {
 })
 
 describe('HandoffDialog — interruptores do handoff no pedido ao Agent Manager', () => {
-  it('ciclo ligado: o pedido exige o ciclo', async () => {
+  it('config antiga com o ciclo ligado: o ciclo saiu, nada de 7 fases no pedido', async () => {
     withConfig({ ciclo: true, leituraGuiada: false })
-    expect(await askManager()).toContain(HANDOFF_CYCLE_RULE)
-  })
-
-  it('leitura guiada ligada: o pedido exige a seção Arquivos', async () => {
-    withConfig({ ciclo: false, leituraGuiada: true })
-    const text = await askManager()
-    expect(text).toContain(HANDOFF_FILES_RULE)
-    expect(text).not.toContain(HANDOFF_CYCLE_RULE)
-  })
-
-  it('tudo desligado: o pedido de hoje, sem acréscimo', async () => {
-    withConfig({ ciclo: false, leituraGuiada: false })
     expect(await askManager()).toBe(managerHandoffRequest(makePlan().dir, 0, 0))
   })
 
-  it('config ilegível: vale o padrão (tudo desligado — o replay e o A/B mostraram piora com o ciclo)', async () => {
+  it('leitura guiada ligada: o pedido exige a seção Arquivos', async () => {
+    withConfig({ leituraGuiada: true })
+    const text = await askManager()
+    expect(text).toContain(HANDOFF_FILES_RULE)
+  })
+
+  it('tudo desligado: o pedido de hoje, sem acréscimo', async () => {
+    withConfig({ leituraGuiada: false })
+    expect(await askManager()).toBe(managerHandoffRequest(makePlan().dir, 0, 0))
+  })
+
+  it('config ilegível: vale o padrão (tudo desligado)', async () => {
     const m = mockPlanningApi()
     ;(m.api as Record<string, unknown>).getConfig = vi.fn(async () => {
       throw new Error('canal fechado')
     })
-    expect(await askManager()).not.toContain(HANDOFF_CYCLE_RULE)
+    expect(await askManager()).toBe(managerHandoffRequest(makePlan().dir, 0, 0))
   })
 })
 
@@ -56,7 +55,7 @@ describe('HandoffDialog — Fast mode no envio (só com "Leitura guiada")', () =
     const m = mockPlanningApi()
     m.addHandoff('# pronto')
     ;(m.api as Record<string, unknown>).getConfig = vi.fn(async () => ({
-      handoff: { ciclo: true, leituraGuiada },
+      handoff: { leituraGuiada },
       planning: { model, effort: 'max' }
     }))
     return m

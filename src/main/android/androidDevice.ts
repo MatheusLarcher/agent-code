@@ -10,6 +10,12 @@ export interface DeviceFrame {
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/** Every adb call gets a deadline: when the emulator dies or freezes mid-command, adb never
+ *  returns on its own, and a tool call that never returns stalls the agent's whole turn. */
+const ADB_TIMEOUT_MS = 20_000
+/** Installing a 100–300 MB APK on the emulator takes seconds, on a phone over USB minutes. */
+const INSTALL_TIMEOUT_MS = 10 * 60_000
+
 /** Read width/height from a PNG buffer's IHDR chunk (bytes 16..24, big-endian). */
 function pngSize(buf: Buffer): { width: number; height: number } | null {
   if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return null
@@ -54,7 +60,7 @@ export class AndroidDevice {
     this.env = d.env
     this.adb = d.adb
 
-    await spawnTool(this.adb, ['start-server'], { env: this.env })
+    await this.adbRun(['start-server'], 60_000)
     const existing = await this.onlineDevices()
     if (existing.length > 0) {
       this.serial = existing[0]
@@ -64,16 +70,21 @@ export class AndroidDevice {
     }
 
     onProgress('Aguardando o Android terminar de iniciar…')
-    await spawnTool(this.adb, ['-s', this.serial, 'wait-for-device'], { env: this.env })
+    await this.adbRun(['-s', this.serial, 'wait-for-device'], 180_000)
     await this.waitBootComplete()
     this.model = (await this.prop('ro.product.model')) || this.serial
     await this.refreshSize()
     onProgress(`Android pronto: ${this.model} (${this.serial}).`)
   }
 
+  /** adb with the toolchain env and a deadline (see ADB_TIMEOUT_MS). */
+  private adbRun(args: string[], timeoutMs = ADB_TIMEOUT_MS): ReturnType<typeof spawnTool> {
+    return spawnTool(this.adb, args, { env: this.env, timeoutMs })
+  }
+
   /** Serials currently in "device" state (excludes "offline"/"unauthorized"). */
   private async onlineDevices(): Promise<string[]> {
-    const r = await spawnTool(this.adb, ['devices'], { env: this.env })
+    const r = await this.adbRun(['devices'])
     return r.out
       .split(/\r?\n/)
       .slice(1)
@@ -90,17 +101,29 @@ export class AndroidDevice {
     const before = new Set(await this.onlineDevices())
     this.emulatorProc = spawn(
       d.emulator,
-      // -no-window: we only ever read the screen via `adb exec-out screencap` (see
-      // DeviceFrame/streaming above) — the emulator's own GUI window is unused, and
-      // without this flag it shows up as its own icon in the Windows taskbar.
       [
         '-avd',
         DEFAULT_AVD,
         '-no-snapshot',
         '-no-boot-anim',
+        // -no-window: we only ever read the screen via `adb exec-out screencap` (see
+        // DeviceFrame/streaming above) — the emulator's own GUI window is unused, and
+        // without this flag it shows up as its own icon in the Windows taskbar.
         '-no-window',
+        // -gpu host: render on the real GPU. Under -no-window, `auto` resolves to the software
+        // renderer (swiftshader), which for a Mapbox-class app burned ~10 cores, grew qemu to
+        // 6–22 GB until Windows ran out of virtual memory, and could not even link the map's
+        // shaders (black map). `angle_indirect` no longer exists in emulator 36.
         '-gpu',
-        'auto',
+        'host',
+        // Host Vulkan off: apps use GLES, and the NVIDIA GL/Vulkan driver crashed qemu once
+        // while an app was being torn down (nvoglv64.dll, 0xc0000409).
+        '-feature',
+        '-Vulkan',
+        // Emulator 36 ignores hw.ramSize from config.ini; with the 2.5 GB it picks, Android 14
+        // keeps ~700 MB in zram swap and the app under test stutters. 4 GB keeps it off swap.
+        '-memory',
+        '4096',
         '-netdelay',
         'none',
         '-netspeed',
@@ -120,7 +143,9 @@ export class AndroidDevice {
         return
       }
       if (this.emulatorProc?.exitCode != null) {
-        throw new Error('O emulador encerrou ao iniciar (verifique a virtualização/WHPX no Windows).')
+        throw new Error(
+          'O emulador encerrou ao iniciar (verifique a virtualização/WHPX no Windows e o driver de vídeo da GPU).'
+        )
       }
     }
     throw new Error('Tempo esgotado aguardando o emulador aparecer no adb.')
@@ -134,35 +159,60 @@ export class AndroidDevice {
   }
 
   private async prop(name: string): Promise<string> {
-    const r = await spawnTool(this.adb, ['-s', this.serial, 'shell', 'getprop', name], { env: this.env })
+    const r = await this.adbRun(['-s', this.serial, 'shell', 'getprop', name])
     return r.out.trim()
   }
 
   private async refreshSize(): Promise<void> {
-    const r = await spawnTool(this.adb, ['-s', this.serial, 'shell', 'wm', 'size'], { env: this.env })
+    const r = await this.adbRun(['-s', this.serial, 'shell', 'wm', 'size'])
     const m = r.out.match(/(\d+)x(\d+)/)
     if (m) this.lastSize = { width: Number(m[1]), height: Number(m[2]) }
   }
 
   // ---- streaming ----
 
-  /** Run an adb command and collect its raw binary stdout. */
-  private capture(args: string[]): Promise<Buffer> {
+  /** Run an adb command and collect its raw binary stdout. Killed (and rejected) after
+   *  `timeoutMs`: adb hangs forever when the emulator dies mid-transfer. */
+  private capture(args: string[], timeoutMs = 15_000): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const child = spawn(this.adb, ['-s', this.serial, ...args], { env: this.env })
       const chunks: Buffer[] = []
+      const timer = setTimeout(() => {
+        child.kill()
+        reject(new Error(`adb ${args.join(' ')} não respondeu em ${timeoutMs / 1000}s`))
+      }, timeoutMs)
       child.stdout.on('data', (c: Buffer) => chunks.push(c))
-      child.on('error', reject)
-      child.on('close', () => resolve(Buffer.concat(chunks)))
+      child.on('error', (e) => {
+        clearTimeout(timer)
+        reject(e)
+      })
+      child.on('close', () => {
+        clearTimeout(timer)
+        resolve(Buffer.concat(chunks))
+      })
     })
   }
 
-  /** Begin pushing frames (~6 fps) to onFrame until stop() is called. */
-  startStreaming(onFrame: (f: DeviceFrame) => void): void {
+  /** Shortest gap between two frames while someone is watching (a 1080×2400 `screencap -p`
+   *  costs the device ~250 ms of one core, so ~2 fps is the most it can afford). */
+  static readonly FRAME_INTERVAL_MS = 500
+  /** How often an unwatched stream re-checks whether it is being watched again. */
+  static readonly IDLE_INTERVAL_MS = 1000
+
+  /** Begin pushing frames to onFrame until stop() is called — at most ~2 fps, and only while
+   *  `isWatched()` is true. Without that gate an Android tab left open in a background
+   *  conversation kept the device encoding PNGs forever (half a core, measured), slowing
+   *  every app under test and every screenshot the agent took. */
+  startStreaming(onFrame: (f: DeviceFrame) => void, isWatched: () => boolean = () => true): void {
     if (this.streaming) return
     this.streaming = true
     void (async () => {
       while (this.streaming) {
+        if (!isWatched()) {
+          await delay(AndroidDevice.IDLE_INTERVAL_MS)
+          continue
+        }
+        const started = Date.now()
         try {
           const png = await this.capture(['exec-out', 'screencap', '-p'])
           const size = pngSize(png)
@@ -177,7 +227,8 @@ export class AndroidDevice {
         } catch {
           /* device busy / transient */
         }
-        await delay(150)
+        const rest = AndroidDevice.FRAME_INTERVAL_MS - (Date.now() - started)
+        await delay(rest > 50 ? rest : 50)
       }
     })()
   }
@@ -198,17 +249,24 @@ export class AndroidDevice {
 
   async tap(nx: number, ny: number): Promise<void> {
     const [x, y] = this.px(nx, ny)
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'input', 'tap', String(x), String(y)], { env: this.env })
+    await this.adbRun(['-s', this.serial, 'shell', 'input', 'tap', String(x), String(y)])
   }
 
   async swipe(nx1: number, ny1: number, nx2: number, ny2: number, ms = 200): Promise<void> {
     const [x1, y1] = this.px(nx1, ny1)
     const [x2, y2] = this.px(nx2, ny2)
-    await spawnTool(
-      this.adb,
-      ['-s', this.serial, 'shell', 'input', 'swipe', String(x1), String(y1), String(x2), String(y2), String(ms)],
-      { env: this.env }
-    )
+    await this.adbRun([
+      '-s',
+      this.serial,
+      'shell',
+      'input',
+      'swipe',
+      String(x1),
+      String(y1),
+      String(x2),
+      String(y2),
+      String(ms)
+    ])
   }
 
   /** Vertical wheel scroll: translate a wheel delta into a swipe gesture. */
@@ -220,27 +278,27 @@ export class AndroidDevice {
   async typeText(text: string): Promise<void> {
     // adb's `input text` uses %s for spaces; pass as a single literal arg (shell:false).
     const escaped = text.replace(/ /g, '%s')
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'input', 'text', escaped], { env: this.env })
+    await this.adbRun(['-s', this.serial, 'shell', 'input', 'text', escaped])
   }
 
   async key(keycode: string): Promise<void> {
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'input', 'keyevent', keycode], { env: this.env })
+    await this.adbRun(['-s', this.serial, 'shell', 'input', 'keyevent', keycode])
   }
 
   /** Override the device resolution (and density) so the preview shows a chosen
    *  model's screen size. screencap then returns this size, so taps stay aligned. */
   async setScreenSize(width: number, height: number, dpi?: number): Promise<void> {
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'wm', 'size', `${width}x${height}`], { env: this.env })
+    await this.adbRun(['-s', this.serial, 'shell', 'wm', 'size', `${width}x${height}`])
     if (dpi && dpi > 0) {
-      await spawnTool(this.adb, ['-s', this.serial, 'shell', 'wm', 'density', String(dpi)], { env: this.env })
+      await this.adbRun(['-s', this.serial, 'shell', 'wm', 'density', String(dpi)])
     }
     this.lastSize = { width, height }
   }
 
   /** Restore the device's native resolution/density. */
   async resetScreenSize(): Promise<void> {
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'wm', 'size', 'reset'], { env: this.env }).catch(() => undefined)
-    await spawnTool(this.adb, ['-s', this.serial, 'shell', 'wm', 'density', 'reset'], { env: this.env }).catch(() => undefined)
+    await this.adbRun(['-s', this.serial, 'shell', 'wm', 'size', 'reset']).catch(() => undefined)
+    await this.adbRun(['-s', this.serial, 'shell', 'wm', 'density', 'reset']).catch(() => undefined)
     await this.refreshSize()
   }
 
@@ -273,20 +331,19 @@ export class AndroidDevice {
 
   /** Install (or replace) an APK and return its package name (via pm/dumpsys). */
   async install(apkPath: string): Promise<string> {
-    const r = await spawnTool(this.adb, ['-s', this.serial, 'install', '-r', '-t', apkPath], { env: this.env })
+    const r = await this.adbRun(['-s', this.serial, 'install', '-r', '-t', apkPath], INSTALL_TIMEOUT_MS)
     if (!/Success/i.test(r.out)) throw new Error(`adb install falhou: ${r.out.slice(-300)}`)
     // Most-recently installed 3rd-party package.
-    const pkgs = await spawnTool(this.adb, ['-s', this.serial, 'shell', 'pm', 'list', 'packages', '-3', '-U'], { env: this.env })
+    const pkgs = await this.adbRun(['-s', this.serial, 'shell', 'pm', 'list', 'packages', '-3', '-U'])
     const last = pkgs.out.split(/\r?\n/).map((l) => l.match(/package:(\S+)/)?.[1]).filter(Boolean).pop()
     return last ?? ''
   }
 
   /** Launch the default/launcher activity of a package. */
   async launch(pkg: string): Promise<void> {
-    await spawnTool(
-      this.adb,
+    await this.adbRun(
       ['-s', this.serial, 'shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'],
-      { env: this.env }
+      60_000
     )
   }
 
@@ -295,7 +352,7 @@ export class AndroidDevice {
   async stop(): Promise<void> {
     this.streaming = false
     if (this.startedEmulator && this.serial) {
-      await spawnTool(this.adb, ['-s', this.serial, 'emu', 'kill'], { env: this.env }).catch(() => undefined)
+      await this.adbRun(['-s', this.serial, 'emu', 'kill']).catch(() => undefined)
     } else if (this.serial) {
       // We're leaving a pre-existing device/emulator running — restore its native
       // resolution so our preview override doesn't stick.

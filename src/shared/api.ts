@@ -94,6 +94,7 @@ import type {
 import type { ContextTurnSummary, ContextTurnDetail, ContextExactCount, ContextTurnChanged } from './contextSnapshot'
 import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
+import type { HandoffNotice } from './handoffNotice'
 import type { OfficeApi } from './officeApi'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
 import type { HandoffEnvio, HandoffQueueDecision, HandoffQueueItem } from './handoffTracking'
@@ -456,6 +457,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   onPoAuthorizationsChanged(cb: (map: PoAuthorizationMap) => void): () => void
   /** O acompanhamento gravou algo nos envios de uma conversa — releia. */
   onHandoffChanged(cb: (msg: HandoffChangedMsg) => void): () => void
+  /** Aviso de handoff em tempo real (shared/handoffNotice.ts): vira toast. */
+  onHandoffNotice(cb: (notice: HandoffNotice) => void): () => void
   /** Registra prompts como enviados/substituídos/marcados em _handoff/enviados.json;
    *  devolve todos os registros depois da gravação. */
   planningMarkHandoffsSent(

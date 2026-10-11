@@ -1,0 +1,32 @@
+sessões: 2 | pedidos: 2 | com edição no projeto: 1 | sem edição: 1 | edição delegada a executor: 0
+handoff: 1 pedidos | p50 363s, 20 chamadas, 29 Read, 23 arquivos, 4 buscas, 25484 tokens de saída
+pedido comum: 0 pedidos | p50 0s, 0 chamadas, 0 Read, 0 arquivos, 0 buscas, 0 tokens de saída
+  H claude-opus-5-5 @ xhigh            1 pedidos (1 handoff) | p50 363s, 20 chamadas, 25484 tokens saída, 12.1 s/chamada
+segundos de modelo por chamada: p50 12.1 | p90 12.1
+
+métrica (até o 1º Edit)      p50        p75        p90        máx
+secs                              363        363        363        363
+calls                              20         20         20         20
+model                             242        242        242        242
+toolSecs                          121        121        121        121
+agentSecs                           0          0          0          0
+reads                              29         29         29         29
+grep                                4          4          4          4
+glob                                0          0          0          0
+bash                                8          8          8          8
+agents                              0          0          0          0
+files                              23         23         23         23
+ctxFirst                        64908      64908      64908      64908
+ctxAtEdit                       76239      76239      76239      76239
+tokensSum                     2045716    2045716    2045716    2045716
+outTokens                       25484      25484      25484      25484
+thinkingChars                     799        799        799        799
+
+chamadas ao modelo com UMA ferramenta só (leitura em série): 9/20 (45%)
+tempo até o 1º Edit: modelo 67% | ferramentas 33% (inclui espera de permissão e subagentes)
+
+por projeto: projeto | pedidos com edição | p50 segs | p50 chamadas | p50 Reads
+  D--agent-code-replay-a1-agent-code          1      363       20       29
+
+15 mais lentos até o 1º Edit:
+  2026-10-10T13:52 D--agent-code-replay-a   363s  20 chamadas  29 Read   4 busca  0 subag.     0s em subag. | # Handoff — Altura da mesa/cadeira e cadeira dupla na sala de reunião (escritório 3D) ## A

@@ -1,0 +1,66 @@
+{
+  "par": 1,
+  "labels": {
+    "A": "novo",
+    "B": "referencia"
+  },
+  "comparacao": "B é melhor: passa todos os testes de referência, mantém quem espera a TV na própria cadeira quando Managers entram e saem, deixa o pé apoiado em todos os corpos e testa de forma mais rigorosa (a cada passo). A resolve a cadeira dupla, mas faz os agentes que esperam trocarem de cadeira, deixa corpos pequenos na ponta do pé e leva scene.ts a 500 linhas.",
+  "novo": {
+    "label": "A",
+    "notas": {
+      "atende": 4,
+      "bugs": 3,
+      "bordas": 3,
+      "regras": 4,
+      "justificativa": "Entrega quase tudo. Sala de reunião: managerOf/managerChairs no layout, heldChairs com as posições, scene.sync reaplica meetingSpots(roomOrder, heldChairs) e crowd.upsert volta a 'init' quando o home muda mais de 5 cm. Cadeira: SEAT_HEIGHT.chair 0,46 e chairModel derivado de SEAT_TOP, com ARM_TOP, BACK_CENTER_Y e COLUMN_TOP exportados e chairModel.test. Também há keysReach exportado, napDesk reajustado, clamp de reactions.ts e seatedReach.test. Problemas: (1) meetingSpots não guarda o lugar de quem espera; quando um Manager sai, held encolhe e b/c levantam e trocam de cadeira, e voltam quando outro Manager chega. Isso contraria o aceite 'cada agente fica na sua cadeira'. (2) Em sitLower, o THIGH_DROOP=1,4 limita a descida da coxa, então o boneco ×0,85 e os avatares de perna curta ficam com o calcanhar ~2 cm erguido, mas o pedido quer o pé apoiado. (3) Em keysReach, o 2º laço pode desfazer a folga ganha no 1º. Os testes de regressão só olham o fim de cada fase (sit>0.97), não cada passo, e o seatedReach não confere os pés. Regras: scene.ts passa de 499 para 500 linhas (não fica abaixo de 500). Em troca, crowd.ts cai para ~484 porque o partyStep foi para partyPlan. O harness foi tocado só no necessário. Os dois testes renomeados têm equivalentes."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/office3d/agentCast.test.ts > (arquivo não carregou)",
+        "tipo": "nome",
+        "motivo": "agentCast.test importa './testGlb'. Em A os mesmos readGlb/buildScene/bindHeight (e AVATAR_DIR no lugar de AGENTS_DIR) estão em avatarGlbTestKit.ts, com o mesmo comportamento."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela",
+        "tipo": "nome",
+        "motivo": "O teste depende da classe MeetingVenues, que A não tem. Mas A faz o mesmo no scene.sync: reaplica meetingSpots(roomOrder, heldChairs) a cada layout, e quem esperava na cabeceira vai para outra cadeira. O 'cenário A' do próprio A cobre isso."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre",
+        "tipo": "nome",
+        "motivo": "Falhou na construção de MeetingVenues. Em A, managerChairs mantém p2 na cadeira 1 e dá a 0, que vagou, para p3. O offstage sai da lista de Managers. Coberto pelo 'cenário B' de A."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda",
+        "tipo": "nome",
+        "motivo": "Também só falta MeetingVenues. Em A não há cadeira dupla com Manager saindo e chegando e dois chamados, e a fila anda quando o chamado é atendido. Quem espera troca de cadeira no meio, mas este teste não confere isso."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto",
+        "tipo": "comportamento",
+        "motivo": "meetingSpots de A não tem memória de quem espera. Quando p1 sai de cena, held encolhe e b/c levantam e passam para as cadeiras anteriores; quando p3 chega, trocam de novo. O teste exige que fiquem sentados (sit=1) nas mesmas cadeiras."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo",
+        "tipo": "nome",
+        "motivo": "crowd.upsert de A tem a mesma regra (mode 'fixed' e home mudou mais de 5 cm → 'init'). Falhou só porque office() constrói MeetingVenues."
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedReach.test.ts > (arquivo não carregou)",
+        "tipo": "comportamento",
+        "motivo": "Além do './testGlb', A não tem typingArm nem REACH_SLACK: tem keysReach, com folga em metros (1,5 cm) e não em fração. E, principalmente, o sitLower de A ergue o calcanhar do boneco ×0,85 (THIGH_DROOP: tornozelo ~2,6 cm acima de ankleY), enquanto o teste exige pé chato (±5 mm, sola <0,02) para todos os corpos."
+      }
+    ]
+  },
+  "referencia": {
+    "label": "B",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 4,
+      "justificativa": "Cobre todas as etapas. managerChairs/managerOf no layout. A classe MeetingVenues em meetingRoom.ts junta a fila da TV e as cadeiras dos Managers e refaz a sala no setQueue e no setChairs, então scene.ts só chama. meetingSpots recebe as posições e o 'prev': quem espera continua na cadeira enquanto ela estiver livre. crowd.upsert faz home novo voltar a 'init'. Na cadeira, tudo deriva de SEAT_TOP (BACK_CENTER_Y, ARM_Y, ARM_TOP, coluna até a base do estofado), com chairModel.test checando braços abaixo do tampo e nada dentro do estofado. sitLower põe a canela na vertical antes de erguer o calcanhar e permite até 10 cm de queda da coxa: pé chato para o boneco ×1 e ×0,85 e para os avatares. Exporta seatedLean (forma fechada) e typingArm. napDesk separado para boneco e GLB. destinations.test usa runNoDoubles, que confere a cada 0,1 s, mais um caso de quem espera não levantar. seatedReach.test confere pés, joelho e quadril em vary × t. Não achei bug. Regras: crowd.ts continua com 500 linhas (já estava; só não cresceu) e scene.ts fica com 499. O harness ganhou extras (--boneco, fotos dos clipes sentados), fora de office3d/** mas para a verificação pedida."
+    },
+    "falhas": []
+  }
+}

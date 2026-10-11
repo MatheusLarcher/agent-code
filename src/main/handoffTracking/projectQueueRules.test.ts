@@ -1,17 +1,23 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import type { HandoffEnvio, HandoffEnvioStatus } from '../../shared/handoffTracking'
+import { HANDOFF_CONVERSATION_DELETED_MOTIVO, type HandoffEnvio, type HandoffEnvioStatus } from '../../shared/handoffTracking'
+import { BOOT_GRACE_MS } from './handoffActivity'
 import {
+  PROJECT_QUEUE_LIVE_MS,
   PROJECT_REEVALUATE_MS,
   PROJECT_STOP_WAIT_MS,
   dirtyPreamble,
+  minutesWithoutTurn,
   moveTo,
   passTurn,
   planState,
   projectStep,
   startDecision,
+  stopReason,
   turnEvaluationDue,
   viewFolder,
+  waitingReason,
+  type PlanLiveness,
   type StoredPlan
 } from './projectQueueRules'
 
@@ -62,19 +68,88 @@ const plan = (lote: string, over: Partial<StoredPlan> = {}): StoredPlan => ({
   ...over
 })
 
-function views(plans: StoredPlan[], envios: HandoffEnvio[]) {
-  return viewFolder(plans, (lote) => envios.filter((e) => e.loteId === lote))
+/** O relógio das fábricas: `updatedAt` dos envios. */
+const T_UPDATED = Date.parse('2026-10-06T11:00:00.000Z')
+/** Sem turno neste processo, mas com a escrita do banco "agora": vivo. */
+const ALIVE: PlanLiveness = { turnRunning: () => false, now: T_UPDATED }
+
+function views(plans: StoredPlan[], envios: HandoffEnvio[], live: PlanLiveness = ALIVE) {
+  return viewFolder(plans, (lote) => envios.filter((e) => e.loteId === lote), live)
 }
 
 describe('planState', () => {
   it('na fila, rodando, entre prompts, parado e terminado', () => {
-    expect(planState([envio('a', 'c', 1, 'na_fila')])).toBe('na_fila')
-    expect(planState([envio('a', 'c', 1, 'em_execucao'), envio('a', 'c', 2, 'na_fila')])).toBe('rodando')
-    expect(planState([envio('a', 'c', 1, 'concluida'), envio('a', 'c', 2, 'na_fila')])).toBe('entre_prompts')
-    expect(planState([envio('a', 'c', 1, 'incompleta'), envio('a', 'c', 2, 'na_fila')])).toBe('parado')
-    expect(planState([envio('a', 'c', 1, 'aguardando_voce')])).toBe('parado')
-    expect(planState([envio('a', 'c', 1, 'concluida'), envio('a', 'c', 2, 'concluida')])).toBe('terminado')
-    expect(planState([])).toBe('terminado')
+    expect(planState([envio('a', 'c', 1, 'na_fila')], ALIVE)).toBe('na_fila')
+    expect(planState([envio('a', 'c', 1, 'em_execucao'), envio('a', 'c', 2, 'na_fila')], ALIVE)).toBe('rodando')
+    expect(planState([envio('a', 'c', 1, 'concluida'), envio('a', 'c', 2, 'na_fila')], ALIVE)).toBe('entre_prompts')
+    // Incompleto sem erro: a fila segue sozinha (entre prompts); o que para é erro, Stop, esperando você.
+    expect(planState([envio('a', 'c', 1, 'incompleta'), envio('a', 'c', 2, 'na_fila')], ALIVE)).toBe('entre_prompts')
+    expect(planState([envio('a', 'c', 1, 'falhou'), envio('a', 'c', 2, 'na_fila')], ALIVE)).toBe('parado')
+    expect(planState([envio('a', 'c', 1, 'aguardando_voce')], ALIVE)).toBe('parado')
+    expect(planState([envio('a', 'c', 1, 'concluida'), envio('a', 'c', 2, 'concluida')], ALIVE)).toBe('terminado')
+    expect(planState([], ALIVE)).toBe('terminado')
+  })
+
+  it('conversa apagada: os envios parados com o motivo terminam o plano (ele sai da fila)', () => {
+    const deleted = { motivo: HANDOFF_CONVERSATION_DELETED_MOTIVO }
+    const envios = [envio('a', 'c', 1, 'parada', deleted), envio('a', 'c', 2, 'parada', { ...deleted, enviadoEm: null })]
+    expect(planState(envios, ALIVE)).toBe('terminado')
+    expect(views([plan('a')], envios)).toEqual([])
+  })
+})
+
+describe('planState — "rodando" exige sinal de vida, não só o status gravado', () => {
+  const running = [envio('a', 'conv-a', 1, 'em_execucao'), envio('a', 'conv-a', 2, 'na_fila')]
+  const later = T_UPDATED + 60 * 60_000
+
+  it('em execução com o turno vivo neste processo → rodando (mesmo com a escrita velha)', () => {
+    expect(planState(running, { turnRunning: () => true, now: later })).toBe('rodando')
+    expect(planState([envio('a', 'conv-a', 1, 'enviado')], { turnRunning: () => true, now: later })).toBe('rodando')
+  })
+
+  it('sem turno e com a escrita velha → parado, com os minutos sem turno', () => {
+    const live: PlanLiveness = { turnRunning: () => false, now: later }
+    expect(planState(running, live)).toBe('parado')
+    expect(minutesWithoutTurn(running[0], live)).toBe(60)
+    expect(views([plan('a')], running, live)[0]).toMatchObject({ state: 'parado', semTurnoMin: 60 })
+  })
+
+  it('sem turno, mas com a escrita (outro PC) ou a atividade daqui há 1 min → rodando; no limite, parado', () => {
+    const fresh = { ...running[0], updatedAt: new Date(later - 60_000).toISOString() }
+    expect(planState([fresh, running[1]], { turnRunning: () => false, now: later })).toBe('rodando')
+    expect(planState(running, { turnRunning: () => false, lastActivityMs: () => later - 60_000, now: later })).toBe('rodando')
+    const edge = { ...running[0], updatedAt: new Date(later - PROJECT_QUEUE_LIVE_MS).toISOString() }
+    expect(planState([edge, running[1]], { turnRunning: () => false, now: later })).toBe('parado')
+    expect(minutesWithoutTurn(edge, { turnRunning: () => false, now: later })).toBe(3)
+    expect(views([plan('a')], running, ALIVE)[0].semTurnoMin).toBeUndefined()
+  })
+
+  it('carência do boot (a mesma da varredura): sem turno nem escrita, o plano segue rodando até ela passar; depois, parado', () => {
+    const bootedAt = later - BOOT_GRACE_MS + 1
+    const inGrace: PlanLiveness = { turnRunning: () => false, bootedAt, now: later }
+    expect(minutesWithoutTurn(running[0], inGrace)).toBeNull()
+    expect(planState(running, inGrace)).toBe('rodando')
+    expect(planState([envio('a', 'conv-a', 1, 'enviado')], inGrace)).toBe('rodando')
+    expect(views([plan('a')], running, inGrace)[0]).toMatchObject({ state: 'rodando' })
+    // A carência passou e nada deu sinal de vida: parado, com os minutos desde a última atividade (não desde o boot).
+    const after: PlanLiveness = { ...inGrace, now: bootedAt + BOOT_GRACE_MS }
+    expect(planState(running, after)).toBe('parado')
+    expect(minutesWithoutTurn(running[0], after)).toBe(60)
+    // Sem `bootedAt` (sem carência): o que já valia.
+    expect(planState(running, { turnRunning: () => false, now: later })).toBe('parado')
+  })
+
+  it('o motivo diz "sem turno rodando há N min": para quem espera a vez e para o PO', () => {
+    const live: PlanLiveness = { turnRunning: () => false, now: later }
+    const v = views([plan('a'), plan('b')], [...running, envio('b', 'conv-b', 1, 'na_fila')], live)
+    expect(waitingReason(2, v[0])).toBe('na fila do projeto (2º): esperando o plano "Plano a" terminar — ele consta rodando, mas está sem turno rodando há 60 min')
+    expect(stopReason(v[0])).toBe('o prompt 1 de 2 (01.md) consta rodando no banco, mas está sem turno rodando há 60 min')
+    expect(projectStep(v, 'b')).toMatchObject({ kind: 'decided', decision: { kind: 'hold', motivo: expect.stringContaining('sem turno rodando há 60 min') } })
+    // O próprio A: o motivo não é "ainda está rodando" — é a falta de turno (a tela oferece "Enviar mesmo assim").
+    expect(projectStep(v, 'a')).toMatchObject({
+      kind: 'decided',
+      decision: { kind: 'hold', envio: { id: 'a-2' }, motivo: 'o prompt anterior consta rodando, mas está sem turno rodando há 60 min' }
+    })
   })
 })
 
@@ -112,6 +187,20 @@ describe('projectStep — um plano por vez na pasta', () => {
   it('plano fora da fila (terminado) não decide nada', () => {
     const v = views([plan('a')], [envio('a', 'conv-a', 1, 'concluida')])
     expect(projectStep(v, 'a')).toEqual({ kind: 'decided', decision: { kind: 'none' } })
+  })
+
+  it('"mesmo assim" (force) vence a vez de outro plano e o outro rodando: é o usuário mandando', () => {
+    // O B atrás do A, que roda: sem force espera; com force, começa (o serviço confere a pasta).
+    const v = views([plan('a'), plan('b')], [envio('a', 'conv-a', 1, 'em_execucao'), envio('a', 'conv-a', 2, 'na_fila'), envio('b', 'conv-b', 1, 'na_fila')])
+    expect(projectStep(v, 'b')).toMatchObject({ kind: 'decided', decision: { kind: 'hold' } })
+    expect(projectStep(v, 'b', { force: true })).toMatchObject({ kind: 'start', first: { id: 'b-1' } })
+    // O A com a vez, mas o B ainda roda: force solta o 2º do A pela regra da fila do quadro (que o force também vence).
+    const w = views([plan('a'), plan('b')], [envio('a', 'conv-a', 1, 'incompleta'), envio('a', 'conv-a', 2, 'na_fila'), envio('b', 'conv-b', 1, 'em_execucao')])
+    expect(projectStep(w, 'a')).toMatchObject({ kind: 'decided', decision: { kind: 'hold' } })
+    expect(projectStep(w, 'a', { force: true })).toMatchObject({ kind: 'decided', decision: { kind: 'next', envio: { id: 'a-2' } } })
+    // O B que já começou e espera atrás do A: force solta o 2º dele também.
+    const x = views([plan('a'), plan('b')], [envio('a', 'conv-a', 1, 'em_execucao'), envio('b', 'conv-b', 1, 'concluida'), envio('b', 'conv-b', 2, 'na_fila')])
+    expect(projectStep(x, 'b', { force: true })).toMatchObject({ kind: 'decided', decision: { kind: 'next', envio: { id: 'b-2' } } })
   })
 })
 

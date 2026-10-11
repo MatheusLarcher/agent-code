@@ -163,20 +163,25 @@ describe('plan_handoff_write — etapas de cada prompt', () => {
     notify.mockClear()
   })
 
+  /** Prompt válido: cada etapa com a sua seção, "Aceite:" e "Verificar com:". */
+  const valid = (...ids: string[]): string =>
+    ids.map((id) => `### [${id}] Etapa ${id}\n\nAceite: ${id} pronta.\nVerificar com: npx vitest run ${id}\nDecidido: nada.\n`).join('\n')
+
   it('grava o .md pelo store, as etapas em <base>.meta.json ao lado e devolve o caminho com o total do prompt', async () => {
-    const out = await call('plan_handoff_write', { conteudo: '# Implementar checkout\n', etapas: ['pagamento', 'requisitos'] })
+    const conteudo = `# Implementar checkout\n\n${valid('pagamento', 'requisitos')}`
+    const out = await call('plan_handoff_write', { conteudo, etapas: ['pagamento', 'requisitos'] })
     const expected = path.join(handoffDir(), '2026-09-22-01.md')
     expect(out).toBe(
       `Handoff gravado em ${expected}\n` +
         'Etapas deste prompt (2): pagamento (est. 90 min = 1 h 30 min), requisitos (est. 45 min). ' +
         'Estimativa total do prompt: 135 min = 2 h 15 min.'
     )
-    expect(await fs.readFile(expected, 'utf8')).toBe('# Implementar checkout\n') // o texto não leva as etapas
+    expect(await fs.readFile(expected, 'utf8')).toBe(conteudo) // o texto não leva as etapas
     expect(JSON.parse(await fs.readFile(path.join(handoffDir(), '2026-09-22-01.meta.json'), 'utf8'))).toEqual({
       etapas: ['pagamento', 'requisitos']
     })
     expect(notify).toHaveBeenCalledWith({ projectCwd: cwd, slug: SLUG })
-    expect(await call('plan_handoff_write', { conteudo: 'segundo', etapas: ['entrega'] })).toMatch(
+    expect(await call('plan_handoff_write', { conteudo: valid('entrega'), etapas: ['entrega'] })).toMatch(
       /2026-09-22-02\.md\nEtapas deste prompt \(1\): entrega \(sem estimativa\)\. Estimativa total do prompt: 0 min — 1 etapa sem estimativa\.$/
     )
     expect((await listHandoffs(cwd, SLUG)).map((h) => [h.name, h.etapas])).toEqual([
@@ -203,9 +208,24 @@ describe('plan_handoff_write — etapas de cada prompt', () => {
   it('falha ao gravar as etapas não deixa o .md sozinho', async () => {
     // Uma pasta no lugar do .meta.json faz a gravação dele falhar.
     await fs.mkdir(path.join(handoffDir(), '2026-09-22-01.meta.json'), { recursive: true })
-    const out = await call('plan_handoff_write', { conteudo: 'x', etapas: ['entrega'] })
+    const out = await call('plan_handoff_write', { conteudo: valid('entrega'), etapas: ['entrega'] })
     expect(out).toMatch(/^plan_handoff_write falhou: /)
     expect((await fs.readdir(handoffDir())).filter((n) => n.endsWith('.md'))).toEqual([])
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('recusa etapa sem "Aceite:", sem "Verificar com:" e lista todas as faltas de uma vez; nada é gravado', async () => {
+    const semAceite = '### [pagamento] Pagamento\n\nVerificar com: npx vitest run\n'
+    expect(await call('plan_handoff_write', { conteudo: semAceite, etapas: ['pagamento'] })).toMatch(
+      /^Handoff não gravado: a etapa pagamento está sem 'Aceite:'\.\n/
+    )
+    const semVerificar = '### [pagamento] Pagamento\n\nAceite: o Pix funciona.\n'
+    expect(await call('plan_handoff_write', { conteudo: semVerificar, etapas: ['pagamento'] })).toMatch(
+      /^Handoff não gravado: a etapa pagamento está sem 'Verificar com:'\.\n/
+    )
+    const out = await call('plan_handoff_write', { conteudo: `${semAceite}\n### [entrega] Entrega\n\nnada\n`, etapas: ['pagamento', 'entrega'] })
+    expect(out).toContain("a etapa pagamento está sem 'Aceite:'; a etapa entrega está sem 'Aceite:'; a etapa entrega está sem 'Verificar com:'.")
+    await expect(fs.stat(handoffDir())).rejects.toMatchObject({ code: 'ENOENT' })
     expect(notify).not.toHaveBeenCalled()
   })
 })

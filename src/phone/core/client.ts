@@ -14,18 +14,22 @@
  */
 import type { ChatEvent, PermissionResponse, RateLimitStatus } from '@shared/ipc'
 import { isProjectColor, type ProjectColorMap } from '@shared/projectColor'
+import { HANDOFF_NOTICE_EVENT, handoffNoticeText, isHandoffNotice } from '@shared/handoffNotice'
 import { deviceId, deviceName, configFromLocation, type PairConfig } from './config'
 import { apiUrl, errorText, fetchJson, pickBestBase, statusOf, HttpError, type FetchOpts } from './net'
 import { activePc, loadPcs, namePcIfUnnamed, otherPcs, pcConfig, pcLabel, removePc, saveLastConv, setActivePc, setPendingSwitch, takePendingSwitch, upsertPc, type PendingNotice } from './pcs'
-import { isSubagentEvent, reduce, STATE_ONLY, syncQueued } from './reducer'
+import { isSubagentEvent, keepDetails, mergeDetails, reduce, STATE_ONLY, syncQueued } from './reducer'
 import { createStore, type Store } from './store'
-import type { BridgeEvent, ChatMsg, ConvSummary, FileAttachment, ImageAttachment, ModelOption, SearchResult, StateResponse, ToastTipo } from './types'
+import type { BridgeEvent, ChatMsg, ConvSummary, FileAttachment, HistoryResponse, ImageAttachment, ModelOption, SearchResult, StateResponse, ToastTipo } from './types'
 import { setVocabulary } from '../voice/vocabulary'
 
 export const CENTRAL_CONV_ID = 'central'
 /** Avisos do escritório na ponte (officeCallsBridge): fase 2, o chat ignora. */
 const OFFICE_CONV_ID = 'office'
 const POLL_MS = 4000
+/** Uma página do histórico (as últimas, e cada "carregar anteriores"); a ressincronização em silêncio pede até HISTORY_REFRESH_MAX para não encolher o que já está na tela. */
+export const HISTORY_PAGE = 50
+const HISTORY_REFRESH_MAX = 200
 
 export type Screen = 'boot' | 'pair' | 'pairing' | 'blocked' | 'main'
 
@@ -54,6 +58,13 @@ export interface AppState {
   convId: string | null
   messages: ChatMsg[]
   historyLoading: boolean
+  /** Há mensagens mais antigas que a primeira da tela (o botão "carregar anteriores" no topo). */
+  hasOlder: boolean
+  olderLoading: boolean
+  /** A tela mostra uma janela do mapa de perguntas e há mensagens depois dela ("ir para o final" recarrega as últimas). */
+  hasNewer: boolean
+  /** Ids (ferramenta/pensamento) cujo detalhe inteiro falhou ao carregar: a tela oferece tentar de novo. */
+  detailsFailed: ReadonlySet<string>
   /** Mensagem a centralizar quando o histórico carregar (busca, mapa de perguntas, Central). */
   scrollToMsg: string | null
 }
@@ -90,7 +101,8 @@ export function mergeProjectColors(prev: ProjectColorMap | undefined, next: unkn
 const INITIAL: AppState = {
   screen: 'boot', pairingDetail: '', pairingStatus: '', blockedName: '', online: false, reconnectText: null,
   base: '', token: '', loaded: false, conversations: [], projects: [], usage: {}, voiceReady: false, skipPerms: false,
-  models: [], modelEffort: {}, effortLabels: {}, convId: null, messages: [], historyLoading: false, scrollToMsg: null
+  models: [], modelEffort: {}, effortLabels: {}, convId: null, messages: [], historyLoading: false,
+  hasOlder: false, olderLoading: false, hasNewer: false, detailsFailed: new Set<string>(), scrollToMsg: null
 }
 
 export class RemoteClient {
@@ -106,6 +118,8 @@ export class RemoteClient {
   private failures = 0
   private repicking = false
   private historyReq = 0
+  /** Detalhes em voo (`/api/history-details`), por id: o passo aberto e a ferramenta aberta não pedem o mesmo duas vezes. */
+  private readonly detailsInFlight = new Set<string>()
   private wakeLock: WakeLockSentinel | null = null
   private announce: PendingNotice[] | null = null // avisos da troca/adição para a 1ª conexão desta carga (null = não veio de uma troca)
 
@@ -441,7 +455,15 @@ export class RemoteClient {
       this.patchConv(msg.convId, { stalledSince: ev.stalled ? ev.since : undefined })
       return
     }
-    if (msg.convId === OFFICE_CONV_ID) return
+    if (msg.convId === OFFICE_CONV_ID) {
+      // Aviso de handoff (handoffNoticeBridge): só toast, com o app aberto.
+      const notice = msg.event as unknown as { kind?: string }
+      if (notice.kind === HANDOFF_NOTICE_EVENT && isHandoffNotice(notice)) {
+        const title = this.state.conversations.find((c) => c.id === notice.convId)?.title
+        this.opts.notify?.(handoffNoticeText(notice, title), 'aviso')
+      }
+      return
+    }
     if (msg.convId !== this.state.convId) {
       // Evento de outra conversa: atualiza a lista (ocupada/título), no máximo 1×/s.
       if (!this.otherConvTimer) {
@@ -473,7 +495,7 @@ export class RemoteClient {
   selectConv(convId: string): void {
     if (convId !== CENTRAL_CONV_ID) saveLastConv(this.state.token, convId)
     const same = convId === this.state.convId
-    this.store.set({ convId, ...(same ? {} : { messages: [] }) })
+    this.store.set({ convId, ...(same ? {} : { messages: [], hasOlder: false, hasNewer: false, olderLoading: false, detailsFailed: new Set<string>() }) })
     if (convId === CENTRAL_CONV_ID) {
       this.historyReq++
       this.store.set({ historyLoading: false })
@@ -482,22 +504,91 @@ export class RemoteClient {
     void this.loadHistory(convId, same && this.state.messages.length > 0).catch(() => undefined)
   }
 
-  /** `silent`: ressincronização de fundo (pull-to-refresh, reconexão) sem apagar a tela. */
+  /**
+   * As últimas mensagens da conversa (uma página; a tela mostra "carregar anteriores"
+   * enquanto `hasOlder`). `silent`: ressincronização de fundo (pull-to-refresh,
+   * reconexão) sem apagar a tela — pede o tanto que já estava nela (até
+   * HISTORY_REFRESH_MAX) e guarda o detalhe das respostas já abertas.
+   */
   async loadHistory(convId: string, silent = false): Promise<void> {
     const reqId = ++this.historyReq
     if (!silent) this.store.set({ historyLoading: true })
+    const shown = silent && convId === this.state.convId ? this.state.messages.length : 0
+    const limit = Math.min(HISTORY_REFRESH_MAX, Math.max(HISTORY_PAGE, shown))
     try {
-      const data = await this.request<{ messages?: ChatMsg[] }>(`/api/history?conv=${encodeURIComponent(convId)}`)
+      const data = await this.request<HistoryResponse>(`/api/history?conv=${encodeURIComponent(convId)}&limit=${limit}`)
       if (reqId !== this.historyReq) return // uma chamada mais nova já assumiu a tela
       const cur = this.state.conversations.find((c) => c.id === convId) ?? null
-      this.store.set({ messages: syncQueued((data.messages ?? []).slice(), cur), historyLoading: false })
+      const prev = convId === this.state.convId ? this.state.messages : []
+      this.store.set({
+        messages: keepDetails(prev, syncQueued((data.messages ?? []).slice(), cur)),
+        historyLoading: false,
+        hasOlder: !!data.hasOlder,
+        hasNewer: false,
+        olderLoading: false
+      })
     } catch (err) {
       if (reqId === this.historyReq) this.store.set({ historyLoading: false })
       throw err
     }
   }
 
-  /** Vai até uma pergunta do mapa: já carregada, só rola; senão, a janela em volta dela. */
+  /** "Carregar anteriores": a página antes da primeira mensagem da tela, posta na frente dela. */
+  async loadOlder(): Promise<void> {
+    const { convId, hasOlder, olderLoading, messages } = this.state
+    if (!convId || convId === CENTRAL_CONV_ID || !hasOlder || olderLoading) return
+    const before = messages.find((m) => m.id && !(m.kind === 'user' && (m as { queued?: boolean }).queued))?.id
+    if (!before) return
+    const reqId = this.historyReq // não é uma carga nova da tela: só vale enquanto nenhuma outra assumir
+    this.store.set({ olderLoading: true })
+    try {
+      const data = await this.request<HistoryResponse>(
+        `/api/history?conv=${encodeURIComponent(convId)}&limit=${HISTORY_PAGE}&before=${encodeURIComponent(before)}`
+      )
+      if (reqId !== this.historyReq || this.state.convId !== convId) return
+      const older = data.messages ?? []
+      this.store.set((s) => ({ messages: older.length ? [...older, ...s.messages] : s.messages, hasOlder: !!data.hasOlder, olderLoading: false }))
+    } catch (err) {
+      if (reqId === this.historyReq && this.state.convId === convId) this.store.set({ olderLoading: false })
+      throw err
+    }
+  }
+
+  /**
+   * O detalhe inteiro (entrada, resultado, pensamento) das mensagens leves de ids
+   * dados — o que o PC cortou do histórico. Pedido ao expandir; ignora o que já
+   * está inteiro ou em voo. Falhou: os ids ficam em `detailsFailed` (tentar de novo).
+   */
+  async loadDetails(ids: readonly string[]): Promise<void> {
+    const convId = this.state.convId
+    if (!convId || convId === CENTRAL_CONV_ID) return
+    const light = new Set(this.state.messages.filter((m) => m.light && m.id).map((m) => m.id as string))
+    const want = [...new Set(ids)].filter((id) => light.has(id) && !this.detailsInFlight.has(id))
+    if (!want.length) return
+    for (const id of want) this.detailsInFlight.add(id)
+    if (want.some((id) => this.state.detailsFailed.has(id))) {
+      this.store.set((s) => ({ detailsFailed: new Set([...s.detailsFailed].filter((id) => !want.includes(id))) }))
+    }
+    try {
+      const data = await this.request<{ messages?: ChatMsg[] }>(
+        `/api/history-details?conv=${encodeURIComponent(convId)}&ids=${encodeURIComponent(want.join(','))}`
+      )
+      if (this.state.convId !== convId) return
+      const got = data.messages ?? []
+      const missing = want.filter((id) => !got.some((m) => m.id === id))
+      this.store.set((s) => ({
+        messages: mergeDetails(s.messages, got),
+        ...(missing.length ? { detailsFailed: new Set([...s.detailsFailed, ...missing]) } : {})
+      }))
+    } catch (err) {
+      if (this.state.convId === convId) this.store.set((s) => ({ detailsFailed: new Set([...s.detailsFailed, ...want]) }))
+      throw err
+    } finally {
+      for (const id of want) this.detailsInFlight.delete(id)
+    }
+  }
+
+  /** Vai até uma pergunta do mapa: já carregada, só rola; senão, a janela em volta dela (com "anteriores"/"ir para o final" conforme sobre o quê). */
   async goToMessage(msgId: string): Promise<void> {
     this.store.set({ scrollToMsg: msgId })
     if (this.state.messages.some((m) => m.id === msgId)) return
@@ -505,10 +596,16 @@ export class RemoteClient {
     if (!convId) return
     const reqId = ++this.historyReq
     try {
-      const data = await this.request<{ messages?: ChatMsg[] }>(
+      const data = await this.request<HistoryResponse>(
         `/api/history-window?conv=${encodeURIComponent(convId)}&message=${encodeURIComponent(msgId)}`
       )
-      if (reqId === this.historyReq) this.store.set({ messages: (data.messages ?? []).slice() })
+      if (reqId !== this.historyReq) return
+      this.store.set((s) => ({
+        messages: keepDetails(s.messages, (data.messages ?? []).slice()),
+        hasOlder: !!data.hasOlder,
+        hasNewer: !!data.hasNewer,
+        olderLoading: false
+      }))
     } catch {
       this.store.set({ scrollToMsg: null })
     }

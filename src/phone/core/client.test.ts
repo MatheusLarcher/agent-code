@@ -123,6 +123,124 @@ describe('RemoteClient', () => {
     expect(client.state.historyLoading).toBe(false)
   })
 
+  it('histórico em páginas: as últimas 50 com hasOlder; "carregar anteriores" pede before= e põe na frente', async () => {
+    const all = Array.from({ length: 120 }, (_, i) => ({ kind: 'user', id: `m${i}`, text: `msg ${i}` }))
+    const calls: string[] = []
+    mockFetch((u) => {
+      if (u.pathname === '/api/state') return { status: 200, body: STATE }
+      calls.push(u.pathname + '?' + [...u.searchParams].filter(([k]) => k !== 'token' && k !== 'dev' && k !== 'devname').map(([k, v]) => `${k}=${v}`).join('&'))
+      const limit = Number(u.searchParams.get('limit') ?? 50)
+      const before = u.searchParams.get('before')
+      const end = before ? all.findIndex((m) => m.id === before) : all.length
+      const start = Math.max(0, end - limit)
+      return { status: 200, body: { messages: all.slice(start, end), hasOlder: start > 0 } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    expect(calls).toEqual(['/api/history?conv=c1&limit=50'])
+    expect(client.state.messages).toHaveLength(50)
+    expect(client.state.messages[0].id).toBe('m70')
+    expect(client.state.hasOlder).toBe(true)
+    await client.loadOlder()
+    expect(calls[1]).toBe('/api/history?conv=c1&limit=50&before=m70')
+    expect(client.state.messages).toHaveLength(100)
+    expect(client.state.messages[0].id).toBe('m20')
+    expect(client.state).toMatchObject({ hasOlder: true, olderLoading: false })
+    await client.loadOlder()
+    expect(client.state.messages).toHaveLength(120)
+    expect(client.state.hasOlder).toBe(false)
+    await client.loadOlder() // sem mais antigas: nada pedido
+    expect(calls).toHaveLength(3)
+    // Ressincronização em silêncio: pede o tanto que já está na tela (até 200), não só 50.
+    await client.loadHistory('c1', true)
+    expect(calls[3]).toBe('/api/history?conv=c1&limit=120')
+    expect(client.state.messages).toHaveLength(120)
+  })
+
+  it('histórico leve: ao abrir, loadDetails pede /api/history-details uma vez por id e troca a versão cortada; a ressincronização mantém o detalhe', async () => {
+    const big = 'z'.repeat(3000)
+    const light = [
+      { kind: 'user', id: 'u1', text: 'faz' },
+      { kind: 'tool-use', id: 't1', name: 'Write', input: { file_path: 'a.ts', content: 'zzz…' }, parentToolUseId: null, result: { isError: false, text: 'c…' }, light: true },
+      { kind: 'thinking', id: 'th', text: 'pens…', light: true }
+    ]
+    const full: Record<string, unknown> = {
+      t1: { kind: 'tool-use', id: 't1', name: 'Write', input: { file_path: 'a.ts', content: big }, parentToolUseId: null, result: { isError: false, text: big } },
+      th: { kind: 'thinking', id: 'th', text: big }
+    }
+    const detailCalls: string[] = []
+    let pending: ((v: { status: number; body: unknown }) => void) | null = null
+    mockFetch((u) => {
+      if (u.pathname === '/api/state') return { status: 200, body: STATE }
+      if (u.pathname === '/api/history-details') {
+        const ids = (u.searchParams.get('ids') ?? '').split(',')
+        detailCalls.push(ids.join(','))
+        return new Promise((resolve) => (pending = () => resolve({ status: 200, body: { messages: ids.map((id) => full[id]).filter(Boolean) } })))
+      }
+      return { status: 200, body: { messages: light, hasOlder: false } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    expect(client.state.messages[1]).toMatchObject({ light: true })
+    const p1 = client.loadDetails(['t1', 'th'])
+    const p2 = client.loadDetails(['t1']) // em voo: não pede de novo
+    await flush()
+    expect(detailCalls).toEqual(['t1,th'])
+    pending!({ status: 200, body: {} })
+    await Promise.all([p1, p2])
+    expect(client.state.messages[1]).toMatchObject({ light: false, input: { content: big }, result: { text: big } })
+    expect(client.state.messages[2]).toMatchObject({ light: false, text: big })
+    await client.loadDetails(['t1']) // já inteira: nada pedido
+    expect(detailCalls).toHaveLength(1)
+    await client.loadHistory('c1', true) // a lista leve de novo não apaga o detalhe já carregado
+    expect(client.state.messages[1]).toMatchObject({ light: false, input: { content: big } })
+  })
+
+  it('loadDetails falhou: o id vai para detailsFailed e a próxima tentativa pede de novo', async () => {
+    const light = [{ kind: 'tool-use', id: 't1', name: 'Read', input: {}, parentToolUseId: null, light: true }]
+    let fail = true
+    mockFetch((u) => {
+      if (u.pathname === '/api/state') return { status: 200, body: STATE }
+      if (u.pathname === '/api/history-details') return fail ? { status: 503, body: { error: 'x' } } : { status: 200, body: { messages: [{ ...light[0], light: undefined, input: { file_path: 'a' } }] } }
+      return { status: 200, body: { messages: light } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    await expect(client.loadDetails(['t1'])).rejects.toBeTruthy()
+    expect(client.state.detailsFailed.has('t1')).toBe(true)
+    fail = false
+    await client.loadDetails(['t1'])
+    expect(client.state.detailsFailed.has('t1')).toBe(false)
+    expect(client.state.messages[0]).toMatchObject({ light: false, input: { file_path: 'a' } })
+  })
+
+  it('mapa de perguntas: a janela em volta de uma pergunta fora da tela traz hasOlder/hasNewer; "ir para o final" recarrega as últimas', async () => {
+    const all = Array.from({ length: 100 }, (_, i) => ({ kind: 'user', id: `m${i}`, text: `msg ${i}` }))
+    mockFetch((u) => {
+      if (u.pathname === '/api/state') return { status: 200, body: STATE }
+      if (u.pathname === '/api/history-window') {
+        const c = all.findIndex((m) => m.id === u.searchParams.get('message'))
+        return { status: 200, body: { messages: all.slice(c - 12, c + 18), targetId: u.searchParams.get('message'), hasOlder: true, hasNewer: true } }
+      }
+      return { status: 200, body: { messages: all.slice(-50), hasOlder: true } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    await client.goToMessage('m90') // já na tela: só rola
+    expect(client.state.scrollToMsg).toBe('m90')
+    expect(client.state.hasNewer).toBe(false)
+    await client.goToMessage('m30')
+    expect(client.state.messages.some((m) => m.id === 'm30')).toBe(true)
+    expect(client.state).toMatchObject({ scrollToMsg: 'm30', hasOlder: true, hasNewer: true })
+    await client.loadHistory('c1', true)
+    expect(client.state.messages[0].id).toBe('m50')
+    expect(client.state.hasNewer).toBe(false)
+  })
+
   it('evento ao vivo da conversa aberta entra no feed; o fim do turno libera a conversa', async () => {
     mockFetch((u) => ({ status: 200, body: u.pathname === '/api/state' ? STATE : { messages: [] } }))
     const client = new RemoteClient({ pickInitialConv: () => 'c1' })
@@ -137,6 +255,24 @@ describe('RemoteClient', () => {
     // Avisos do escritório (fase 2) não mexem no chat.
     es.onmessage?.({ data: JSON.stringify({ convId: 'office', event: { kind: 'office-call', id: 'x' } }) })
     expect(client.state.messages).toHaveLength(1)
+  })
+
+  it('handoff-aviso da ponte vira toast (com o nome da conversa) e não mexe no chat', async () => {
+    mockFetch((u) => ({ status: 200, body: u.pathname === '/api/state' ? STATE : { messages: [] } }))
+    const notify = vi.fn()
+    const client = new RemoteClient({ pickInitialConv: () => 'c1', notify })
+    client.start()
+    await flush()
+    const es = FakeEventSource.last!
+    const send = (event: unknown): void => es.onmessage?.({ data: JSON.stringify({ convId: 'office', event }) })
+    send({ kind: 'handoff-aviso', convId: 'c2', tipo: 'decisao', texto: 'Decidido sozinho: Zod (recomendada) — pergunta: Lib', at: 1 })
+    send({ kind: 'handoff-aviso', convId: 'c1', tipo: 'fila', texto: 'Envio 2/3 retomado depois de parar por inatividade', at: 2 })
+    send({ kind: 'handoff-aviso', convId: 'c1', tipo: 'bogus', texto: 'x', at: 3 })
+    expect(notify.mock.calls).toEqual([
+      ['Decidido sozinho em Dois: Zod (recomendada) — pergunta: Lib', 'aviso'],
+      ['Envio 2/3 retomado depois de parar por inatividade', 'aviso']
+    ])
+    expect(client.state.messages).toHaveLength(0)
   })
 
   it('SSE caiu: faixa "reconectando…" e religa com backoff depois de conferir o estado', async () => {

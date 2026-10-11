@@ -4,7 +4,7 @@ import type { PoGitEvidence } from './poGit'
 import { formatPoNextPrompt, type PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import { formatPoAuthorizationClose, formatPoAuthorizationOpen } from './poAuthorization'
-import { buildPoPrompt, type PoCall, type PoLedgerTask, type PoOrphanEtapa, type PoPhase } from './poPrompt'
+import { buildPoPrompt, type PoCall, type PoEnvioEtapa, type PoLedgerTask, type PoOrphanEtapa, type PoPhase } from './poPrompt'
 import type { PoObserverRequest } from './poProviders'
 
 /**
@@ -51,6 +51,8 @@ export interface PoRequestInput {
   authorization?: { current: PoAuthorization | null; hasQueue: boolean } | null
   /** Só no fechamento: as etapas do prompt sem cartão (`PoDeps.orphanEtapas`); vazia, sem seção. */
   orphans?: readonly PoOrphanEtapa[]
+  /** Só no fechamento: o placar do envio corrente (`PoDeps.envioEtapas`); vazio, sem seção. */
+  envioEtapas?: readonly PoEnvioEtapa[]
   correlationId: string
 }
 
@@ -76,7 +78,8 @@ export function buildPoRequest(input: PoRequestInput): PoObserverRequest {
     returned: input.returned.map((card) => card.id),
     resumed: input.returned.filter(isResumedCard).map((card) => card.id),
     git: input.git,
-    orphans: input.orphans
+    orphans: input.orphans,
+    envioEtapas: input.envioEtapas
   })
   const prompt = [base, ...extraSections(input)].join('\n\n')
   return Object.freeze({

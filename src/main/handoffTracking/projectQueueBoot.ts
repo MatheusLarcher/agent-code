@@ -25,10 +25,17 @@ export interface ProjectQueueBootDeps {
   poModel(): string
   notify(conversationId: string): void
   publish(snapshot: HandoffProjectSnapshot): void
+  /** O sinal de vida do acompanhamento: "rodando" exige turno vivo aqui ou atividade/escrita recente. */
+  turnRunning(conversationId: string): boolean
+  lastActivityMs(conversationId: string): number | null
+  /** O boot deste processo (ms) — `HandoffTracker.startedAt`, para a carência ser a mesma da
+   *  varredura. Sem ele, o instante desta montagem (o mesmo boot, a ms de diferença). */
+  bootedAt?(): number
 }
 
 export function createProjectQueue(deps: ProjectQueueBootDeps): ProjectQueueService {
   const git = createProjectGit()
+  const bootedAt = Date.now()
   return new ProjectQueueService({
     repository: deps.repository,
     store: new ProjectQueueStore(join(deps.userData, 'handoff-project-queue.json')),
@@ -47,6 +54,9 @@ export function createProjectQueue(deps: ProjectQueueBootDeps): ProjectQueueServ
     }),
     notify: deps.notify,
     publish: deps.publish,
+    turnRunning: deps.turnRunning,
+    lastActivityMs: deps.lastActivityMs,
+    bootedAt: () => deps.bootedAt?.() ?? bootedAt,
     log: (line) => console.warn(line)
   })
 }

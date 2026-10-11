@@ -24,6 +24,10 @@ export type UserMessage = {
   /** Enviada pelo botão "agora" da fila: entrou no turno em andamento como
    *  ajuste (não abriu um turno novo). */
   injected?: boolean
+  /** Identidade do envio persistida antes da primeira resposta/snapshot. */
+  sdkUuid?: string
+  /** Envios/continuações do mesmo pedido; permanece depois de limpar turnInFlight. */
+  turnIds?: string[]
 }
 
 /** Anything the message list can render (agent events + user messages). */

@@ -6,10 +6,12 @@ import type { HandoffEnvio, HandoffQueueDecision } from '../../shared/handoffTra
 import type { ChatEvent, TaskItem } from '../../shared/ipc'
 import { Channels } from '../../shared/ipc'
 import type { HandoffQueueListResult } from '../../shared/api'
+import { HANDOFF_CONVERSATION_DELETED_MOTIVO } from '../../shared/handoffTracking'
 import { closeHarnesses, harness, type Harness } from './handoffTrackerHarness'
 import { registerHandoffQueueIpc, type HandoffQueueIpcListener } from './handoffQueueIpc'
 import type { ProjectEvaluationInput, ProjectEvaluationOutcome } from './projectQueueEvaluation'
-import { PROJECT_REEVALUATE_MS, PROJECT_STOP_WAIT_MS } from './projectQueueRules'
+import { BOOT_GRACE_MS } from './handoffActivity'
+import { PROJECT_QUEUE_LIVE_MS, PROJECT_REEVALUATE_MS, PROJECT_STOP_WAIT_MS } from './projectQueueRules'
 import { ProjectQueueService } from './projectQueueService'
 import { ProjectQueueStore } from './projectQueueStore'
 
@@ -25,6 +27,7 @@ afterEach(closeHarnesses)
 
 const turnStart: ChatEvent = { kind: 'turn-start', turnIds: ['u1'] }
 const result: ChatEvent = { kind: 'result', id: 'r1', isError: false, text: 'Pronto.', durationMs: 1 }
+const failed: ChatEvent = { kind: 'result', id: 'r1', isError: true, text: 'API Error: 500 overloaded', durationMs: 1 }
 
 interface Setup {
   h: Harness
@@ -35,7 +38,8 @@ interface Setup {
   last(): HandoffProjectSnapshot
   plan(lote: string, conv: string, titulo: string, etapas: string[], cwd?: string): Promise<HandoffEnvio[]>
   next(conv: string, force?: boolean): Promise<HandoffQueueDecision>
-  turn(conv: string, tasks: Array<[string, TaskItem['status']]>, opts?: { end?: boolean }): Promise<void>
+  /** `error`: o turno termina com erro (o incompleto por erro segura a fila; o sem erro segue sozinho). */
+  turn(conv: string, tasks: Array<[string, TaskItem['status']]>, opts?: { end?: boolean; error?: boolean }): Promise<void>
   refresh(cwd?: string): Promise<void>
 }
 
@@ -65,6 +69,11 @@ async function setup(): Promise<Setup> {
     publish: (next) => {
       snapshot = next
     },
+    // O sinal de vida vem do tracker, como no index.ts (o `updatedAt` do banco
+    // fica um dia atrás do relógio do tracker no harness: sem isto nada "roda").
+    turnRunning: (conv) => h.tracker.isTurnRunning(conv),
+    lastActivityMs: (conv) => h.tracker.lastActivityMs(conv),
+    bootedAt: () => h.tracker.startedAt, // a carência do boot conta do tracker (o `reopen` é o app reaberto)
     now: () => h.now(),
     caseInsensitive: true,
     debounceMs: 1
@@ -120,7 +129,7 @@ async function setup(): Promise<Setup> {
       h.tasks(tasks, conv)
       if (opts.end !== false) {
         h.advance(1_000)
-        h.emit(result, conv)
+        h.emit(opts.error ? failed : result, conv)
       }
       await settleConv(conv)
       await s.refresh()
@@ -214,12 +223,121 @@ describe('a fila do projeto — um plano por vez na pasta', () => {
   })
 })
 
-/** O A parado (prompt 1 incompleto) e o B esperando atrás dele. */
+describe('a fila do projeto — "rodando" exige sinal de vida (o status gravado não segura ninguém sozinho)', () => {
+  const planos = (s: Setup) => s.last().folders[0].plans.map((p) => [p.planTitulo, p.estado])
+
+  it('em execução com o turno vivo → rodando; sem turno e sem escrita há 3 min → parado, e o B pode começar', async () => {
+    const s = await setup()
+    await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
+    await s.plan('lb', 'conv-b', 'Plano B', ['b1'])
+    await s.next('conv-a')
+    await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']], { end: false })
+    expect(planos(s)).toEqual([
+      ['Plano A', 'rodando'],
+      ['Plano B', 'na_fila']
+    ])
+    expect(motivo(await s.next('conv-b'))).toBe('na fila do projeto (2º): esperando o plano "Plano A" terminar')
+
+    // O app fechou no meio do turno (ou a sessão foi descartada sem o tracker ver): o
+    // banco segue "em_execucao", mas não há turno nem atividade. Outro processo
+    // (os minutos saem da última escrita no banco — no harness, um dia atrás):
+    s.h.reopen()
+    s.h.advance(PROJECT_QUEUE_LIVE_MS)
+    await s.service.tick()
+    expect(planos(s)).toEqual([
+      ['Plano A', 'parado'],
+      ['Plano B', 'na_fila']
+    ])
+    const semTurno = /sem turno rodando há (\d+) min$/
+    const waiting = motivo(await s.next('conv-b'))
+    expect(waiting).toMatch(/^na fila do projeto \(2º\): esperando o plano "Plano A" terminar — ele consta rodando, mas está sem turno rodando há \d+ min$/)
+    expect(Number(semTurno.exec(waiting)![1])).toBeGreaterThanOrEqual(3)
+    // O próprio A: a faixa mostra "parada" com o motivo (e o "Enviar mesmo assim").
+    const described = await s.service.describe('conv-a', await s.h.repo.listHandoffEnvios({ conversationId: 'conv-a' }))
+    expect(described).toMatchObject({ estado: 'parada', decision: { kind: 'hold', motivo: expect.stringMatching(/^o prompt anterior consta rodando, mas está sem turno rodando há \d+ min$/) } })
+    // "Começar mesmo assim" no B: ele passa à frente e o 1º prompt sai.
+    expect(await s.service.action('conv-b', 'comecar')).toEqual({ ok: true })
+    expect(await s.next('conv-b')).toMatchObject({ kind: 'next', envio: { conteudo: 'Prompt 1 de Plano B' } })
+  })
+
+  it('app reaberto: na carência do boot o plano segue "rodando" (a retomada ainda vai emitir o turn-start); passada ela sem sinal de vida, parado', async () => {
+    const s = await setup()
+    await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
+    await s.plan('lb', 'conv-b', 'Plano B', ['b1'])
+    await s.next('conv-a')
+    await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']], { end: false })
+    // Fechou no meio do turno e reabriu: a escrita no banco é velha (um dia, no harness).
+    s.h.reopen()
+    s.h.advance(BOOT_GRACE_MS - 1_000)
+    await s.service.tick()
+    expect(planos(s)).toEqual([['Plano A', 'rodando'], ['Plano B', 'na_fila']])
+    expect(motivo(await s.next('conv-b'))).toBe('na fila do projeto (2º): esperando o plano "Plano A" terminar')
+    // A carência passou e ninguém deu sinal de vida: parado, e o B pode começar (o "Começar mesmo assim").
+    s.h.advance(1_000)
+    await s.service.tick()
+    expect(planos(s)).toEqual([['Plano A', 'parado'], ['Plano B', 'na_fila']])
+    expect(motivo(await s.next('conv-b'))).toMatch(/ele consta rodando, mas está sem turno rodando há \d+ min$/)
+  })
+
+  it('"Enviar mesmo assim" (force) no A solta o 2º prompt mesmo com o anterior constando rodando', async () => {
+    const s = await setup()
+    await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
+    await s.next('conv-a')
+    s.h.reopen()
+    s.h.advance(PROJECT_QUEUE_LIVE_MS)
+    expect(motivo(await s.next('conv-a'))).toMatch(/sem turno rodando há \d+ min$/)
+    expect(await s.next('conv-a', true)).toMatchObject({ kind: 'next', envio: { conteudo: 'Prompt 2 de Plano A' } })
+  })
+
+  it('sem turno aqui, mas o banco compartilhado recebe escrita de outro PC há 1 min → rodando', async () => {
+    const s = await setup()
+    await s.plan('la', 'conv-a', 'Plano A', ['a1'])
+    await s.plan('lb', 'conv-b', 'Plano B', ['b1'])
+    const [first] = await s.h.repo.listHandoffEnvios({ conversationId: 'conv-a' })
+    await s.h.repo.updateHandoffEnvio(first.id, { status: 'em_execucao', enviadoEm: new Date(s.h.now()).toISOString() })
+    // O PC A grava tempo no envio a cada passada; aqui (PC B) nenhum turno roda.
+    const read = s.h.repo.listHandoffEnvios.bind(s.h.repo)
+    s.h.repo.listHandoffEnvios = async (query) =>
+      (await read(query)).map((e) => (e.id === first.id ? { ...e, updatedAt: new Date(s.h.now() - 60_000).toISOString() } : e))
+    s.h.reopen()
+    s.h.advance(60 * 60_000)
+    await s.refresh()
+    expect(planos(s)).toEqual([
+      ['Plano A', 'rodando'],
+      ['Plano B', 'na_fila']
+    ])
+    expect(motivo(await s.next('conv-b'))).toBe('na fila do projeto (2º): esperando o plano "Plano A" terminar')
+  })
+
+  it('conversa apagada: os envios abertos dela param com o motivo e o plano sai da fila do projeto', async () => {
+    const s = await setup()
+    await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
+    await s.plan('lb', 'conv-b', 'Plano B', ['b1'])
+    await s.next('conv-a')
+    await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']], { end: false })
+    expect(planos(s)[0]).toEqual(['Plano A', 'rodando'])
+
+    s.h.tracker.conversationDeleted('conv-a')
+    await s.h.tracker.settled()
+    await s.refresh()
+    const envios = (await s.h.repo.listHandoffEnvios({ conversationId: 'conv-a' })).sort((a, b) => a.ordem - b.ordem)
+    expect(envios.map((e) => [e.status, e.motivo])).toEqual([
+      ['parada', HANDOFF_CONVERSATION_DELETED_MOTIVO],
+      ['parada', HANDOFF_CONVERSATION_DELETED_MOTIVO]
+    ])
+    expect(planos(s)).toEqual([['Plano B', 'na_fila']])
+    expect(s.h.tracker.isTurnRunning('conv-a')).toBe(false)
+    // A vez é do B, que começa já.
+    expect(await s.next('conv-b')).toMatchObject({ kind: 'next', envio: { conteudo: 'Prompt 1 de Plano B' } })
+  })
+})
+
+/** O A parado (prompt 1 incompleto por erro do turno — o sem erro seguiria sozinho) e o B esperando atrás dele. */
 async function stoppedA(s: Setup): Promise<void> {
   await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
   await s.plan('lb', 'conv-b', 'Plano B', ['b1'])
   await s.next('conv-a')
-  await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']])
+  await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']], { error: true })
   expect((await s.h.repo.listHandoffEnvios({ conversationId: 'conv-a' })).find((e) => e.ordem === 1)?.status).toBe('incompleta')
 }
 
@@ -301,7 +419,7 @@ async function bRunning(s: Setup): Promise<void> {
   await s.plan('la', 'conv-a', 'Plano A', ['a1', 'a2'])
   await s.plan('lb', 'conv-b', 'Plano B', ['b1', 'b2'])
   await s.next('conv-a')
-  await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']])
+  await s.turn('conv-a', [['[a1] Etapa a1', 'in_progress']], { error: true })
   await s.service.action('conv-b', 'comecar')
   expect(await s.next('conv-b')).toMatchObject({ kind: 'next' })
   await s.turn('conv-b', [['[b1] Etapa b1', 'in_progress']], { end: false })

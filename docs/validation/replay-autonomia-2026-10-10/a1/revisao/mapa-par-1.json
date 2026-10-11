@@ -1,0 +1,36 @@
+{
+  "labels": {
+    "A": "novo",
+    "B": "referencia"
+  },
+  "keys": {
+    "f1": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/agentCast.test.ts > (arquivo não carregou)"
+    },
+    "f2": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela"
+    },
+    "f3": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre"
+    },
+    "f4": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda"
+    },
+    "f5": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto"
+    },
+    "f6": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo"
+    },
+    "f7": {
+      "label": "A",
+      "id": "src/renderer/src/office3d/seatedReach.test.ts > (arquivo não carregou)"
+    }
+  }
+}

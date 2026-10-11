@@ -37,11 +37,16 @@ import type { AndroidDevice } from './android/androidDevice'
 import type { Progress } from './android/androidEnv'
 
 interface BrowserCallbacks {
-  onFrame: (frame: BrowserFrame) => void
-  onState: (state: BrowserState) => void
+  /** Returning exactly `false` means "not shown" (the owner gates on the conversation on
+   *  screen); Android tabs use that to pause their capture loop while in the background. */
+  onFrame: (frame: BrowserFrame) => unknown
+  onState: (state: BrowserState) => unknown
   onPicked: (el: PickedElement) => void
   /** Progress lines while an Android device/emulator boots (for the UI overlay). */
   onAndroidProgress?: (line: string) => void
+  /** Explicit "is this conversation on screen?" probe; when absent, the last onFrame/onState
+   *  result (`false` = dropped) is used instead. */
+  isWatched?: () => boolean
 }
 
 /**
@@ -56,6 +61,10 @@ export class BrowserController {
   private tabs = new Map<string, Tab>()
   private activeTabId: string | null = null
   private selectMode = false
+  /** Last word from the owner on whether this conversation is on screen: `false` whenever an
+   *  onFrame/onState was dropped. Flips back to true on the repaint the owner requests when
+   *  the conversation is shown again (refreshView → emitState). */
+  private shownHint = true
   /** Current page viewport in CSS px — follows the panel size in the UI. */
   private viewport = { ...DEFAULT_VIEWPORT }
   /** Safety timers that force the loading spinner off if 'load' never fires. */
@@ -308,12 +317,15 @@ export class BrowserController {
     }
     this.tabs.set(tab.id, tab)
     this.activeTabId = tab.id
+    // Capture only while this tab is the active one of the conversation on screen — mirror
+    // the web screencast gating, and stop costing the device anything in the background
+    // (a stray stream kept the emulator encoding PNGs twice a second: half a core, measured).
+    const watched = (): boolean =>
+      tab.id === this.activeTabId && (this.cb.isWatched ? this.cb.isWatched() : this.shownHint)
     device.startStreaming((f) => {
-      // Only the active tab paints the panel — mirror the web screencast gating.
-      if (tab.id === this.activeTabId) {
-        this.cb.onFrame({ data: f.data, width: f.width, height: f.height, mime: 'image/png' })
-      }
-    })
+      if (tab.id !== this.activeTabId) return
+      this.shownHint = this.cb.onFrame({ data: f.data, width: f.width, height: f.height, mime: 'image/png' }) !== false
+    }, watched)
     this.emitState()
     await this.refreshView()
     return device
@@ -485,7 +497,7 @@ export class BrowserController {
     if (tab.device) {
       try {
         const data = await tab.device.screenshot()
-        this.cb.onFrame({ data, width: 0, height: 0, mime: 'image/png' })
+        this.shownHint = this.cb.onFrame({ data, width: 0, height: 0, mime: 'image/png' }) !== false
       } catch {
         /* device busy — the next streamed frame will repaint */
       }
@@ -504,19 +516,20 @@ export class BrowserController {
     const active = this.activeTab()
     const tabs = this.tabsInfo()
     if (!active) {
-      this.cb.onState({ ...EMPTY_STATE, tabs })
+      this.shownHint = this.cb.onState({ ...EMPTY_STATE, tabs }) !== false
       return
     }
-    this.cb.onState({
-      url: active.url,
-      title: active.title,
-      loading: active.loading,
-      canGoBack: active.canGoBack,
-      canGoForward: active.canGoForward,
-      launched: true,
-      tabs,
-      androidSize: active.device ? active.device.screenSize : undefined
-    })
+    this.shownHint =
+      this.cb.onState({
+        url: active.url,
+        title: active.title,
+        loading: active.loading,
+        canGoBack: active.canGoBack,
+        canGoForward: active.canGoForward,
+        launched: true,
+        tabs,
+        androidSize: active.device ? active.device.screenSize : undefined
+      }) !== false
   }
 
   private async applyViewport(page: Page | null): Promise<void> {

@@ -1,0 +1,185 @@
+{
+  "base": {
+    "session": "3708b226-14e5-4348-910a-ccd0f8a397e2",
+    "turns": 3,
+    "handoffPrompts": 1,
+    "lateHandoffPrompts": 0,
+    "askUserQuestion": 1,
+    "expired7min": 1,
+    "turnsEndingInQuestion": 1,
+    "activeSecs": 6978,
+    "wallSecs": 7474,
+    "calls": 284,
+    "avgContextTokens": 416926,
+    "atencaoLines": 0,
+    "desvioLines": 0,
+    "firstAt": "2026-10-06T14:17:23.155Z",
+    "lastAt": "2026-10-06T16:21:56.825Z",
+    "firstRequest": "# Handoff — Cadeira na altura padrão (mãos no teclado) e uma cadeira por agente na sala de reunião\n\n## Como trabalhar nesta conversa\n\n- **O plano está pronto e fechado.** Os cards ficam em `D:\\OneDrive\\Documentos\\agent-code\\planning\\agent-code\\plano-20261006-1026`: um arquivo por card em `cards\\<id>"
+  },
+  "rows": [
+    {
+      "t": "a1",
+      "side": "novo",
+      "n": 1,
+      "exists": true,
+      "status": "timeout",
+      "error": null,
+      "events": {
+        "pergunta": 0,
+        "insistencia": 0,
+        "proximo-prompt": 0,
+        "primeiro-prompt-forcado": 0
+      },
+      "activeSecs": 3139,
+      "calls": 234,
+      "avgContextTokens": 111332,
+      "askUserQuestion": 0,
+      "turnsEndingInQuestion": 0,
+      "atencao": 1,
+      "desvio": 1,
+      "typecheck": true,
+      "newFailures": 0,
+      "missing": 2,
+      "ref": "31/36",
+      "refOk": false,
+      "review": {
+        "novo": {
+          "atende": 4,
+          "bugs": 3,
+          "bordas": 3,
+          "regras": 4,
+          "justificativa": "Entrega quase tudo. Sala de reunião: managerOf/managerChairs no layout, heldChairs com as posições, scene.sync reaplica meetingSpots(roomOrder, heldChairs) e crowd.upsert volta a 'init' quando o home muda mais de 5 cm. Cadeira: SEAT_HEIGHT.chair 0,46 e chairModel derivado de SEAT_TOP, com ARM_TOP, BACK_CENTER_Y e COLUMN_TOP exportados e chairModel.test. Também há keysReach exportado, napDesk reajustado, clamp de reactions.ts e seatedReach.test. Problemas: (1) meetingSpots não guarda o lugar de quem espera; quando um Manager sai, held encolhe e b/c levantam e trocam de cadeira, e voltam quando outro Manager chega. Isso contraria o aceite 'cada agente fica na sua cadeira'. (2) Em sitLower, o THIGH_DROOP=1,4 limita a descida da coxa, então o boneco ×0,85 e os avatares de perna curta ficam com o calcanhar ~2 cm erguido, mas o pedido quer o pé apoiado. (3) Em keysReach, o 2º laço pode desfazer a folga ganha no 1º. Os testes de regressão só olham o fim de cada fase (sit>0.97), não cada passo, e o seatedReach não confere os pés. Regras: scene.ts passa de 499 para 500 linhas (não fica abaixo de 500). Em troca, crowd.ts cai para ~484 porque o partyStep foi para partyPlan. O harness foi tocado só no necessário. Os dois testes renomeados têm equivalentes."
+        },
+        "referencia": {
+          "atende": 5,
+          "bugs": 5,
+          "bordas": 5,
+          "regras": 4,
+          "justificativa": "Cobre todas as etapas. managerChairs/managerOf no layout. A classe MeetingVenues em meetingRoom.ts junta a fila da TV e as cadeiras dos Managers e refaz a sala no setQueue e no setChairs, então scene.ts só chama. meetingSpots recebe as posições e o 'prev': quem espera continua na cadeira enquanto ela estiver livre. crowd.upsert faz home novo voltar a 'init'. Na cadeira, tudo deriva de SEAT_TOP (BACK_CENTER_Y, ARM_Y, ARM_TOP, coluna até a base do estofado), com chairModel.test checando braços abaixo do tampo e nada dentro do estofado. sitLower põe a canela na vertical antes de erguer o calcanhar e permite até 10 cm de queda da coxa: pé chato para o boneco ×1 e ×0,85 e para os avatares. Exporta seatedLean (forma fechada) e typingArm. napDesk separado para boneco e GLB. destinations.test usa runNoDoubles, que confere a cada 0,1 s, mais um caso de quem espera não levantar. seatedReach.test confere pés, joelho e quadril em vary × t. Não achei bug. Regras: crowd.ts continua com 500 linhas (já estava; só não cresceu) e scene.ts fica com 499. O harness ganhou extras (--boneco, fotos dos clipes sentados), fora de office3d/** mas para a verificação pedida."
+        }
+      }
+    },
+    {
+      "t": "a1",
+      "side": "novo",
+      "n": 2,
+      "exists": true,
+      "status": "timeout",
+      "error": null,
+      "events": {
+        "pergunta": 0,
+        "insistencia": 0,
+        "proximo-prompt": 0,
+        "primeiro-prompt-forcado": 0
+      },
+      "activeSecs": 3193,
+      "calls": 181,
+      "avgContextTokens": 109356,
+      "askUserQuestion": 0,
+      "turnsEndingInQuestion": 0,
+      "atencao": 0,
+      "desvio": 1,
+      "typecheck": true,
+      "newFailures": 3,
+      "missing": 0,
+      "ref": "29/36",
+      "refOk": false,
+      "review": {
+        "novo": {
+          "atende": 3,
+          "bugs": 2,
+          "bordas": 3,
+          "regras": 2,
+          "justificativa": "Entrega o principal: SEAT_HEIGHT.chair 0.46, cadeira derivada de SEAT_TOP (ARM_TOP, BACK_CENTER_Y, coluna a gás até a base do estofado), managerChairs com memória em layout.ts, scene.ts guardando roomOrder e reaplicando meetingSpots no sync, home novo → init em crowd.ts, testes de regressão e seatedReach.test.ts. Faltas: (1) meetingSpots não lembra quem espera, então a cada Manager que sai ou chega os chamados levantam e trocam de cadeira, contra o critério 'cada agente fica na sua cadeira'. (2) sitLower só deixa a coxa descer 6 cm, e o boneco 0,85 e os avatares de perna curta continuam na ponta do pé. (3) Para quem tem braço curto, typingReach troca o alvo por KEYS_NEAR: o punho fica antes do teclado, não nele, e 'reached' aceita o braço quase esticado. (4) No napDesk a cabeça apoia nas mãos e não nos braços, e a colisão sentada do boneco falha (f7/f8). Bugs e regras: ficou um rascunho, _tmpGlbNap.test.ts (207 linhas, pesado, timeout de 900 s), que chama writeFileSync(process.env.TMP_OUT!) com a variável indefinida e por isso quebra o npm test. Em poses.test.ts continua a asserção footL<0, que depende de arredondamento. index.html mudou só nos fins de linha. Rodou o phone:build sem prova de que a outra implementação já tinha commitado. Arquivos abaixo de 500 linhas (crowd.ts com 499)."
+        },
+        "referencia": {
+          "atende": 5,
+          "bugs": 5,
+          "bordas": 5,
+          "regras": 4,
+          "justificativa": "Cobre todas as etapas. chairModel.ts segue a tabela do pedido (ARM_Y=SEAT_TOP+0.205, BACK_CENTER_Y) e ganhou chairModel.test.ts (braços abaixo do tampo e nada dentro do estofado). sitLower deixa a coxa descer até 10 cm e o joelho subir até 4 cm acima do quadril, então o pé fica no chão em todos os corpos. Em reach.ts, seatedLean inclina o tronco só o que falta (até 0,35) para o braço curto alcançar com 3% de folga, e typingArm é reaproveitado no teste. napDesk tem ângulos próprios para o boneco e para os GLB. Na sala de reunião: managerChairs com memória, e a classe MeetingVenues junta a fila da TV e as cadeiras reais. Ela é refeita a cada layout com 'prev', então quem espera só sai da cadeira se um Manager chegar nela. crowd.upsert faz home novo → init. Os 5 cenários de destinations.test.ts verificam a cada passo que nenhuma cadeira tem dois agentes. testGlb.ts foi extraído do agentCast e usado no seatedReach, que confere punho, antebraço ±20°, joelho e pé no chão. Nenhuma falha de referência. Pontos menores: mexeu em scripts/office-agents/app-harness.mjs, fora do escopo declarado, porque a assinatura de meetingSpots mudou e para tirar as fotos dos clipes sentados. crowd.ts fica com exatamente 500 linhas. phone:build ficou pendente, o que o pedido aceita."
+        }
+      }
+    }
+  ],
+  "verdict": {
+    "metas": [
+      {
+        "id": "pergunta",
+        "texto": "nenhuma pergunta não destrutiva chega ao usuário (pergunta = 0)",
+        "ok": true,
+        "detalhe": "0 / 0"
+      },
+      {
+        "id": "insistencia",
+        "texto": "nenhum turno termina perguntando (insistência = 0)",
+        "ok": true,
+        "detalhe": "0 / 0"
+      },
+      {
+        "id": "proximo-prompt",
+        "texto": "a fila solta os prompts 2..N sozinha (próximo-prompt = 0)",
+        "ok": true,
+        "detalhe": "0 / 0"
+      },
+      {
+        "id": "primeiro-prompt-forcado",
+        "texto": "o 1º prompt sai sem o condutor forçar (= 0)",
+        "ok": true,
+        "detalhe": "0 / 0"
+      },
+      {
+        "id": "tempo-ativo",
+        "texto": "tempo ativo ≤ base (6978 s)",
+        "ok": true,
+        "detalhe": "3139 / 3193"
+      },
+      {
+        "id": "chamadas",
+        "texto": "chamadas ≤ base (284)",
+        "ok": true,
+        "detalhe": "234 / 181"
+      },
+      {
+        "id": "contexto",
+        "texto": "contexto médio ≤ base (416926)",
+        "ok": true,
+        "detalhe": "111332 / 109356"
+      },
+      {
+        "id": "concluiu",
+        "texto": "implementação terminou dentro do teto",
+        "ok": false,
+        "detalhe": "timeout / timeout"
+      },
+      {
+        "id": "testes",
+        "texto": "typecheck verde, sem falha nova nem teste sumido",
+        "ok": false,
+        "detalhe": "ok, 0 novas, 2 sumidos / ok, 3 novas, 0 sumidos"
+      },
+      {
+        "id": "referencia",
+        "texto": "testes de referência passando (falha só de nome não conta)",
+        "ok": false,
+        "detalhe": "31/36 / 29/36"
+      },
+      {
+        "id": "revisao",
+        "texto": "revisão às cegas sem regressão contra o diff original",
+        "ok": false,
+        "detalhe": "atende 4×5, bugs 3×5, bordas 3×5, regras 4×4 / atende 3×5, bugs 2×5, bordas 3×5, regras 2×4"
+      }
+    ],
+    "approved": false,
+    "incomplete": false,
+    "failed": [
+      "concluiu",
+      "testes",
+      "referencia",
+      "revisao"
+    ],
+    "missing": []
+  }
+}

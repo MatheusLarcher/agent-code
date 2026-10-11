@@ -58,7 +58,7 @@ function snapshot(t, ts) {
     singleToolCalls: batches.filter((n) => n === 1).length, toolCalls: batches.length,
     ctxFirst: ctx(usage[0] ?? {}), ctxAtEdit: ctx(lastU), tokensSum: usage.reduce((s, u) => s + ctx(u) + (u.output_tokens ?? 0), 0),
     thinkingChars: t.thinking, outTokens: usage.reduce((s, u) => s + (u.output_tokens ?? 0), 0),
-    handoff: /^#\s*(Handoff|Prompt)\b/i.test(t.prompt), effort: t.effort, llm: t.model_
+    handoff: /^#\s+\S/.test(t.prompt), effort: t.effort, llm: t.model_
   }
 }
 

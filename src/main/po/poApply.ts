@@ -5,8 +5,9 @@ import { parsePoHold, type PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import { parsePoAuthorization, PO_ROUTINE_REASON, routineFor, type PoAuthorizationOp } from './poAuthorization'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
+import { poEnvioEtapaMap } from './poEtapas'
 import { shapePendencies } from './poPendency'
-import { clamp, PO_AWAITING_AUTHORIZATION_REASON, type PoOrphanEtapa, type PoPhase } from './poPrompt'
+import { clamp, PO_AWAITING_AUTHORIZATION_REASON, type PoEnvioEtapa, type PoOrphanEtapa, type PoPhase } from './poPrompt'
 import { parsePoVerdict, rejectUnsafeOps, type PoOp } from './poVerdict'
 import { BOARD_USER_ACTION_MAX_CHARS } from '../board/boardUserAction'
 
@@ -54,6 +55,9 @@ export interface PoApplyTarget {
   authorization?: PoAuthorization | null
   /** Só no fechamento: as etapas do prompt sem cartão que o digest listou. */
   orphans?: readonly PoOrphanEtapa[]
+  /** Só no fechamento: o placar do envio corrente que o digest listou — é por
+   *  ele que `ETAPA [id]` chega ao cartão da etapa (poEtapas.ts). */
+  envioEtapas?: readonly PoEnvioEtapa[]
 }
 
 /** O que já foi escrito. Mutável de propósito: se uma escrita lança no meio,
@@ -81,8 +85,9 @@ export function poCreateUserAction(op: Extract<PoOp, { kind: 'create' }>): strin
 function needsFreshList(op: PoOp): boolean {
   // PENDENTE também: ele só vale para o cartão que ainda está (ou acabou de
   // voltar para) "a fazer" pelo fim do turno, e o usuário pode tê-lo concluído
-  // no meio da consulta.
-  return op.kind === 'create' || op.kind === 'start' || op.kind === 'justify'
+  // no meio da consulta. E a contestação: só vale no cartão AINDA concluído —
+  // reaberto pelo usuário no meio da consulta, ela cairia ou viraria PENDENTE.
+  return op.kind === 'create' || op.kind === 'start' || op.kind === 'justify' || op.kind === 'contest'
 }
 
 /**
@@ -156,9 +161,12 @@ export async function applyPoVerdict(
   cards: BoardItem[],
   progress: PoApplyProgress
 ): Promise<void> {
-  const defaults = target.phase === 'close' ? defaultCompletions(text, target.returned ?? []) : []
+  // O mapa etapa → cartão do placar: o parser liga `ETAPA [id]` ao cartão por
+  // ele, e o padrão do fechamento sabe por ele que o cartão citado foi julgado.
+  const etapaMap = target.phase === 'close' ? poEnvioEtapaMap(target.envioEtapas ?? []) : new Map<string, string>()
+  const defaults = target.phase === 'close' ? defaultCompletions(text, target.returned ?? [], etapaMap) : []
   const orphanIds = (target.orphans ?? []).map((orphan) => orphan.etapaId)
-  const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase, orphanIds)
+  const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase, orphanIds, etapaMap)
   const verdict = rejectUnsafeOps(shapePendencies(parsed, defaults, cards), cards, target.phase)
   const ops = await confirmCreates(deps, verdict, target)
   const { convId, cwd, projectId, startedAt } = target
@@ -219,6 +227,13 @@ export async function applyPoVerdict(
         userAction: op.userAction ?? null,
         eventNote: op.reason
       })
+      progress.touched.push(op.id)
+    } else if (op.kind === 'contest') {
+      // A contestação: o agente concluiu, e a evidência diz que a etapa não foi
+      // feita. O motivo vai LIVRE, sem a frase do fim de turno — é assim que
+      // `poContestReason` o reconhece, o placar devolve a etapa a não concluída
+      // (entregaCardPatch) e mostra "o PO contestou: <motivo>" (blockReason).
+      await deps.board.applyPo({ id: op.id, poStatus: 'pending', poReason: op.reason })
       progress.touched.push(op.id)
     } else {
       // Pendência de commit com autorização: não espera o usuário — vira rotina,

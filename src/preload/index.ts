@@ -38,7 +38,9 @@ import type {
   HandoffRegisterResult
 } from '../shared/api'
 import type { HandoffProjectSnapshot } from '../shared/handoffProject'
+import type { HandoffQueueUndispatchApi, HandoffQueueUndispatchRequest, HandoffQueueUndispatchResult } from '../shared/handoffTracking'
 import type { PoAuthorizationMap } from '../shared/poAuthorization'
+import type { HandoffNotice } from '../shared/handoffNotice'
 import type { BoardPrintImageResult, BoardPrintsResult } from '../shared/boardPrints'
 import type { PoChatMessage } from '../shared/poChat'
 import type { AccountUsageResult, AddClaudeAccountResult, ClaudeAccountView, UseAccountResult } from '../shared/claudeAccounts'
@@ -159,7 +161,9 @@ function invokeRead<T>(deadlineMs: number, channel: string, ...args: unknown[]):
 
 const read = <T>(channel: string, ...args: unknown[]): Promise<T> => invokeRead<T>(READ_DEADLINE_MS, channel, ...args)
 
-const api: AgentCodeApi = {
+// `HandoffQueueUndispatchApi` (shared/handoffTracking.ts) fica fora de AgentCodeApi de
+// propósito: o contrato mora junto da fila do quadro, e a tela o lê como opcional.
+const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
   // Detector de travadas: ninguém espera a resposta; quem valida é o main (freezeLog.ts).
   logFreezes: (batch: FreezeRecord[]): void => {
@@ -346,6 +350,8 @@ const api: AgentCodeApi = {
   handoffQueueGate: (req: HandoffQueueGateRequest): Promise<HandoffQueueGateResult> => ipcRenderer.invoke(Channels.handoffQueueGate, req),
   handoffQueueDispatched: (req: HandoffQueueDispatchedRequest): Promise<HandoffQueueDispatchedResult> =>
     ipcRenderer.invoke(Channels.handoffQueueDispatched, req),
+  handoffQueueUndispatch: (req: HandoffQueueUndispatchRequest): Promise<HandoffQueueUndispatchResult> =>
+    ipcRenderer.invoke(Channels.handoffQueueUndispatch, req),
   handoffQueueList: (req?: HandoffQueueListRequest): Promise<HandoffQueueListResult> =>
     read(Channels.handoffQueueList, req ?? {}),
   handoffProjectStatus: (): Promise<HandoffProjectStatusResult> => read(Channels.handoffProjectStatus, {}),
@@ -366,6 +372,7 @@ const api: AgentCodeApi = {
     ipcRenderer.invoke(Channels.poAuthorizationRevoke, req),
   onPoAuthorizationsChanged: (cb: (map: PoAuthorizationMap) => void): (() => void) => on(Channels.poAuthorizationsChanged, cb),
   onHandoffChanged: (cb: (m: HandoffChangedMsg) => void): (() => void) => on(Channels.handoffChanged, cb),
+  onHandoffNotice: (cb: (n: HandoffNotice) => void): (() => void) => on(Channels.handoffNotice, cb),
   planningMarkHandoffsSent: (
     req: PlanningRef & { entries: PlanningHandoffSentMark[] }
   ): Promise<PlanningResult<{ sent: PlanningHandoffSentDto[] }>> =>

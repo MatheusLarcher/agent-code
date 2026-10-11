@@ -63,6 +63,7 @@ describe('DeadlineIndicator', () => {
     const el = await shown()
     expect(m.api.handoffList).toHaveBeenCalledWith({ conversationId: 'conv-1' })
     expect(screen.getByText('Etapa 1 de 2: Registro no banco')).toBeTruthy()
+    expect(screen.getByText('✓ 0/2')).toBeTruthy()
     expect(screen.getByText('12 de 30 min')).toBeTruthy()
     expect(screen.getByText('agente 20 min')).toBeTruthy()
     expect(el.className).toContain('is-ok')
@@ -115,6 +116,7 @@ describe('DeadlineIndicator', () => {
     const m = mockApi([parte1, parte2])
     const { unmount } = render(<DeadlineIndicator conversationId="conv-1" api={m.api} peekApi={null} />)
     await waitFor(() => expect(screen.getByText('Etapa 3 de 3: Pix')).toBeTruthy())
+    expect(screen.getByText('✓ 2/3')).toBeTruthy()
     expect(m.api.handoffList).toHaveBeenCalledWith({ projectCwd: 'C:/proj', limit: 1000 })
     unmount()
 
@@ -123,7 +125,30 @@ describe('DeadlineIndicator', () => {
     const peekApi = { planningPeek: vi.fn(async () => ({ ok: true as const, plan: { titulo: 'Checkout', etapas, cards: 0, ambiguidadesAbertas: 0 } })) }
     render(<DeadlineIndicator conversationId="conv-1" api={m.api} peekApi={peekApi} />)
     await waitFor(() => expect(screen.getByText('Etapa 3 de 4: Pix no checkout')).toBeTruthy())
+    expect(screen.getByText('✓ 2/4')).toBeTruthy()
     expect(peekApi.planningPeek).toHaveBeenCalledWith({ projectCwd: 'C:/proj', slug: 'checkout' })
+  })
+
+  it('o placar do plano ("✓ 9/10") ao lado da etapa, com o detalhe no title; sem envio, nada', async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `e${i + 1}`)
+    const parte1 = envio({
+      id: 'he-0', conversationId: 'conv-0', status: 'concluida', loteId: 'hl-0', criadoEm: '2026-10-05T11:00:00.000Z', enviadoEm: '2026-10-05T11:00:00.000Z',
+      entregas: ids.slice(0, 5).map((id, i) => entrega({ etapaId: id, etapaTitulo: id, ordem: i + 1, status: 'concluida' }))
+    })
+    const parte2 = envio({
+      status: 'incompleta',
+      entregas: ids.slice(5).map((id, i) => entrega({ etapaId: id, etapaTitulo: id, ordem: i + 1, status: i === 4 ? 'incompleta' : 'concluida', tempoAtivoMs: 8 * MIN }))
+    })
+    const m = mockApi([parte1, parte2])
+    render(<DeadlineIndicator conversationId="conv-1" api={m.api} peekApi={null} />)
+    await waitFor(() => expect(screen.getByText('✓ 9/10')).toBeTruthy())
+    expect(screen.getByText('Etapa 10 de 10: e10')).toBeTruthy()
+    expect(indicator()?.title).toContain('9 de 10 etapas prontas, 1 incompleta.')
+
+    m.set([])
+    m.changed('conv-1')
+    await waitFor(() => expect(indicator()?.textContent).toBe('sem prazo'))
+    expect(document.querySelector('.deadline-placar')).toBeNull()
   })
 
   it('sem envio registrado ou sem estimativa do plano: neutro e discreto ("sem prazo")', async () => {
@@ -132,6 +157,7 @@ describe('DeadlineIndicator', () => {
     await shown()
     expect(level()).toBe('neutro')
     expect(indicator()?.textContent).toBe('sem prazo')
+    expect(document.querySelector('.deadline-placar')).toBeNull()
 
     m.set([envio({ estimativaTotal: null, prazoTotal: null, entregas: [entrega({ status: 'em_andamento', estimativaPlano: null, tempoAtivoMs: 3 * MIN })] })])
     m.changed('conv-1')

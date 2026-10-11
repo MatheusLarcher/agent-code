@@ -55,9 +55,21 @@ export type ChatMsg = (ChatEvent | UserMsg) & {
   result?: { isError: boolean; text: string }
   answer?: boolean
   ts?: number
+  /** Versão LEVE do histórico (entrada/resultado/pensamento cortados pelo PC): o detalhe inteiro vem no `/api/history-details` ao expandir. */
+  light?: boolean
 }
 
 export type ToolUseMsg = Extract<ChatMsg, { kind: 'tool-use' }>
+
+/** Corpo de `GET /api/history` e `/api/history-window`. PCs antigos mandam só `messages`. */
+export interface HistoryResponse {
+  messages?: ChatMsg[]
+  /** Há mensagens mais antigas que a primeira devolvida (paginação `before=`). */
+  hasOlder?: boolean
+  /** Só na janela do mapa: há mensagens depois da última devolvida. */
+  hasNewer?: boolean
+  targetId?: string
+}
 
 /** Envelope do SSE `/api/events`. */
 export interface BridgeEvent {

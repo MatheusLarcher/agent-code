@@ -7,8 +7,10 @@ import { randomBytes } from 'node:crypto'
 import { extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import { OfficeCallsBridge } from './officeCallsBridge'
+import { HandoffNoticeBridge } from './handoffNoticeBridge'
 import { servePlanningRoute } from './planningBridge'
 import { RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
+import { detailsByIds, historyPage, historyWindow, lightenMessages } from './remoteHistory'
 import type { RemoteSearchResult } from '../../shared/remoteSearch'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
 import type {
@@ -17,6 +19,7 @@ import type {
   ImageAttachment,
   PermissionResponse,
   RemoteConversationAction,
+  RemoteEtapasProgress,
   RemoteInfo,
   RemotePairedDevice,
   RemoteStatePayload
@@ -82,6 +85,9 @@ export interface RemoteServerDeps {
   /** De onde vêm as mensagens (histórico, perguntas, downloads): o instantâneo da fila
    *  de gravação e o banco — a tela não manda mais mensagens (remoteConversations.ts). */
   messageSource?: RemoteMessageSource
+  /** O placar das etapas do plano de uma conversa de handoff (síncrono, do cache do main;
+   *  undefined = sem placar ou ainda carregando): vai em `etapas` de cada conversa do /api/state. */
+  etapasOf?: (convId: string) => RemoteEtapasProgress | undefined
   /** Busca nas perguntas do usuário, feita pela tela (tem tudo carregado) só quando pedida. */
   search?: (q: string) => Promise<RemoteSearchResult[]>
   /** Onde escutar (padrão: todas as interfaces, para o celular na rede). A instância de
@@ -169,6 +175,10 @@ export class RemoteServer {
   readonly officeCalls = new OfficeCallsBridge((line) => {
     for (const c of this.clients) c.write(line)
   })
+  /** Os avisos de handoff (handoffNoticeBridge.ts): toast em cada celular conectado. */
+  readonly handoffNotices = new HandoffNoticeBridge((line) => {
+    for (const c of this.clients) c.write(line)
+  })
   private keepAlive: ReturnType<typeof setInterval> | null = null
   /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
   private relayConnected = false
@@ -187,7 +197,7 @@ export class RemoteServer {
   private liveDownloadable = new Set<string>()
 
   constructor(private readonly deps: RemoteServerDeps) {
-    this.store = new RemoteConversationStore(deps.messageSource)
+    this.store = new RemoteConversationStore(deps.messageSource, deps.etapasOf)
   }
 
   info(): RemoteInfo {
@@ -372,6 +382,7 @@ export class RemoteServer {
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/history-window') return this.serveHistoryWindow(url, res)
+      if (path === '/api/history-details') return this.serveHistoryDetails(url, res)
       if (path === '/api/events') return this.serveEvents(req, res)
       if (path === '/api/send' && req.method === 'POST') return this.serveSend(req, res)
       if (path === '/api/transcribe' && req.method === 'POST') return this.serveTranscribe(req, res)
@@ -790,34 +801,48 @@ export class RemoteServer {
     sendJson(res, 200, { ok: true, parts: this.deps.ttsParts(text) })
   }
 
-  /** Only the most recent messages of ONE conversation go to the phone — never
-   *  the whole thing. Long conversations (lots of tool output) are heavy over a
-   *  mobile connection; the phone doesn't need older history to keep chatting. */
-  private static readonly HISTORY_LIMIT = 30
-
+  /**
+   * O histórico de UMA conversa vai ao celular em páginas (as últimas `limit`,
+   * padrão 50; `before=<id>` traz as anteriores) e LEVE: o texto do agente inteiro,
+   * mas a entrada/resultado das ferramentas e o pensamento cortados e marcados
+   * `light` — o celular pede o detalhe inteiro em `/api/history-details` só quando
+   * o usuário expande a resposta (remoteHistory.ts).
+   */
   private async serveHistory(url: URL, res: ServerResponse): Promise<void> {
     const id = url.searchParams.get('conv') ?? ''
     const all = await this.store.messages(id)
     // O banco não respondeu: na hora, sem segurar o celular (ele tenta de novo).
     if (!all) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
-    const messages = all.slice(-RemoteServer.HISTORY_LIMIT)
-    this.allowDownloadsIn(messages)
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ messages }))
+    const page = historyPage(all, { limit: url.searchParams.get('limit'), before: url.searchParams.get('before') })
+    this.allowDownloadsIn(page.messages)
+    // `full=1`: inteiras (a Central lê as ações de um turno e já as mostra abertas).
+    const messages = url.searchParams.get('full') === '1' ? page.messages : lightenMessages(page.messages)
+    sendJson(res, 200, { messages, hasOlder: page.hasOlder })
   }
 
-  /** Small history slice centered on a selected question from the lightweight index. */
+  /** Small history slice centered on a selected question from the lightweight index (também leve). */
   private async serveHistoryWindow(url: URL, res: ServerResponse): Promise<void> {
     const convId = url.searchParams.get('conv') ?? ''
     const messageId = url.searchParams.get('message') ?? ''
-    const messages = await this.store.messages(convId)
-    if (!messages) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
-    const center = messages.findIndex((m) => !!m && typeof m === 'object' && (m as { id?: string }).id === messageId)
-    if (center < 0) return sendJson(res, 404, { messages: [], error: 'mensagem não encontrada' })
-    const start = Math.max(0, center - 12)
-    const window = messages.slice(start, center + 18)
-    this.allowDownloadsIn(window)
-    return sendJson(res, 200, { messages: window, targetId: messageId })
+    const all = await this.store.messages(convId)
+    if (!all) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
+    const window = historyWindow(all, messageId)
+    if (!window) return sendJson(res, 404, { messages: [], error: 'mensagem não encontrada' })
+    this.allowDownloadsIn(window.messages)
+    const messages = url.searchParams.get('full') === '1' ? window.messages : lightenMessages(window.messages)
+    return sendJson(res, 200, { ...window, messages })
+  }
+
+  /** As mensagens INTEIRAS de alguns ids (`ids=a,b,c`): o detalhe de uma resposta que o usuário abriu. */
+  private async serveHistoryDetails(url: URL, res: ServerResponse): Promise<void> {
+    const convId = url.searchParams.get('conv') ?? ''
+    const ids = (url.searchParams.get('ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+    if (!ids.length) return sendJson(res, 400, { messages: [], error: 'ids obrigatórios' })
+    const all = await this.store.messages(convId)
+    if (!all) return sendJson(res, 503, { messages: [], error: 'banco indisponível' })
+    const messages = detailsByIds(all, ids)
+    this.allowDownloadsIn(messages)
+    sendJson(res, 200, { messages })
   }
 
   /** Full-text search over the USER's own prompts across every conversation: the

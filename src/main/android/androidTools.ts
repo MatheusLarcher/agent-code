@@ -1,9 +1,9 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserController } from '../browserController'
-import { detect, ensureInstalled, spawnTool } from './androidEnv'
+import { detect, ensureInstalled, spawnTool, TIMEOUT_EXIT_CODE } from './androidEnv'
 import { DEVICE_OPTIONS, findDevice } from '../../shared/devices'
 
 type Text = { content: { type: 'text'; text: string }[] }
@@ -11,10 +11,24 @@ const text = (t: string): Text => ({ content: [{ type: 'text', text: t }] })
 
 const WIN = process.platform === 'win32'
 
-/** Find the freshest debug .apk under a Gradle project's build outputs. */
-async function findApk(projectDir: string): Promise<string | null> {
+/** A full build of a Mapbox-sized app takes 1–3 min here; a build still running after this long
+ *  is stuck (another Gradle build holding the lock, or a machine out of memory) — kill it and say
+ *  so instead of blocking the agent's turn for the rest of the day. */
+export const APK_BUILD_TIMEOUT_MS = 25 * 60_000
+
+/** Rank for ordering split APKs: the preview runs on the x86_64 emulator, the universal one
+ *  works everywhere, arm64 only on a phone. */
+function apkRank(path: string): number {
+  if (/x86_64/i.test(path)) return 0
+  if (/universal/i.test(path)) return 1
+  return 2
+}
+
+/** Debug .apks under a Gradle project's build outputs, newest first (x86_64 → universal →
+ *  others within the same build). With ABI splits a single assembleDebug yields several. */
+export async function findApks(projectDir: string): Promise<string[]> {
   const stack = [projectDir]
-  let best: string | null = null
+  const found: { path: string; mtime: number }[] = []
   let depth = 0
   while (stack.length && depth < 6000) {
     depth++
@@ -30,12 +44,18 @@ async function findApk(projectDir: string): Promise<string | null> {
       if (e.isDirectory()) {
         if (!['node_modules', '.git', '.gradle'].includes(e.name)) stack.push(full)
       } else if (e.name.endsWith('.apk') && /[\\/]debug[\\/]/.test(full + '/')) {
-        best = full
+        const mtime = await stat(full)
+          .then((s) => s.mtimeMs)
+          .catch(() => 0)
+        found.push({ path: full, mtime })
       }
     }
   }
-  // Fall back to any apk if no debug-specific path matched.
-  return best
+  // Same build = same second; compare mtimes coarsely so the ABI rank decides within a build.
+  const bucket = (ms: number): number => Math.floor(ms / 5000)
+  return found
+    .sort((a, b) => bucket(b.mtime) - bucket(a.mtime) || apkRank(a.path) - apkRank(b.path))
+    .map((f) => f.path)
 }
 
 /**
@@ -189,7 +209,7 @@ export function createAndroidMcpServer(
       ),
       tool(
         'android_build_apk',
-        'Build a debug APK for an Android Gradle project (runs ./gradlew assembleDebug). Works for native projects and for the android/ folder of a Capacitor project. Returns the path to the generated .apk.',
+        'Build a debug APK for an Android Gradle project (runs ./gradlew assembleDebug, killed after 25 min if stuck). Works for native projects and for the android/ folder of a Capacitor project. Returns the generated .apk path(s): with ABI splits, the x86_64 one (emulator) first, then universal, then arm64 (phone).',
         {
           projectDir: z.string().describe('Absolute path to the Gradle project root (the folder containing gradlew).')
         },
@@ -200,20 +220,28 @@ export function createAndroidMcpServer(
           }
           const gradlew = WIN ? join(projectDir, 'gradlew.bat') : join(projectDir, 'gradlew')
           const lines: string[] = []
-          const r = await spawnTool(gradlew, ['assembleDebug'], {
+          const r = await spawnTool(gradlew, ['assembleDebug', '--console=plain'], {
             env: d.env,
             cwd: projectDir,
-            onLine: (l) => lines.push(l)
+            onLine: (l) => lines.push(l),
+            timeoutMs: APK_BUILD_TIMEOUT_MS
           })
+          if (r.code === TIMEOUT_EXIT_CODE) {
+            return text(
+              `Build não terminou em ${APK_BUILD_TIMEOUT_MS / 60_000} min e foi encerrado. Causas comuns: outro build do mesmo projeto rodando ao mesmo tempo (o Gradle espera o lock dele) ou máquina sem memória (emulador em renderização por software). Confira com "gradlew --status" e tente de novo com um build por vez.\n${lines.slice(-30).join('\n')}`
+            )
+          }
           if (r.code !== 0) {
             return text(`Build falhou (exit ${r.code}).\n${lines.slice(-30).join('\n')}`)
           }
-          const apk = await findApk(projectDir)
-          return text(
-            apk
-              ? `APK gerado: ${apk}\nUse android_install_run para instalar e abrir no preview.`
-              : `Build concluído, mas nenhum .apk encontrado em ${projectDir}.`
-          )
+          const apks = await findApks(projectDir)
+          if (!apks.length) return text(`Build concluído, mas nenhum .apk encontrado em ${projectDir}.`)
+          const outros = apks.length > 1 ? `\nOutros APKs do mesmo build:\n${apks.slice(1).join('\n')}` : ''
+          const dica =
+            apks.length > 1
+              ? '\nSplits por ABI: no emulador use o x86_64; no celular, o arm64-v8a; o universal serve nos dois (mas é bem maior).'
+              : ''
+          return text(`APK gerado: ${apks[0]}${outros}${dica}\nUse android_install_run para instalar e abrir no preview.`)
         }
       ),
       tool(

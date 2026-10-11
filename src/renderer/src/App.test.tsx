@@ -4,7 +4,7 @@ import { UiProvider } from './ui/UiProvider'
 import { App, autoPromptFor, expireResetUsage, mergeUsageLimit, runningModel } from './App'
 import type { AgentEventMsg, ChatEvent, PoProviderDiagnosticMsg } from '@shared/ipc'
 import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from '@shared/mcpInbound'
-import type { TodoItem } from './types'
+import type { Conversation, UIMessage, TodoItem } from './types'
 import { makePlan } from './planning/planningTestUtils'
 import { deliveredIds, syncIntoLocalStorage } from './conversationSyncFake'
 
@@ -748,6 +748,20 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Na fila/)).toBeNull()
+  })
+
+  it('persiste sdkUuid no pedido antes de receber qualquer saída do agente', async () => {
+    render(<UiProvider><App /></UiProvider>)
+    await send('pedido antes da saída')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+    const sdkUuid = String(api.sendMessage.mock.calls[0][5])
+    await waitFor(() => {
+      const docs = JSON.parse(localStorage.getItem('agentcode.conversations.v1') || '[]')
+      const user = docs.find((c: Conversation) => c.id === 'c1')?.messages.find((m: UIMessage) => m.kind === 'user' && m.text === 'pedido antes da saída')
+      expect(user).toMatchObject({ sdkUuid, turnIds: [sdkUuid] })
+    })
   })
 
   it('mantém aviso quando o SDK diz que uma mensagem sobreviveu ao Stop', async () => {
@@ -3168,9 +3182,11 @@ describe('App — enviar para implementação (handoff)', () => {
       ok: true,
       decision: { kind: 'next', envio: { id: 'env-2', conversationId: 'h1', loteId: 'l1', ordem: 2, arquivo: '02.md', conteudo: 'Prompt 2' } }
     }))
+    const undispatch = vi.fn(async () => ({ ok: true, undone: true }))
     Object.assign(api, {
       handoffQueueGate: gate,
       handoffQueueDispatched: vi.fn(async () => ({ ok: true, dispatched: true })),
+      handoffQueueUndispatch: undispatch,
       handoffQueueList: vi.fn(async () => ({ ok: true, items: [] }))
     })
     render(<UiProvider><App /></UiProvider>)
@@ -3196,6 +3212,43 @@ describe('App — enviar para implementação (handoff)', () => {
     await waitFor(() => expect(gate).toHaveBeenCalledWith({ conversationId: 'h1' }))
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(3))
     expect(api.sendMessage.mock.calls[2].slice(0, 2)).toEqual(['h1', 'Prompt 2'])
+    // Entregue: o envio fica despachado — nada de desfazer.
+    expect(undispatch).not.toHaveBeenCalled()
+  })
+
+  it('implantação: o envio do prompt da fila falhou no App (bolha "Falha ao enviar") → o main desfaz a marca (undispatch) e o despachante não reenvia sozinho', async () => {
+    seed([{ ...planConv, id: 'h1', title: 'Implementação: Checkout', mode: undefined, planningSlug: undefined, handoffSlug: 'checkout' }], 'h1')
+    addPlanningApi()
+    const gate = vi.fn(async () => ({
+      ok: true,
+      decision: { kind: 'next', envio: { id: 'env-2', conversationId: 'h1', loteId: 'l1', ordem: 2, arquivo: '02.md', conteudo: 'Prompt 2' } }
+    }))
+    const dispatched = vi.fn(async () => ({ ok: true, dispatched: true }))
+    const undispatch = vi.fn(async () => ({ ok: true, undone: true }))
+    Object.assign(api, { handoffQueueGate: gate, handoffQueueDispatched: dispatched, handoffQueueUndispatch: undispatch, handoffQueueList: vi.fn(async () => ({ ok: true, items: [] })) })
+    render(<UiProvider><App /></UiProvider>)
+    await send('Prompt 1')
+    await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
+
+    // O 1º prompt concluiu; o gate solta o 2º, mas o canal cai na hora de mandar.
+    api.sendMessage.mockRejectedValueOnce(new Error('o canal caiu'))
+    await emit(result, 'h1')
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.sendMessage.mock.calls[1].slice(0, 2)).toEqual(['h1', 'Prompt 2'])
+    // O App engoliu a falha na bolha de sempre ("Tentar de novo")...
+    expect(await screen.findByText(/Falha ao enviar: o canal caiu/)).toBeTruthy()
+    // ...e, mesmo assim, o despachante soube e devolveu o envio à fila no main.
+    await waitFor(() => expect(undispatch).toHaveBeenCalledWith({ conversationId: 'h1', envioId: 'env-2' }))
+    expect(dispatched).toHaveBeenCalledTimes(1)
+    // A falha soltou a conversa (setBusy(false) → check) e o gate ofereceria o mesmo envio: nada sai em laço.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(api.sendMessage).toHaveBeenCalledTimes(2)
+    expect(dispatched).toHaveBeenCalledTimes(1)
+    expect(undispatch).toHaveBeenCalledTimes(1)
   })
 
   it('implantação: o Stop do usuário não é erro — nada de retomada, e o main é avisado (a fila espera)', async () => {

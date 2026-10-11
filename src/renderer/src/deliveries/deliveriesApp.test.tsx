@@ -98,11 +98,13 @@ describe('os envios no App, sem a tela Entregas', () => {
     await waitFor(() => expect(document.querySelector('.conv-row.active')?.getAttribute('title')).toMatch(/^Plano —/))
   })
 
-  it('a fila parou: um aviso só, no lugar do "envio incompleto", com quantos esperam', async () => {
+  it('a fila parou (incompleto por erro do turno): um aviso só, no lugar do "envio incompleto", com quantos esperam', async () => {
     render(<UiProvider><App /></UiProvider>)
     await screen.findByPlaceholderText(/Mensagem para o Claude/i)
     await waitFor(() => expect(fake.api.handoffList).toHaveBeenCalled())
-    const next = world().map((e) => (e.id === 'e1' ? { ...e, status: 'incompleta' as const, motivo: 'faltou [x]' } : e))
+    const next = world().map((e) =>
+      e.id === 'e1' ? { ...e, status: 'incompleta' as const, motivo: 'o turno terminou com erro: API Error: 500 — faltou [x]' } : e
+    )
     await fake.change(next, 'c1')
     expect(await screen.findByText('A fila parou: Checkout com Pix · proj — 1 prompt espera no quadro')).toBeTruthy()
     expect(screen.queryByText(/^Envio incompleto: Checkout com Pix/)).toBeNull()

@@ -59,20 +59,22 @@ export function toolTarget(name: string, input: unknown): string {
   }
 }
 
-/** O número depois do ✓: achados da busca, linhas lidas, +N −M da edição; '' = só o ✓. */
+/** O número depois do ✓: achados da busca, linhas lidas, +N −M da edição; '' = só o ✓ (também na versão leve, cujo texto está cortado). */
 export function toolCount(m: ToolUseMsg): string {
   const text = m.result?.text ?? ''
   const lines = text.split('\n').filter((l) => l.trim()).length
   switch (m.name) {
     case 'Grep': {
       const found = /^Found (\d+)/.exec(text.trim())
-      return found ? found[1] : lines ? String(lines) : ''
+      if (found) return found[1]
+      return !m.light && lines ? String(lines) : ''
     }
     case 'Glob':
-      return lines ? String(lines) : ''
+      return !m.light && lines ? String(lines) : ''
     case 'Read':
-      return lines ? `${lines} l` : ''
+      return !m.light && lines ? `${lines} l` : ''
     default: {
+      if (m.light) return ''
       const s = describeTool(m.name, m.input).stats
       if (!s || (!s.added && !s.removed)) return ''
       return [s.added ? `+${s.added}` : '', s.removed ? `−${s.removed}` : ''].filter(Boolean).join(' ')

@@ -1,0 +1,1020 @@
+diff --git a/scripts/office-agents/app-harness.mjs b/scripts/office-agents/app-harness.mjs
+index b79ff79..1612f2d 100644
+--- a/scripts/office-agents/app-harness.mjs
++++ b/scripts/office-agents/app-harness.mjs
+@@ -211,7 +211,7 @@ try {
+       const list = [...e.scene.chars.values()].filter((c) => c.brain.visible)
+       const desk = list.find((c) => c.deskIndex !== null && c.brain.seat === 'chair' && c.brain.sit > 0.9) ?? list[0]
+       const rest = list.filter((c) => c !== desk)
+-      const m = meet.meetingSpots(['tv', 'cadeira'], 0).get('cadeira')
++      const m = meet.meetingSpots(['tv', 'cadeira']).get('cadeira')
+       const L = plan.LOUNGE_SEATS
+       const set = (c, p) => Object.assign(c.brain, { speed: 0, sit: 1, reaction: null, pending: [], prop: null, look: 'none', zzz: false, visible: true, actionT: 3, ...p })
+       set(desk, { action: 'type' })
+diff --git a/src/renderer/src/office3d/agentCast.test.ts b/src/renderer/src/office3d/agentCast.test.ts
+index fe75f6d..19f0ae2 100644
+--- a/src/renderer/src/office3d/agentCast.test.ts
++++ b/src/renderer/src/office3d/agentCast.test.ts
+@@ -1,43 +1,20 @@
+ /**
+  * Os avatares GLB de verdade (resources/office-agents/<papel>.glb, gerados pelo
+  * pipeline de scripts/office-agents). Cada arquivo que existe é aberto SEM o
+- * GLTFLoader (no vitest ele não carrega as imagens embutidas): o chunk JSON e o
+- * BIN viram uma cena three com os mesmos nós, ossos e a malha com pele (só as
+- * posições), e o prepareAvatar do app (agentRest.ts) prepara o esqueleto como
+- * no escritório. Confere a malha com pele, os ossos pelo mapBones, a máscara
+- * de tingimento (textura de metal/rugosidade + tintMeanLuma), o tamanho, a
+- * altura de bind da ficha e medidas plausíveis de pernas e braços.
++ * GLTFLoader (testGlb.ts), e o prepareAvatar do app (agentRest.ts) prepara o
++ * esqueleto como no escritório. Confere a malha com pele, os ossos pelo
++ * mapBones, a máscara de tingimento (textura de metal/rugosidade +
++ * tintMeanLuma), o tamanho, a altura de bind da ficha e medidas plausíveis de
++ * pernas e braços.
+  */
+-import { existsSync, readFileSync, statSync } from 'node:fs'
++import { existsSync, statSync } from 'node:fs'
+ import { join } from 'node:path'
+-import { Bone, Box3, BufferAttribute, BufferGeometry, Group, Matrix4, Object3D, PropertyBinding, SkinnedMesh, Vector3 } from 'three'
++import { Box3, Group, Matrix4, PropertyBinding, Vector3 } from 'three'
+ import { describe, expect, it } from 'vitest'
+ import { mapBones } from './agentBones'
+ import { prepareAvatar } from './agentRest'
++import { AVATAR_DIR as DIR, buildScene, floats, readGlb, type Gltf } from './testGlb'
+ 
+-interface GltfNode {
+-  name?: string
+-  children?: number[]
+-  mesh?: number
+-  skin?: number
+-  matrix?: number[]
+-  translation?: number[]
+-  rotation?: number[]
+-  scale?: number[]
+-}
+-
+-interface Gltf {
+-  scene?: number
+-  scenes: Array<{ nodes: number[] }>
+-  nodes: GltfNode[]
+-  meshes: Array<{ primitives: Array<{ attributes: Record<string, number>; material?: number }> }>
+-  skins?: Array<{ joints: number[]; inverseBindMatrices?: number }>
+-  accessors: Array<{ bufferView?: number; byteOffset?: number; count: number; componentType: number; type: string }>
+-  bufferViews: Array<{ byteOffset?: number; byteLength: number; byteStride?: number }>
+-  materials?: Array<{ pbrMetallicRoughness?: { metallicRoughnessTexture?: { index: number } }; extras?: { tintMeanLuma?: number } }>
+-}
+-
+-const DIR = join(process.cwd(), 'resources', 'office-agents')
+ /** Teto do arquivo de cada avatar (o instalador leva todos). */
+ const MAX_BYTES = 4 * 1024 * 1024
+ 
+@@ -54,68 +31,6 @@ const CAST: ReadonlyArray<{ role: string; height: number; tint: boolean }> = [
+   { role: 'central', height: 1.75, tint: false }
+ ]
+ 
+-function readGlb(path: string): { json: Gltf; bin: DataView } {
+-  const buf = readFileSync(path)
+-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+-  if (view.getUint32(0, true) !== 0x46546c67) throw new Error('não é GLB')
+-  let json: Gltf | null = null
+-  let bin: DataView | null = null
+-  for (let off = 12; off + 8 <= buf.length; ) {
+-    const len = view.getUint32(off, true)
+-    const type = view.getUint32(off + 4, true)
+-    if (type === 0x4e4f534a) json = JSON.parse(buf.subarray(off + 8, off + 8 + len).toString('utf8')) as Gltf
+-    else if (type === 0x004e4942) bin = new DataView(buf.buffer, buf.byteOffset + off + 8, len)
+-    off += 8 + len
+-  }
+-  if (!json || !bin) throw new Error('GLB sem JSON ou BIN')
+-  return { json, bin }
+-}
+-
+-const WIDTH: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }
+-
+-/** Um accessor float (posições, matrizes inversas de bind), respeitando o byteStride. */
+-function floats(g: Gltf, bin: DataView, index: number): Float32Array {
+-  const a = g.accessors[index]
+-  if (a.componentType !== 5126 || a.bufferView === undefined) throw new Error(`accessor ${index} não é float`)
+-  const bv = g.bufferViews[a.bufferView]
+-  const n = WIDTH[a.type]
+-  const stride = bv.byteStride || n * 4
+-  const base = (bv.byteOffset ?? 0) + (a.byteOffset ?? 0)
+-  const out = new Float32Array(a.count * n)
+-  for (let i = 0; i < a.count; i++) for (let k = 0; k < n; k++) out[i * n + k] = bin.getFloat32(base + i * stride + k * 4, true)
+-  return out
+-}
+-
+-/** A cena como o GLTFLoader monta: junta = Bone, nó com malha e pele = SkinnedMesh, o resto = Object3D. */
+-function buildScene(g: Gltf, bin: DataView): { scene: Group; skinned: SkinnedMesh[]; jointNames: string[] } {
+-  const joints = new Set((g.skins ?? []).flatMap((s) => s.joints))
+-  const skinned: SkinnedMesh[] = []
+-  const objs = g.nodes.map((n, i) => {
+-    let o: Object3D
+-    if (n.mesh !== undefined && n.skin !== undefined) {
+-      const geo = new BufferGeometry()
+-      geo.setAttribute('position', new BufferAttribute(floats(g, bin, g.meshes[n.mesh].primitives[0].attributes.POSITION), 3))
+-      const mesh = new SkinnedMesh(geo)
+-      skinned.push(mesh)
+-      o = mesh
+-    } else o = joints.has(i) ? new Bone() : new Object3D()
+-    o.name = PropertyBinding.sanitizeNodeName(n.name ?? '')
+-    if (n.matrix) new Matrix4().fromArray(n.matrix).decompose(o.position, o.quaternion, o.scale)
+-    else {
+-      if (n.translation) o.position.fromArray(n.translation)
+-      if (n.rotation) o.quaternion.fromArray(n.rotation)
+-      if (n.scale) o.scale.fromArray(n.scale)
+-    }
+-    return o
+-  })
+-  g.nodes.forEach((n, i) => n.children?.forEach((c) => objs[i].add(objs[c])))
+-  const scene = new Group()
+-  for (const i of g.scenes[g.scene ?? 0].nodes) scene.add(objs[i])
+-  scene.updateMatrixWorld(true)
+-  const jointNames = (g.skins?.[0]?.joints ?? []).map((j) => objs[j].name)
+-  return { scene, skinned, jointNames }
+-}
+-
+ /** Altura da malha no bind como o glTF desenha a pele: junta × matriz inversa de bind (o nó da malha não conta). */
+ function bindHeight(g: Gltf, bin: DataView, scene: Group): number {
+   const node = g.nodes.findIndex((n) => n.mesh !== undefined && n.skin !== undefined)
+diff --git a/src/renderer/src/office3d/agentPoses.test.ts b/src/renderer/src/office3d/agentPoses.test.ts
+index 4307797..0c038e2 100644
+--- a/src/renderer/src/office3d/agentPoses.test.ts
++++ b/src/renderer/src/office3d/agentPoses.test.ts
+@@ -48,10 +48,10 @@ describe('poses com as medidas do modelo (BodyMetrics)', () => {
+     sitLower(p, 'chair', 0, 1, 0.5, V1)
+     const hipJoint = V1.pelvisY + p[CH.pelvisY] - V1.hipDrop
+     expect(hipJoint).toBeCloseTo(SEAT_HEIGHT.chair + 0.09, 3)
+-    // A ponta do pé (sola + avanço): as pernas do v1 são curtas para a cadeira de 0,59 m — o pé esticado fica ~3 cm acima do chão.
++    // A ponta do pé (sola + avanço): na cadeira no padrão o pé do v1 fica apoiado no chão (nem afunda nem flutua).
+     const a = ankle(p, V1)
+     const toeY = a.y - Math.hypot(V1.soleDown, V1.toeAhead) * Math.sin(-p[CH.footL] + Math.atan2(V1.soleDown, V1.toeAhead))
+-    expect(toeY).toBeGreaterThanOrEqual(0)
++    expect(toeY).toBeGreaterThanOrEqual(-1e-4)
+     expect(toeY).toBeLessThan(0.04)
+   })
+ 
+diff --git a/src/renderer/src/office3d/chairModel.ts b/src/renderer/src/office3d/chairModel.ts
+index 60e2408..b4bb240 100644
+--- a/src/renderer/src/office3d/chairModel.ts
++++ b/src/renderer/src/office3d/chairModel.ts
+@@ -1,8 +1,10 @@
+ /**
+- * A cadeira de escritório do mockup (escritorio-studio, scene.js `chair`), nas
+- * MESMAS medidas: assento 0,64 × 0,62 (topo a 0,59 m), encosto 0,62 × 0,64
+- * inclinado com o topo a ~1,2 m, braços a 0,80 m em ±0,34, coluna a gás, cubo
+- * e base de 5 pés com rodízios no raio de 0,37.
++ * A cadeira de escritório do mockup (escritorio-studio, scene.js `chair`), com
++ * a largura e a profundidade dele: assento 0,64 × 0,62, encosto 0,62 × 0,64
++ * inclinado, braços em ±0,34, coluna a gás, cubo e base de 5 pés com rodízios
++ * no raio de 0,37. As alturas saem todas do topo do assento (SEAT_TOP, no
++ * padrão: 0,48 m): o encosto até ~0,61 acima dele e os braços ~0,21 acima,
++ * abaixo da face de baixo do tampo (cabem sob a mesa).
+  *
+  * Duas geometrias fundidas no referencial de QUEM SENTA (origem = o quadril,
+  * olhando para −Z): o estofado (assento e encosto) e o metal (coluna, base,
+@@ -14,8 +16,20 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
+ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+ import { SEAT_HEIGHT } from './poses'
+ 
+-/** Topo do assento (m): o almofadado do mockup, centro a 0,52 e 0,14 de altura. */
++/** Topo do assento (m): o almofadado do mockup, 0,14 de altura (centro a SEAT_TOP − 0,07). */
+ export const SEAT_TOP = SEAT_HEIGHT.chair
++/** Base do estofado do assento e topo da coluna a gás (que não o atravessa). */
++export const COLUMN_TOP = SEAT_TOP - 0.14
++/** O encosto (0,64 de altura, inclinado por BACK_TILT): o centro e a faixa que ele ocupa em y. */
++export const BACK_CENTER_Y = SEAT_TOP + 0.29
++export const BACK_BOTTOM = BACK_CENTER_Y - 0.32
++export const BACK_TOP = BACK_CENTER_Y + 0.32
++/** O apoio dos braços (0,045 de espessura): o topo ~0,21 acima do assento. */
++export const ARM_TOP = SEAT_TOP + 0.21
++export const ARM_BOTTOM = ARM_TOP - 0.045
++/** Pé da coluna a gás e do braço (este começa um pouco abaixo do assento). */
++const COLUMN_FOOT = 0.065
++const ARM_FOOT = SEAT_TOP - 0.035
+ /** Centro da cadeira em relação ao quadril de quem senta (para a frente, −Z). */
+ export const CHAIR_CENTER_Z = -0.055
+ /** A inclinação do encosto do mockup (rotation.x = −0,12: o alto dele vem um pouco para a frente). */
+@@ -59,12 +73,13 @@ function fuse(parts: BufferGeometry[]): BufferGeometry {
+ export function officeChairGeometries(): { top: BufferGeometry; base: BufferGeometry } {
+   const top = fuse([
+     rbox(0.64, 0.14, 0.62, 0.065, 0, SEAT_TOP - 0.07, 0),
+-    rbox(0.62, 0.64, 0.09, 0.065, 0, 0.88, 0.28, BACK_TILT)
++    rbox(0.62, 0.64, 0.09, 0.065, 0, BACK_CENTER_Y, 0.28, BACK_TILT)
+   ])
+   const base: BufferGeometry[] = [
+-    cyl(0.038, 0.046, 0.41, 0, 0.27, 0),
++    cyl(0.038, 0.046, COLUMN_TOP - COLUMN_FOOT, 0, (COLUMN_TOP + COLUMN_FOOT) / 2, 0),
+     cyl(0.065, 0.065, 0.08, 0, 0.12, 0),
+-    rbox(0.12, 0.38, 0.045, 0.01, 0, 0.66, 0.34)
++    // O suporte do encosto: do fundo do assento ao meio do encosto.
++    rbox(0.12, 0.38, 0.045, 0.01, 0, BACK_CENTER_Y - 0.22, 0.34)
+   ]
+   for (let i = 0; i < 5; i++) {
+     const a = (i * Math.PI * 2) / 5
+@@ -72,8 +87,9 @@ export function officeChairGeometries(): { top: BufferGeometry; base: BufferGeom
+     base.push(cyl(0.055, 0.055, 0.045, Math.sin(a) * 0.37, 0.065, Math.cos(a) * 0.37, 10, Math.PI / 2))
+   }
+   for (const side of [-1, 1]) {
+-    base.push(rbox(0.035, 0.25, 0.035, 0.01, side * 0.34, 0.68, 0.04))
+-    base.push(rbox(0.09, 0.045, 0.38, 0.02, side * 0.34, 0.795, -0.04))
++    const post = ARM_TOP - 0.0125 - ARM_FOOT
++    base.push(rbox(0.035, post, 0.035, 0.01, side * 0.34, ARM_FOOT + post / 2, 0.04))
++    base.push(rbox(0.09, ARM_TOP - ARM_BOTTOM, 0.38, 0.02, side * 0.34, (ARM_TOP + ARM_BOTTOM) / 2, -0.04))
+   }
+   return { top, base: fuse(base) }
+ }
+diff --git a/src/renderer/src/office3d/crowd.ts b/src/renderer/src/office3d/crowd.ts
+index 4de9496..5beed50 100644
+--- a/src/renderer/src/office3d/crowd.ts
++++ b/src/renderer/src/office3d/crowd.ts
+@@ -300,6 +300,8 @@ export class Crowd implements BrainWorld, BoardWorld {
+       return b
+     }
+     onStage(b, outside, m.offstage === true, this.t)
++    // Lugar fixo novo (a cadeira de Manager, o lugar do PO ou da memória): levanta e vai até ele, como no setVenues.
++    if (role === 'fixed' && b.mode === 'fixed' && Math.hypot(home.x - b.home.x, home.z - b.home.z) > 0.05) b.mode = 'init'
+     Object.assign(b, { role, style, roomId: c.roomId, projectId, home, desk, lounge, monitor, side })
+     this.yieldLounge(b)
+     return b
+diff --git a/src/renderer/src/office3d/destinations.test.ts b/src/renderer/src/office3d/destinations.test.ts
+index ccc65c1..14a178a 100644
+--- a/src/renderer/src/office3d/destinations.test.ts
++++ b/src/renderer/src/office3d/destinations.test.ts
+@@ -1,9 +1,9 @@
+ import { describe, expect, it } from 'vitest'
+-import type { OfficeCharacterModel } from '../office/adapter/model'
++import type { OfficeCharacterModel, OfficeModel } from '../office/adapter/model'
+ import { CALL_JUMP_S, setStatus, type Brain } from './brain'
+ import { Crowd } from './crowd'
+-import { layoutOffice, type Office3DLayout } from './layout'
+-import { managerSeat, meetingSpots, TV_SIDE } from './meetingRoom'
++import { layoutOffice, managerChairs, type Office3DLayout } from './layout'
++import { managerSeat, meetingSpots, TV_SIDE, type MeetingEntry } from './meetingRoom'
+ import { LINGER_S } from './memoryTrips'
+ import { CENTRAL_SPOT, FRONT_SPOTS, LOUNGE_SEATS, MEMORY_SPOT_X, MEMORY_SPOTS_Z, MEMORY_WAIT, OFFICE } from './officePlan'
+ 
+@@ -17,16 +17,43 @@ function model(key: string, roomId: string | null, extra: Partial<OfficeCharacte
+ const memoria = (p: string): OfficeCharacterModel => model(`role:${p}:memoria`, p, { role: 'memoria', placement: { kind: 'destination', papel: 'arquivo-memorias' }, active: true })
+ const central = model('conv:central', null, { placement: { kind: 'destination', papel: 'central' } })
+ 
++const office = (chars: OfficeCharacterModel[], projects: string[]): OfficeModel => ({ rooms: projects.map((id) => ({ id, projectKey: id, name: id, icon: null, principals: 1 })), characters: chars })
++const startStatus = (b: Brain, t: number): void => setStatus(b, { phase: b.role === 'fixed' ? 'working' : 'idle', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: 0 }, t)
++
+ function world(chars: OfficeCharacterModel[], projects: string[]): { crowd: Crowd; layout: Office3DLayout; brain: (k: string) => Brain } {
+-  const layout = layoutOffice({ rooms: projects.map((id) => ({ id, projectKey: id, name: id, icon: null, principals: 1 })), characters: chars })
++  const layout = layoutOffice(office(chars, projects))
+   const crowd = new Crowd(3)
+   crowd.syncRooms(layout.rooms)
+   const rooms = new Map(layout.rooms.map((r) => [r.id, r] as const))
+   for (const c of layout.characters) crowd.upsert(c, false, rooms)
+-  for (const b of crowd.list) setStatus(b, { phase: b.role === 'fixed' ? 'working' : 'idle', tool: null, contextPct: null, usageOut: false, stalled: false, idleSince: 0 }, 0)
++  for (const b of crowd.list) startStatus(b, 0)
+   return { crowd, layout, brain: (k) => crowd.brains.get(k)! }
+ }
+ 
++/** O layout novo sobre o anterior aplicado ao crowd, como a cena faz no sync (quem saiu do modelo sai do crowd). */
++function relayout(crowd: Crowd, prev: Office3DLayout, chars: OfficeCharacterModel[], projects: string[]): Office3DLayout {
++  const layout = layoutOffice(office(chars, projects), prev)
++  const rooms = new Map(layout.rooms.map((r) => [r.id, r] as const))
++  for (const k of [...crowd.brains.keys()]) if (!chars.some((c) => c.key === k)) crowd.drop(k, false)
++  for (const c of layout.characters) {
++    const fresh = !crowd.brains.has(c.key)
++    const b = crowd.upsert(c, false, rooms)
++    if (fresh) startStatus(b, crowd.t)
++  }
++  return layout
++}
++
++/** Dois sentados à vista na mesma cadeira (a posição arredondada a 1 cm): "a + b @ x,z". Fora de cena some no lugar (offstage.ts). */
++function semCadeiraDupla(crowd: Crowd): string[] {
++  const at = new Map<string, string[]>()
++  for (const b of crowd.list) {
++    if (!b.visible || b.sit !== 1 || b.seat !== 'chair') continue
++    const k = `${b.x.toFixed(2)},${b.z.toFixed(2)}`
++    at.set(k, [...(at.get(k) ?? []), b.key])
++  }
++  return [...at].filter(([, ks]) => ks.length > 1).map(([k, ks]) => `${ks.sort().join(' + ')} @ ${k}`)
++}
++
+ function run(crowd: Crowd, seconds: number, dt = 0.1): void {
+   for (let i = 0; i < Math.round(seconds / dt); i++) crowd.step(dt, crowd.t + dt, 0, 30)
+ }
+@@ -205,7 +232,7 @@ describe('o Agent Manager (planejamento) à cabeceira da mesa de reunião', () =
+     }
+     expect([...acts].sort()).toEqual(['assist', 'web'])
+     // Na fila da sala, ninguém senta na cadeira do Manager.
+-    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4'], 1)
++    const spots = meetingSpots(['k0', 'k1', 'k2', 'k3', 'k4'], managerChairs(layout))
+     for (const s of spots.values()) expect(Math.hypot(s.x - seat.x, s.z - seat.z)).toBeGreaterThan(0.1)
+   })
+ })
+@@ -252,3 +279,73 @@ describe('o chamado do agente (app_chamar_usuario)', () => {
+     expect(Math.hypot(b.x - TV_SIDE.x, b.z - TV_SIDE.z)).toBeGreaterThan(1)
+   })
+ })
++
++describe('sala de reunião: uma cadeira por agente (a fila da TV e os Agent Managers)', () => {
++  const manager = (k: string, extra: Partial<OfficeCharacterModel> = {}): OfficeCharacterModel =>
++    model(k, 'a', { placement: { kind: 'destination', papel: 'reuniao-cabeceira' }, ...extra })
++  const call = (...ks: string[]): MeetingEntry[] => ks.map((key) => ({ key, call: true }))
++  const near = (b: Brain, s: { x: number; z: number }): boolean => Math.hypot(b.x - s.x, b.z - s.z) < 0.05
++
++  it('fila velha: quem espera na cabeceira cede a cadeira ao Manager que chega (a fila é refeita com o layout novo)', () => {
++    const chars = [model('conv:a', 'a'), model('conv:b', 'a')]
++    const { crowd, layout, brain } = world(chars, ['a'])
++    const order = call('conv:a', 'conv:b')
++    run(crowd, 2)
++    crowd.setVenues(meetingSpots(order, managerChairs(layout)))
++    run(crowd, 30)
++    expect(near(brain('conv:b'), managerSeat(0)!)).toBe(true)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    const next = relayout(crowd, layout, [...chars, manager('conv:p')], ['a'])
++    crowd.setVenues(meetingSpots(order, managerChairs(next)))
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    expect(near(brain('conv:p'), managerSeat(0)!)).toBe(true)
++    expect([brain('conv:b').mode, brain('conv:b').seat, brain('conv:b').sit]).toEqual(['meeting', 'chair', 1])
++  })
++
++  it('o Manager que fica não troca de cadeira quando outro sai; quem chega pega a livre', () => {
++    const a = model('conv:a', 'a')
++    const { crowd, layout, brain } = world([a, manager('conv:p1'), manager('conv:p2')], ['a'])
++    run(crowd, 30)
++    expect([near(brain('conv:p1'), managerSeat(0)!), near(brain('conv:p2'), managerSeat(1)!)]).toEqual([true, true])
++    // p1 enviou o plano: fora de cena.
++    const l2 = relayout(crowd, layout, [a, manager('conv:p1', { offstage: true }), manager('conv:p2')], ['a'])
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    const l3 = relayout(crowd, l2, [a, manager('conv:p1', { offstage: true }), manager('conv:p2'), manager('conv:p3')], ['a'])
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    expect([near(brain('conv:p2'), managerSeat(1)!), near(brain('conv:p3'), managerSeat(0)!)]).toEqual([true, true])
++    // p1 sai do modelo e p4 chega: ninguém se mexe, p4 senta na cadeira que sobrou.
++    relayout(crowd, l3, [a, manager('conv:p2'), manager('conv:p3'), manager('conv:p4')], ['a'])
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    expect([near(brain('conv:p2'), managerSeat(1)!), near(brain('conv:p3'), managerSeat(0)!), near(brain('conv:p4'), managerSeat(2)!)]).toEqual([true, true, true])
++  })
++
++  it('lugar fixo dado por contador (a memória) que muda no layout: levanta e vai ao novo', () => {
++    const chars = [model('conv:a', 'a'), model('conv:b', 'b'), memoria('a'), memoria('b')]
++    const { crowd, layout, brain } = world(chars, ['a', 'b'])
++    run(crowd, 30)
++    const mb = brain('role:b:memoria')
++    expect(Math.hypot(mb.x - MEMORY_SPOT_X, mb.z - MEMORY_SPOTS_Z[1])).toBeLessThan(0.05)
++    relayout(crowd, layout, chars.filter((c) => c.key !== 'role:a:memoria'), ['a', 'b'])
++    run(crowd, 30)
++    expect(Math.hypot(mb.x - MEMORY_SPOT_X, mb.z - MEMORY_SPOTS_Z[0])).toBeLessThan(0.05)
++  })
++
++  it('dois chamados esperando com dois Managers sentados; o chamado atendido faz a fila andar sem sentar no colo de ninguém', () => {
++    const { crowd, layout, brain } = world([model('conv:a', 'a'), model('conv:b', 'a'), model('conv:c', 'a'), manager('conv:p1'), manager('conv:p2')], ['a'])
++    run(crowd, 2)
++    crowd.setVenues(meetingSpots(call('conv:a', 'conv:b', 'conv:c'), managerChairs(layout)))
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    expect(['conv:b', 'conv:c'].map((k) => [brain(k).seat, brain(k).sit])).toEqual([['chair', 1], ['chair', 1]])
++    // a foi atendido: b vai ao lado da TV e c continua sentado (numa cadeira que não é de Manager).
++    crowd.setVenues(meetingSpots(call('conv:b', 'conv:c'), managerChairs(layout)))
++    run(crowd, 30)
++    expect(semCadeiraDupla(crowd)).toEqual([])
++    expect(near(brain('conv:b'), TV_SIDE)).toBe(true)
++    expect([brain('conv:c').seat, brain('conv:c').sit]).toEqual(['chair', 1])
++  })
++})
+diff --git a/src/renderer/src/office3d/gestures.ts b/src/renderer/src/office3d/gestures.ts
+index eefa9d1..acd942b 100644
+--- a/src/renderer/src/office3d/gestures.ts
++++ b/src/renderer/src/office3d/gestures.ts
+@@ -287,13 +287,15 @@ function leisurePose(out: Pose, a: Action, t: number, k: number): void {
+       out[CH.lean] = -0.02
+       return
+     case 'napDesk': {
+-      // Cochilo na estação: debruçado sobre a mesa, a cabeça deitada nos braços cruzados sobre o tampo.
+-      // Cotovelos abertos apoiados no tampo e as mãos juntas sob a cabeça (ângulos buscados no rig).
+-      const lean = 1.03 + 0.015 * Math.sin(1.25 * t)
+-      arms(out, 0.95, 1.35, 1.9, 0.95, 1.35, 1.9)
+-      out[CH.twistL] = out[CH.twistR] = 1.25
++      // Cochilo na estação: debruçado sobre a mesa, a cabeça deitada nos braços sobre o tampo.
++      // Cotovelos apoiados no tampo e as mãos juntas sob a cabeça (ângulos buscados no rig). Na cadeira no
++      // padrão o tampo fica na altura da barriga: o tronco inclina só até a borda (~0,7 rad) e os antebraços
++      // sobem do tampo até a cabeça.
++      const lean = 0.695 + 0.01 * Math.sin(1.25 * t)
++      arms(out, 1.3, 0.6, 2.25, 1.3, 0.6, 2.25)
++      out[CH.twistL] = out[CH.twistR] = 1
+       out[CH.lean] = lean
+-      out[CH.headPitch] = 0.2
++      out[CH.headPitch] = 0.35
+       out[CH.headRoll] = 0.45
+       out[CH.eyes] = 0
+       out[CH.mouth] = 0.1
+diff --git a/src/renderer/src/office3d/layout.ts b/src/renderer/src/office3d/layout.ts
+index 761d785..0699a0d 100644
+--- a/src/renderer/src/office3d/layout.ts
++++ b/src/renderer/src/office3d/layout.ts
+@@ -131,9 +131,10 @@ export interface Office3DLayout {
+   rooms: RoomLayout[]
+   projects: ProjectLayout[]
+   characters: CharacterLayout[]
+-  /** Estado para a próxima chamada: mesa por personagem e ilhas por projeto. */
++  /** Estado para a próxima chamada: mesa por personagem, ilhas por projeto e a cadeira (managerSeat) de cada Agent Manager. */
+   deskOf: Record<string, number>
+   islandOf: Record<string, number[]>
++  managerChairOf: Record<string, number>
+ }
+ 
+ /** O escritório com as mesas e ilhas no estado dado (sem dono por padrão). */
+@@ -152,7 +153,7 @@ function officeRoom(): RoomLayout {
+   }
+ }
+ 
+-export const EMPTY_LAYOUT: Office3DLayout = { rooms: [officeRoom()], projects: [], characters: [], deskOf: {}, islandOf: {} }
++export const EMPTY_LAYOUT: Office3DLayout = { rooms: [officeRoom()], projects: [], characters: [], deskOf: {}, islandOf: {}, managerChairOf: {} }
+ 
+ /** Caixa (no chão) que envolve as salas; null sem salas. */
+ export function buildingBounds(rooms: readonly RoomLayout[]): { minX: number; maxX: number; minZ: number; maxZ: number } | null {
+@@ -172,6 +173,10 @@ export function monitorPosition(desk: Pick<DeskLayout, 'x' | 'z'> & { yaw?: numb
+   return { x: p.x, y: MONITOR_Y, z: p.z, yaw }
+ }
+ 
++/** As cadeiras (x, z) da sala de reunião ocupadas pelos Agent Managers: a fila da TV (meetingSpots) não senta nelas. */
++export const managerChairs = (layout: Pick<Office3DLayout, 'characters'>): Array<{ x: number; z: number }> =>
++  layout.characters.flatMap((c) => (c.spot === 'manager' ? [{ x: c.x, z: c.z }] : []))
++
+ /** O projeto de um personagem: o roomId do modelo (null para a Central). */
+ export const projectOf = (c: Pick<OfficeCharacterModel, 'roomId'>): string | null => c.roomId
+ 
+@@ -252,8 +257,27 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
+     isl.icon = m?.icon ?? null
+   }
+ 
++  // Cabeceiras da sala de reunião: como as mesas, o Manager que já tinha cadeira fica com ela; quem chega pega a primeira livre.
++  const managerChairOf: Record<string, number> = {}
++  const managers = model.characters.filter((c) => !c.offstage && c.placement.kind === 'destination' && c.placement.papel === 'reuniao-cabeceira')
++  const held = new Set<number>()
++  for (const c of managers) {
++    const i = prev.managerChairOf[c.key]
++    if (i === undefined || held.has(i)) continue
++    held.add(i)
++    managerChairOf[c.key] = i
++  }
++  for (const c of managers) {
++    if (managerChairOf[c.key] !== undefined) continue
++    let i = 0
++    while (held.has(i)) i++
++    if (!managerSeat(i)) break
++    held.add(i)
++    managerChairOf[c.key] = i
++  }
++
+   const prevLounge = new Map(prev.characters.flatMap((c): Array<[string, number]> => (c.lounge !== null ? [[c.key, c.lounge]] : [])))
+-  const characters = placeCharacters(model, room, deskOf, prevLounge)
++  const characters = placeCharacters(model, room, deskOf, prevLounge, managerChairOf)
+   const agents = new Map<string, number>()
+   for (const c of model.characters) {
+     const p = projectOf(c)
+@@ -262,16 +286,22 @@ export function layoutOffice(model: OfficeModel, prev: Office3DLayout = EMPTY_LA
+   const projects: ProjectLayout[] = model.rooms.map((r) => ({ id: r.id, name: r.name, icon: r.icon ?? null, islands: islandsOf(r.id), agents: agents.get(r.id) ?? 0 }))
+   const islandOf: Record<string, number[]> = {}
+   for (const p of projects) if (p.islands.length > 0) islandOf[p.id] = p.islands
+-  return { rooms: [room], projects, characters, deskOf, islandOf }
++  return { rooms: [room], projects, characters, deskOf, islandOf, managerChairOf }
+ }
+ 
+ /** Onde cada personagem fica parado (a mesa, o lounge, o lugar fixo ou ao lado do pai). */
+-function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<string, number>, prevLounge: ReadonlyMap<string, number>): CharacterLayout[] {
++function placeCharacters(
++  model: OfficeModel,
++  room: RoomLayout,
++  deskOf: Record<string, number>,
++  prevLounge: ReadonlyMap<string, number>,
++  managerChairOf: Record<string, number>
++): CharacterLayout[] {
+   const out: CharacterLayout[] = []
+   const byKey = new Map<string, CharacterLayout>()
+   const besideCount = new Map<string, number>()
+   const used = new Set<string>()
+-  const counters = { po: 0, memory: 0, plaza: 0, manager: 0 }
++  const counters = { po: 0, memory: 0, plaza: 0 }
+   // Lounge estável como as mesas: quem já tinha lugar fica com ele (ninguém é empurrado); os novos pegam os livres.
+   const loungeOf = new Map<string, number>()
+   const taken = new Set<number>()
+@@ -361,8 +391,9 @@ function placeCharacters(model: OfficeModel, room: RoomLayout, deskOf: Record<st
+       } else if (p.papel === 'central') {
+         o = base(c, CENTRAL_SPOT.x, CENTRAL_SPOT.z, CENTRAL_SPOT.yaw, 'central')
+       } else if (p.papel === 'reuniao-cabeceira') {
+-        // O Agent Manager: à cabeceira da mesa da sala de reunião (sem cadeira livre, na praça).
+-        const s = managerSeat(counters.manager++)
++        // O Agent Manager: na cadeira dele à cabeceira da mesa da sala de reunião (sem cadeira livre, na praça).
++        const i = managerChairOf[c.key]
++        const s = i === undefined ? null : managerSeat(i)
+         o = s ? base(c, s.x, s.z, s.yaw, 'manager') : plaza(c)
+       } else o = plaza(c)
+     } else {
+diff --git a/src/renderer/src/office3d/meetingRoom.ts b/src/renderer/src/office3d/meetingRoom.ts
+index c95a5f7..5afe410 100644
+--- a/src/renderer/src/office3d/meetingRoom.ts
++++ b/src/renderer/src/office3d/meetingRoom.ts
+@@ -7,8 +7,9 @@
+  *
+  *   managerSeat(i)      a cadeira do i-ésimo Agent Manager (planejamento): as
+  *                       cabeceiras, depois as do fundo de fora para dentro;
+- *   meetingSpots(fila, managers)  fila[0] fica ao lado da TV, o resto espera sentado na
+- *                       ordem da fila; quem não cabe fica de fora. `call` marca
++ *   meetingSpots(fila, ocupadas)  fila[0] fica ao lado da TV, o resto espera sentado na
++ *                       ordem da fila, fora das cadeiras ocupadas pelos
++ *                       Managers; quem não cabe fica de fora. `call` marca
+  *                       quem chamou o usuário (acena para a câmera em vez de
+  *                       olhar a TV).
+  */
+@@ -74,11 +75,10 @@ export function managerSeat(i: number): (Spot & { standX: number; standZ: number
+   return { ...c, standX: st.x, standZ: st.z }
+ }
+ 
+-export function meetingSpots(order: readonly MeetingEntry[], managers = 0): Map<string, MeetingSpot> {
++/** `held`: as cadeiras (x, z) onde os Managers estão sentados (layout.ts managerChairs) — a fila não senta nelas. */
++export function meetingSpots(order: readonly MeetingEntry[], held: readonly { x: number; z: number }[] = []): Map<string, MeetingSpot> {
+   const out = new Map<string, MeetingSpot>()
+-  // As cadeiras dos Managers ficam com eles.
+-  const held = MANAGER_CHAIRS.slice(0, managers)
+-  const chairs = WAIT_CHAIRS.filter((c) => !held.some((h) => Math.abs(h.x - c.x) < 1e-6 && Math.abs(h.z - c.z) < 1e-6))
++  const chairs = WAIT_CHAIRS.filter((c) => !held.some((h) => Math.abs(h.x - c.x) < 1e-3 && Math.abs(h.z - c.z) < 1e-3))
+   let i = 0
+   for (const e of order) {
+     const key = typeof e === 'string' ? e : e.key
+diff --git a/src/renderer/src/office3d/officePlan.ts b/src/renderer/src/office3d/officePlan.ts
+index a33a04f..e7c1b97 100644
+--- a/src/renderer/src/office3d/officePlan.ts
++++ b/src/renderer/src/office3d/officePlan.ts
+@@ -5,8 +5,9 @@
+  * um número aqui muda o desenho, a grade de navegação e as mesas juntos.
+  *
+  * Eixos como no resto do 3D: X à direita, Z para a câmera, Y para cima; metros
+- * já na escala dos bonecos (o mockup v2 × 0,85 na planta; tampo a 0,75 m e
+- * assento perto de 0,36 m). A frente (z alto) é aberta, como maquete.
++ * já na escala dos bonecos (o mockup v2 × 0,85 na planta). Alturas no padrão de
++ * escritório: o tampo com o topo a 0,775 m e o assento da cadeira a 0,48 m
++ * (poses.ts SEAT_HEIGHT). A frente (z alto) é aberta, como maquete.
+  *
+  * Arranjo em praça: 4 ilhas em U de 6 estações (ordem fixa de reserva:
+  * frente-esquerda, frente-direita, trás-esquerda, trás-direita), o console da
+@@ -67,11 +68,13 @@ export const DESK_D = 1.2
+ export const MONITOR_Y = 1.12
+ export const MONITOR_BACK = 0.3
+ /**
+- * Onde fica o quadril de quem senta, a partir do centro da mesa: 0,35 m atrás
+- * da borda do tampo. A cadeira do mockup (chairModel.ts) tem os braços a 0,80 m,
+- * acima do tampo: a frente deles para na borda; os joelhos ficam sob o tampo.
++ * Onde fica o quadril de quem senta, a partir do centro da mesa: 0,29 m atrás
++ * da borda do tampo, perto o bastante para o braço mais curto do elenco chegar
++ * ao teclado sem esticar (seatedReach.test.ts). Os braços da cadeira
++ * (chairModel.ts, ~0,69 m) ficam abaixo da face de baixo do tampo; os joelhos
++ * ficam sob o tampo.
+  */
+-export const SEAT_FRONT = 0.95
++export const SEAT_FRONT = 0.89
+ /** Teclado, a partir do centro da mesa: 0,15 m para dentro da borda (ao alcance de quem senta). */
+ export const KEYBOARD_FRONT = 0.45
+ /** Quanto a cadeira recua (m), ao longo do eixo da mesa, no meio do sentar/levantar. */
+diff --git a/src/renderer/src/office3d/poses.test.ts b/src/renderer/src/office3d/poses.test.ts
+index 7f12f98..f1f3ca5 100644
+--- a/src/renderer/src/office3d/poses.test.ts
++++ b/src/renderer/src/office3d/poses.test.ts
+@@ -100,14 +100,15 @@ describe('sentar', () => {
+   it('na cadeira: quadril no assento e pés no chão; no sofá do lounge: afunda um pouco, pernas para a frente e pés no chão', () => {
+     const p = newPose()
+     sitLower(p, 'chair')
+-    // Quadril sobre o assento da cadeira do mockup (topo a 0,59); cadeira alta: o calcanhar sobe um pouco (a ponta do pé no chão).
++    // Quadril sobre o assento da cadeira (no padrão); o pé apoiado inteiro no chão: o tornozelo na altura dele em pé e a sola reta.
+     const chairHip = PELVIS_Y + p[CH.pelvisY]
+     expect(chairHip).toBeCloseTo(SEAT_HEIGHT.chair + 0.12, 2)
+-    expect(ankle(p, 'L').y - REST).toBeGreaterThanOrEqual(0)
+-    expect(ankle(p, 'L').y - REST).toBeLessThan(0.1)
+-    expect(p[CH.footL]).toBeLessThan(0)
++    expect(ankle(p, 'L').y - REST).toBeGreaterThanOrEqual(-1e-4)
++    expect(ankle(p, 'L').y - REST).toBeLessThan(0.02)
++    expect(Math.abs(p[CH.footL])).toBeLessThan(0.05)
+     sitLower(p, 'sofa')
+-    expect(PELVIS_Y + p[CH.pelvisY]).toBeLessThan(chairHip)
++    // No sofá o quadril afunda mais no estofado do que na cadeira.
++    expect(PELVIS_Y + p[CH.pelvisY] - SEAT_HEIGHT.sofa).toBeLessThan(chairHip - SEAT_HEIGHT.chair)
+     expect(ankle(p, 'L').x).toBeGreaterThan(0.15)
+     expect(Math.abs(ankle(p, 'L').y - REST)).toBeLessThan(0.05)
+   })
+diff --git a/src/renderer/src/office3d/poses.ts b/src/renderer/src/office3d/poses.ts
+index 57e64b6..9ee5076 100644
+--- a/src/renderer/src/office3d/poses.ts
++++ b/src/renderer/src/office3d/poses.ts
+@@ -310,21 +310,24 @@ export function standPose(out: Pose): void {
+ export type SeatKind = 'chair' | 'sofa' | 'desk'
+ 
+ /**
+- * Altura (m) de cada assento: a cadeira do mockup (chairModel.ts, topo do
+- * assento a 0,59), o sofá do lounge e o tampo da mesa (0,775).
++ * Altura (m) de cada assento: a cadeira de escritório no padrão (NBR 13962,
++ * assento entre 0,42 e 0,52; aqui 0,48 sob o tampo a 0,775, a altura em que o
++ * braço mais curto e o mais longo do elenco digitam com o antebraço quase
++ * horizontal — seatedReach.test.ts; chairModel.ts deriva a cadeira inteira
++ * dela), o sofá do lounge e o tampo da mesa.
+  */
+-export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.59, sofa: 0.6, desk: 0.775 }
++export const SEAT_HEIGHT: Record<SeatKind, number> = { chair: 0.48, sofa: 0.6, desk: 0.775 }
+ 
+ /** Quanto o quadril (a junta) fica acima do assento: a carne que apoia, menos o que o estofado afunda. */
+-const SIT_ON: Record<SeatKind, number> = { chair: 0.09, sofa: 0.04, desk: 0.07 }
++export const SIT_ON: Record<SeatKind, number> = { chair: 0.09, sofa: 0.04, desk: 0.07 }
+ 
+ const acosClamp = (v: number): number => Math.acos(v < -1 ? -1 : v > 1 ? 1 : v)
+ 
+ /**
+  * Pernas e quadril sentados (o tronco é da ação), calculados pela altura do
+  * assento e pela escala do boneco (`scale`: o subagente é menor, o assento é o
+- * mesmo). Cadeira: canela na vertical e os calcanhares um pouco erguidos (a
+- * ponta do pé no chão). Sofá: os pés esticados à frente. Beira da mesa: coxas
++ * mesmo). Cadeira: coxa perto da horizontal, canela perto da vertical e o pé
++ * apoiado no chão. Sofá: os pés esticados à frente. Beira da mesa: coxas
+  * quase na horizontal e as canelas soltas, balançando com o relógio `t`. `b`:
+  * as medidas do corpo (o modelo GLB; BODY no boneco).
+  */
+@@ -359,16 +362,18 @@ export function sitLower(out: Pose, seat: SeatKind, t = 0, scale = 1, vary = 0.5
+     out[CH.footL] = out[CH.footR] = 0.05
+     return
+   }
+-  // Cadeira (alta, a do mockup): a coxa quase na horizontal sobre o assento (o joelho cabe sob o tampo)
+-  // e o calcanhar erguido, a ponta do pé no chão. Cada um senta do seu jeito (`vary`, 0..1 pela seed):
+-  // um pé mais à frente e o outro recolhido sob o joelho, e de tempos em tempos troca o apoio.
+-  const knee = hip - 0.06 / scale
+-  const thigh = acosClamp((hip - knee) / THIGH)
++  // Cadeira (no padrão): o pé apoiado inteiro no chão, como no sofá, e a coxa desce do quadril até o joelho
++  // (quase na horizontal; o joelho cabe sob o tampo). A canela longa que deixaria o joelho acima do quadril
++  // para na coxa horizontal e ergue o calcanhar (a ponta do pé no chão). Cada um senta do seu jeito
++  // (`vary`, 0..1 pela seed): um pé mais à frente e o outro recolhido sob o joelho, e de tempos em tempos
++  // troca o apoio.
+   const shift = 0.05 * Math.sin(0.23 * t + vary * 6.28)
+   const reach = Math.hypot(SOLE_DOWN, TOE_AHEAD)
+   const tilts = [0.06 + 0.26 * vary + shift, 0.04 + 0.2 * (1 - vary) - shift]
+   ;([[CH.legL, CH.kneeL, CH.footL], [CH.legR, CH.kneeR, CH.footR]] as const).forEach(([leg, kn, foot], i) => {
+     const tilt = Math.max(0, tilts[i])
++    const knee = Math.min(hip, b.ankleY + SHIN * Math.cos(tilt))
++    const thigh = acosClamp((hip - knee) / THIGH)
+     out[leg] = thigh
+     out[kn] = thigh - tilt
+     const ankle = knee - SHIN * Math.cos(tilt)
+diff --git a/src/renderer/src/office3d/reach.ts b/src/renderer/src/office3d/reach.ts
+index 0e4a060..cc80489 100644
+--- a/src/renderer/src/office3d/reach.ts
++++ b/src/renderer/src/office3d/reach.ts
+@@ -6,11 +6,11 @@
+  * (motionPlayer.ts, camada aditiva): aqui fica a ALTURA certa das mãos.
+  */
+ import { CENTRAL_SPOT, CONSOLE_KEYS, DESK_D, DESK_HEIGHT, KEYBOARD_FRONT, SEAT_FRONT } from './officePlan'
+-import { BODY, CH, SEAT_HEIGHT, type BodyMetrics, type Pose } from './poses'
++import { BODY, CH, SEAT_HEIGHT, SIT_ON, type BodyMetrics, type Pose } from './poses'
+ 
+-/** Tampo da estação (m) e o pivô da bacia de quem senta na cadeira dela (sem escala). */
++/** Tampo da estação (m) e o pivô da bacia de quem senta na cadeira dela (sem escala): a mesma altura do sitLower. */
+ export const DESK_TOP = DESK_HEIGHT + 0.025
+-export const SEATED_HIP = SEAT_HEIGHT.chair + 0.075
++export const SEATED_HIP = SEAT_HEIGHT.chair + SIT_ON.chair
+ /** À frente do quadril (m): o punho no teclado, as mãos apoiadas logo depois da borda do tampo. */
+ export const KEYS_AHEAD = SEAT_FRONT - KEYBOARD_FRONT - 0.05
+ export const EDGE_AHEAD = SEAT_FRONT - DESK_D / 2 + 0.13
+@@ -45,6 +45,21 @@ export function reach(y: number, ahead: number, lean: number, scale = 1, b: Body
+   return solve(y, ahead, lean, SEATED_HIP + b.hipDrop * scale, scale, b)
+ }
+ 
++/**
++ * Diagnóstico do `reach` (para os testes de ergonomia): se o punho chega ao
++ * alvo com 1 cm de folga (`reached`; sem ela o `solve` estica o braço inteiro e
++ * para no limite), a folga em m e o ângulo do antebraço com a horizontal em
++ * rad (`forearm`; positivo = a mão acima do cotovelo).
++ */
++export function reachInfo(y: number, ahead: number, lean: number, scale = 1, b: BodyMetrics = BODY): { reached: boolean; slack: number; forearm: number } {
++  const pelvis = SEATED_HIP + b.hipDrop * scale
++  const dist = Math.hypot(ahead / scale - b.shoulderY * Math.sin(lean), b.shoulderY * Math.cos(lean) - (y - pelvis) / scale)
++  const L = b.upperArm + b.forearm
++  const r = solve(y, ahead, lean, pelvis, scale, b)
++  // O braço sai do ombro a (fwd − lean) da vertical e o antebraço dobra mais `elbow` para a frente.
++  return { reached: dist <= L - 0.01 / scale, slack: (L - dist) * scale, forearm: r.fwd - lean + r.elbow - Math.PI / 2 }
++}
++
+ /** Em pé (o pivô da bacia na altura das pernas esticadas). */
+ export function reachStanding(y: number, ahead: number, lean: number, scale = 1, b: BodyMetrics = BODY): typeof ik {
+   return solve(y, ahead, lean, b.pelvisY * scale, scale, b)
+diff --git a/src/renderer/src/office3d/scene.ts b/src/renderer/src/office3d/scene.ts
+index 8aacb82..d8effea 100644
+--- a/src/renderer/src/office3d/scene.ts
++++ b/src/renderer/src/office3d/scene.ts
+@@ -33,12 +33,12 @@ import { CHAIR_PULL } from './decorIslands'
+ import { doorWant, swingDoors } from './doors'
+ import { OfficeEnergy } from './energy'
+ import { createKit, type Kit } from './kit'
+-import { OFFICE_ID, type CharacterLayout, type Office3DLayout, type RoomLayout } from './layout'
++import { managerChairs, OFFICE_ID, type CharacterLayout, type Office3DLayout, type RoomLayout } from './layout'
+ import { zoneAt, type ZoneId } from './officePlan'
+ import { CHAR_LOD_BOUNDS, FOG_FAR, FOG_NEAR, lodLevel, type Lod } from './lod'
+ import { Particles } from './particles'
+ import type { OfficePower, PowerEvent } from './power'
+-import { meetingSpots } from './meetingRoom'
++import { meetingSpots, type MeetingEntry } from './meetingRoom'
+ import { Projectors } from './projectors'
+ import { createPropKit, type PropKit } from './props'
+ import { setRoomLevel } from './roomLod'
+@@ -85,6 +85,8 @@ export class OfficeScene {
+   private readonly frame: FrameCtx = { t: 0, camX: 0, camY: 8, camZ: 14, particles: null }
+   private readonly raycaster = new Raycaster()
+   private layout: Office3DLayout | null = null
++  /** A última fila da sala de reunião (projectors.onRoom). */
++  private roomOrder: readonly MeetingEntry[] = []
+   private focusKey: string | null = null
+   /** Mesa do foco ("sala#índice"; '' sem foco): mudar troca a cadeira escondida (e a sombra). */
+   private focusDesk = ''
+@@ -127,8 +129,11 @@ export class OfficeScene {
+     this.projectors = new Projectors(this.kit, () => this.energy.zoneDark('meeting'))
+     this.projectors.onDirty = () => this.onDirty()
+     // Quem chamou o usuário e quem testa vão à sala de reunião (o 1º ao lado da TV, os outros esperam sentados
+-    // nas cadeiras que os Agent Managers não ocupam).
+-    this.projectors.onRoom = (order) => this.crowd.setVenues(meetingSpots(order, this.layout?.characters.filter((c) => c.spot === 'manager').length ?? 0))
++    // nas cadeiras que os Agent Managers não ocupam). A fila é refeita também a cada layout (sync): um Manager novo.
++    this.projectors.onRoom = (order) => {
++      this.roomOrder = order
++      this.crowd.setVenues(meetingSpots(order, this.layout ? managerChairs(this.layout) : []))
++    }
+     // A TV acendeu: quem está perto dela (e à vista) olha para ela.
+     this.projectors.onLit = (_id, x, y, z) => {
+       for (const v of this.charList) if (!v.culled && Math.hypot(v.brain.x - x, v.brain.z - z) < TV_GLANCE_M) v.glance(x, y, z)
+@@ -193,6 +198,8 @@ export class OfficeScene {
+     }
+ 
+     this.syncCharacters(layout, lit, life)
++    // As cadeiras dos Managers podem ter mudado: a fila da TV não senta nelas (setVenues ignora quem não mudou de lugar).
++    this.crowd.setVenues(meetingSpots(this.roomOrder, managerChairs(layout)))
+     if (life) this.crowd.apply(life)
+     const projects = new Map(layout.projects.map((p) => [p.id, p.name]))
+     const convProject = new Map(layout.characters.map((c) => [c.model.convId, c.projectId ? (projects.get(c.projectId) ?? null) : null]))
+diff --git a/src/renderer/src/office3d/seatedPose.test.ts b/src/renderer/src/office3d/seatedPose.test.ts
+index 15fc531..8164789 100644
+--- a/src/renderer/src/office3d/seatedPose.test.ts
++++ b/src/renderer/src/office3d/seatedPose.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from 'vitest'
+-import { Box3, BufferGeometry, Group, InstancedMesh, Mesh, Vector3 } from 'three'
+-import { BACK_TILT, CHAIR_CENTER_Z, SEAT_TOP } from './chairModel'
++import { Box3, BufferAttribute, BufferGeometry, Group, InstancedMesh, Mesh, Vector3 } from 'three'
++import { ARM_BOTTOM, ARM_TOP, BACK_BOTTOM, BACK_CENTER_Y, BACK_TILT, BACK_TOP, CHAIR_CENTER_Z, COLUMN_TOP, officeChairGeometries, SEAT_TOP } from './chairModel'
+ import { actionPose, reactionPose } from './gestures'
+ import { createKit } from './kit'
+ import { DESK_D, DESK_HEIGHT, DESK_W, KEYBOARD_FRONT, MONITOR_BACK, MONITOR_Y, PARTITION_BACK, SEAT_FRONT } from './officePlan'
+@@ -20,11 +20,14 @@ import { applyPose, buildRig } from './rig'
+  */
+ const SEAT_GIVE = 0.035
+ /** O encosto (BACK_TILT, o do mockup: o alto vem para a frente): a face da frente na altura y, no referencial de quem senta. */
+-const backFront = (y: number): number => CHAIR_CENTER_Z + 0.28 + (y - 0.88) * Math.tan(BACK_TILT) - 0.045
++const backFront = (y: number): number => CHAIR_CENTER_Z + 0.28 + (y - BACK_CENTER_Y) * Math.tan(BACK_TILT) - 0.045
+ /** Uma faixa do encosto entre y0 e y1 (começa na frente mais adiantada dela). */
+ const backBand = (y0: number, y1: number): Box3 => box(-0.31, 0.31, y0, y1, Math.min(backFront(y0), backFront(y1)), Math.max(backFront(y0), backFront(y1)) + 0.09)
+ const EPS = 0.008
+ const edge = SEAT_FRONT - DESK_D / 2
++/** O encosto em 4 faixas (2 cm para dentro da borda de cima e da de baixo). */
++const BAND = (BACK_TOP - BACK_BOTTOM - 0.04) / 4
++const band = (i: number): Box3 => backBand(BACK_BOTTOM + 0.02 + i * BAND, BACK_BOTTOM + 0.02 + (i + 1) * BAND)
+ const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): Box3 =>
+   new Box3(new Vector3(x0 + EPS, y0 + EPS, z0 + EPS), new Vector3(x1 - EPS, y1 - EPS, z1 - EPS))
+ const FURNITURE: Record<string, Box3> = {
+@@ -36,12 +39,12 @@ const FURNITURE: Record<string, Box3> = {
+   divisoriaLadoD: box(DESK_W / 2, DESK_W / 2 + 0.05, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.445, -(SEAT_FRONT + DESK_D / 2) - 0.05, -edge),
+   teclado: box(-0.23, 0.23, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.047, -(SEAT_FRONT - KEYBOARD_FRONT) - 0.075, -(SEAT_FRONT - KEYBOARD_FRONT) + 0.075),
+   assento: box(-0.32, 0.32, SEAT_TOP - 0.14, SEAT_TOP - SEAT_GIVE, CHAIR_CENTER_Z - 0.31, CHAIR_CENTER_Z + 0.31),
+-  encosto1: backBand(0.58, 0.73),
+-  encosto2: backBand(0.73, 0.88),
+-  encosto3: backBand(0.88, 1.03),
+-  encosto4: backBand(1.03, 1.18),
+-  bracoE: box(-0.385, -0.295, 0.775, 0.815, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
+-  bracoD: box(0.295, 0.385, 0.775, 0.815, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
++  encosto1: band(0),
++  encosto2: band(1),
++  encosto3: band(2),
++  encosto4: band(3),
++  bracoE: box(-0.385, -0.295, ARM_BOTTOM, ARM_TOP, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
++  bracoD: box(0.295, 0.385, ARM_BOTTOM, ARM_TOP, CHAIR_CENTER_Z - 0.23, CHAIR_CENTER_Z + 0.15),
+   plaquinhaE: box(-DESK_PLAQUE_X - 0.06, -DESK_PLAQUE_X + 0.06, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.145, -(SEAT_FRONT - DESK_PLAQUE_Z) - 0.009, -(SEAT_FRONT - DESK_PLAQUE_Z) + 0.009),
+   plaquinhaD: box(DESK_PLAQUE_X - 0.06, DESK_PLAQUE_X + 0.06, DESK_HEIGHT + 0.025, DESK_HEIGHT + 0.145, -(SEAT_FRONT - DESK_PLAQUE_Z) - 0.009, -(SEAT_FRONT - DESK_PLAQUE_Z) + 0.009)
+ }
+@@ -142,7 +145,26 @@ describe('pose sentada da estação', { timeout: 120_000 }, () => {
+     rig.footR.getWorldPosition(v)
+     expect(Math.hypot(v.x, v.z - CHAIR_CENTER_Z)).toBeLessThan(0.55)
+     const torso = new Box3().setFromObject(rig.torso, true)
+-    expect(torso.max.z).toBeGreaterThan(backFront(1.1) - 0.06)
++    expect(torso.max.z).toBeGreaterThan(backFront(BACK_TOP - 0.1) - 0.06)
+     kit.dispose()
+   })
++
++  it('a cadeira no assento padrão: os braços cabem sob o tampo e a coluna a gás não atravessa o estofado', () => {
++    expect(ARM_TOP).toBeLessThan(DESK_HEIGHT - 0.025)
++    const { top, base } = officeChairGeometries()
++    const seat = new Box3().setFromBufferAttribute(top.attributes.position as BufferAttribute)
++    expect(seat.min.y).toBeCloseTo(COLUMN_TOP, 3)
++    const pos = base.attributes.position
++    let arm = 0
++    let column = 0
++    for (let i = 0; i < pos.count; i++) {
++      const [x, y, z] = [pos.getX(i), pos.getY(i), pos.getZ(i)]
++      if (Math.abs(x) > 0.3) arm = Math.max(arm, y)
++      else if (Math.hypot(x, z - CHAIR_CENTER_Z) < 0.05) column = Math.max(column, y)
++    }
++    expect(arm).toBeCloseTo(ARM_TOP, 3)
++    expect(column).toBeLessThanOrEqual(SEAT_TOP - 0.14 + 1e-6)
++    top.dispose()
++    base.dispose()
++  })
+ })
+diff --git a/src/renderer/src/office3d/seatedReach.test.ts b/src/renderer/src/office3d/seatedReach.test.ts
+new file mode 100644
+index 0000000..47781e9
+--- /dev/null
++++ b/src/renderer/src/office3d/seatedReach.test.ts
+@@ -0,0 +1,81 @@
++/**
++ * Ergonomia de quem senta na cadeira da estação, avatar por avatar: o boneco
++ * (escalas 1 e 0,85) e cada GLB de resources/office-agents (aberto como no
++ * agentCast.test.ts, com as medidas e a escala do prepareAvatar) alcançam o
++ * teclado em `type` e `typeFast` sem esticar o braço inteiro, com o antebraço
++ * quase na horizontal (±20°), o quadril sobre o assento, os joelhos sob o
++ * tampo e os pés no chão. Com a cadeira alta de antes (assento a 0,59) o braço
++ * esticava para baixo até o teclado: este teste falha nela.
++ */
++import { existsSync } from 'node:fs'
++import { join } from 'node:path'
++import { describe, expect, it } from 'vitest'
++import { prepareAvatar } from './agentRest'
++import { DESK_HEIGHT } from './officePlan'
++import { BODY, CH, newPose, SEAT_HEIGHT, sitLower, type BodyMetrics } from './poses'
++import { DESK_TOP, KEYS_AHEAD, reachInfo } from './reach'
++import { AVATAR_DIR, buildScene, readGlb } from './testGlb'
++
++const ROLES = ['executor', 'critico', 'navegador-de-codigo', 'memoria', 'po', 'vigia', 'subagente', 'principal', 'central']
++/** A inclinação do tronco das ações de digitar (gestures.ts, `type` e `typeFast`). */
++const LEANS = [
++  ['type', 0.1],
++  ['typeFast', 0.16]
++] as const
++const MAX_FOREARM = (20 * Math.PI) / 180
++const deg = (rad: number): string => `${((rad * 180) / Math.PI).toFixed(1)}°`
++
++function avatar(role: string): { body: BodyMetrics; scale: number } {
++  const { json, bin } = readGlb(join(AVATAR_DIR, `${role}.glb`))
++  const t = prepareAvatar(buildScene(json, bin).scene)
++  if (typeof t === 'string') throw new Error(`prepareAvatar recusou ${role}: ${t}`)
++  return { body: t.metrics, scale: t.fit }
++}
++
++function seatedFits(body: BodyMetrics, scale: number): void {
++  // Mãos no teclado (a mesma IK do typing, reach.ts): o punho no alvo sem o braço esticado e o antebraço quase horizontal.
++  for (const [action, lean] of LEANS) {
++    const r = reachInfo(DESK_TOP + 0.055, KEYS_AHEAD, lean, scale, body)
++    expect(r.reached, `${action}: folga de ${(r.slack * 100).toFixed(1)} cm até o braço esticado`).toBe(true)
++    expect(Math.abs(r.forearm), `${action}: antebraço a ${deg(r.forearm)} da horizontal`).toBeLessThanOrEqual(MAX_FOREARM)
++  }
++  // Pernas (sitLower na cadeira): cada jeito de sentar (`vary`) e a troca de apoio ao longo do tempo.
++  const p = newPose()
++  for (const vary of [0, 0.5, 1]) {
++    for (const t of [0, 7, 13]) {
++      sitLower(p, 'chair', t, scale, vary, body)
++      const hip = body.pelvisY + p[CH.pelvisY] - body.hipDrop
++      expect(hip * scale, 'quadril sobre o assento').toBeGreaterThan(SEAT_HEIGHT.chair)
++      for (const [leg, kn] of [
++        [CH.legL, CH.kneeL],
++        [CH.legR, CH.kneeR]
++      ] as const) {
++        const knee = hip - body.thigh * Math.cos(p[leg])
++        const ankle = knee - body.shin * Math.cos(p[leg] - p[kn])
++        expect(knee * scale, `joelho sob o tampo (vary ${vary})`).toBeLessThan(DESK_HEIGHT - 0.025)
++        // O pé no chão: o tornozelo na altura dele em pé, ou pouco acima com a ponta do pé no chão (canela longa).
++        expect(ankle - body.ankleY, `tornozelo no chão (vary ${vary})`).toBeGreaterThan(-1e-3)
++        expect((ankle - body.ankleY) * scale, `tornozelo no chão (vary ${vary})`).toBeLessThan(0.04)
++      }
++    }
++  }
++}
++
++describe('ergonomia sentada: cada um alcança o teclado com o antebraço quase horizontal', () => {
++  it('as alturas no padrão: o assento (NBR 13962, 0,42–0,52) e o tampo (0,72–0,78)', () => {
++    expect(SEAT_HEIGHT.chair).toBeGreaterThanOrEqual(0.42)
++    expect(SEAT_HEIGHT.chair).toBeLessThanOrEqual(0.52)
++    expect(DESK_TOP).toBeGreaterThanOrEqual(0.72)
++    expect(DESK_TOP).toBeLessThanOrEqual(0.78)
++  })
++
++  it.each([1, 0.85])('o boneco na escala %s', (scale) => seatedFits(BODY, scale))
++
++  for (const role of ROLES) {
++    const path = join(AVATAR_DIR, `${role}.glb`)
++    it.runIf(existsSync(path))(`o avatar ${role}.glb`, () => {
++      const a = avatar(role)
++      seatedFits(a.body, a.scale)
++    })
++  }
++})
+diff --git a/src/renderer/src/office3d/testGlb.ts b/src/renderer/src/office3d/testGlb.ts
+new file mode 100644
+index 0000000..c0706bc
+--- /dev/null
++++ b/src/renderer/src/office3d/testGlb.ts
+@@ -0,0 +1,97 @@
++/**
++ * Só para os testes: abre os avatares GLB de resources/office-agents SEM o
++ * GLTFLoader (no vitest ele não carrega as imagens embutidas). O chunk JSON e
++ * o BIN viram uma cena three com os mesmos nós, ossos e a malha com pele (só
++ * as posições), que o prepareAvatar do app (agentRest.ts) aceita como no
++ * escritório. Usado por agentCast.test.ts e seatedReach.test.ts.
++ */
++import { readFileSync } from 'node:fs'
++import { join } from 'node:path'
++import { Bone, BufferAttribute, BufferGeometry, Group, Matrix4, Object3D, PropertyBinding, SkinnedMesh } from 'three'
++
++export interface GltfNode {
++  name?: string
++  children?: number[]
++  mesh?: number
++  skin?: number
++  matrix?: number[]
++  translation?: number[]
++  rotation?: number[]
++  scale?: number[]
++}
++
++export interface Gltf {
++  scene?: number
++  scenes: Array<{ nodes: number[] }>
++  nodes: GltfNode[]
++  meshes: Array<{ primitives: Array<{ attributes: Record<string, number>; material?: number }> }>
++  skins?: Array<{ joints: number[]; inverseBindMatrices?: number }>
++  accessors: Array<{ bufferView?: number; byteOffset?: number; count: number; componentType: number; type: string }>
++  bufferViews: Array<{ byteOffset?: number; byteLength: number; byteStride?: number }>
++  materials?: Array<{ pbrMetallicRoughness?: { metallicRoughnessTexture?: { index: number } }; extras?: { tintMeanLuma?: number } }>
++}
++
++/** A pasta dos avatares (resources/office-agents/<papel>.glb). */
++export const AVATAR_DIR = join(process.cwd(), 'resources', 'office-agents')
++
++export function readGlb(path: string): { json: Gltf; bin: DataView } {
++  const buf = readFileSync(path)
++  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
++  if (view.getUint32(0, true) !== 0x46546c67) throw new Error('não é GLB')
++  let json: Gltf | null = null
++  let bin: DataView | null = null
++  for (let off = 12; off + 8 <= buf.length; ) {
++    const len = view.getUint32(off, true)
++    const type = view.getUint32(off + 4, true)
++    if (type === 0x4e4f534a) json = JSON.parse(buf.subarray(off + 8, off + 8 + len).toString('utf8')) as Gltf
++    else if (type === 0x004e4942) bin = new DataView(buf.buffer, buf.byteOffset + off + 8, len)
++    off += 8 + len
++  }
++  if (!json || !bin) throw new Error('GLB sem JSON ou BIN')
++  return { json, bin }
++}
++
++const WIDTH: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }
++
++/** Um accessor float (posições, matrizes inversas de bind), respeitando o byteStride. */
++export function floats(g: Gltf, bin: DataView, index: number): Float32Array {
++  const a = g.accessors[index]
++  if (a.componentType !== 5126 || a.bufferView === undefined) throw new Error(`accessor ${index} não é float`)
++  const bv = g.bufferViews[a.bufferView]
++  const n = WIDTH[a.type]
++  const stride = bv.byteStride || n * 4
++  const base = (bv.byteOffset ?? 0) + (a.byteOffset ?? 0)
++  const out = new Float32Array(a.count * n)
++  for (let i = 0; i < a.count; i++) for (let k = 0; k < n; k++) out[i * n + k] = bin.getFloat32(base + i * stride + k * 4, true)
++  return out
++}
++
++/** A cena como o GLTFLoader monta: junta = Bone, nó com malha e pele = SkinnedMesh, o resto = Object3D. */
++export function buildScene(g: Gltf, bin: DataView): { scene: Group; skinned: SkinnedMesh[]; jointNames: string[] } {
++  const joints = new Set((g.skins ?? []).flatMap((s) => s.joints))
++  const skinned: SkinnedMesh[] = []
++  const objs = g.nodes.map((n, i) => {
++    let o: Object3D
++    if (n.mesh !== undefined && n.skin !== undefined) {
++      const geo = new BufferGeometry()
++      geo.setAttribute('position', new BufferAttribute(floats(g, bin, g.meshes[n.mesh].primitives[0].attributes.POSITION), 3))
++      const mesh = new SkinnedMesh(geo)
++      skinned.push(mesh)
++      o = mesh
++    } else o = joints.has(i) ? new Bone() : new Object3D()
++    o.name = PropertyBinding.sanitizeNodeName(n.name ?? '')
++    if (n.matrix) new Matrix4().fromArray(n.matrix).decompose(o.position, o.quaternion, o.scale)
++    else {
++      if (n.translation) o.position.fromArray(n.translation)
++      if (n.rotation) o.quaternion.fromArray(n.rotation)
++      if (n.scale) o.scale.fromArray(n.scale)
++    }
++    return o
++  })
++  g.nodes.forEach((n, i) => n.children?.forEach((c) => objs[i].add(objs[c])))
++  const scene = new Group()
++  for (const i of g.scenes[g.scene ?? 0].nodes) scene.add(objs[i])
++  scene.updateMatrixWorld(true)
++  const jointNames = (g.skins?.[0]?.joints ?? []).map((j) => objs[j].name)
++  return { scene, skinned, jointNames }
++}

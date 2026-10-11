@@ -81,7 +81,7 @@ export function listSkillsByCategory(skills: readonly TieredSkill[], category?: 
   }
 }
 
-const line = (s: TieredSkill): string => `- ${s.name} [${s.tier === 'low' ? 'baixa' : s.tier === 'medium' ? 'média' : 'crítica'}] — ${skillSummary(s.description)}\n  SKILL.md: ${s.skillFile}`
+const line = (s: TieredSkill): string => `- ${s.name} [${s.tier === 'low' ? 'baixo' : s.tier === 'medium' ? 'médio' : 'alto'}] — ${skillSummary(s.description)}\n  SKILL.md: ${s.skillFile}`
 type Text = { content: { type: 'text'; text: string }[] }
 const text = (t: string): Text => ({ content: [{ type: 'text', text: t }] })
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- como o próprio SDK tipa a lista de ferramentas.

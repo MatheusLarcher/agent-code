@@ -15,7 +15,9 @@ import './deadlineIndicator.css'
  *
  * "Etapa N de M" é a posição no PLANO: os envios do plano do envio corrente no
  * projeto (de qualquer conversa: usePlanObra) e o roteiro (usePlanRoteiro, o
- * cache da TV); o tempo e o prazo são os do envio desta conversa.
+ * cache da TV); o placar "✓ N/M" (prontas/total) é da mesma conta, e o detalhe
+ * ("N de M etapas prontas, K incompletas") vai no title. O tempo e o prazo são
+ * os do envio desta conversa.
  */
 export function DeadlineIndicator(props: {
   conversationId: string
@@ -34,6 +36,7 @@ export function DeadlineIndicator(props: {
   return (
     <span className={`deadline-indicator is-${view.level}`} data-level={view.level} title={view.title}>
       {view.etapa && <span className="deadline-etapa">{view.etapa}</span>}
+      {view.placar && <span className="deadline-placar">{`✓ ${view.placar.prontas}/${view.placar.total}`}</span>}
       <span className="deadline-tempo">{view.tempo}</span>
       {view.agente && <span className="deadline-agente">{view.agente}</span>}
     </span>

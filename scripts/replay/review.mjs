@@ -9,14 +9,20 @@
 import { randomInt } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { OUT, REPO, TASKS, paths } from './config.mjs'
+import { OUT, REPO, TASKS, outOf, paths, referenceSpecOf, sidesOf } from './config.mjs'
 import { git } from './worktree.mjs'
 
 export const CRITERIA = ['atende', 'bugs', 'bordas', 'regras']
 
-/** Rótulos sorteados: { A: 'hoje'|'novo', B: o outro }. */
-export function drawLabels(rand = () => randomInt(2)) {
-  return rand() === 0 ? { A: 'hoje', B: 'novo' } : { A: 'novo', B: 'hoje' }
+/** Rótulos sorteados: { A: 'hoje'|'novo', B: o outro }. Tarefa de lado único (a1): o lado × a `referencia`. */
+export function drawLabels(rand = () => randomInt(2), pair = ['hoje', 'novo']) {
+  return rand() === 0 ? { A: pair[0], B: pair[1] } : { A: pair[1], B: pair[0] }
+}
+
+/** O par comparado: os dois lados, ou (lado único) o lado × o diff de referência. */
+export const reviewPair = (t) => {
+  const sides = Object.keys(sidesOf(t))
+  return sides.length === 1 ? [sides[0], 'referencia'] : ['hoje', 'novo']
 }
 
 const readJson = (f) => JSON.parse(readFileSync(f, 'utf8'))
@@ -26,16 +32,25 @@ export function prepare(t, n) {
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   mkdirSync(path.dirname(paths.map(t, n)), { recursive: true })
-  const labels = existsSync(paths.map(t, n)) ? readJson(paths.map(t, n)).labels : drawLabels()
+  const pair = reviewPair(t)
+  const labels = existsSync(paths.map(t, n)) ? readJson(paths.map(t, n)).labels : drawLabels(undefined, pair)
   const ref = TASKS[t].reference
-  writeFileSync(path.join(dir, 'pedido.md'), readFileSync(path.join(OUT, 'pedidos', `${t}.md`), 'utf8'))
-  writeFileSync(path.join(dir, 'referencia.patch'), git(REPO, ['show', '--format=%B', '--stat', '-p', ref]))
-  writeFileSync(path.join(dir, 'regras-AGENTS.md'), git(REPO, ['show', `${ref}^:AGENTS.md`]))
+  const parent = TASKS[t].parent ?? `${ref}^`
+  writeFileSync(path.join(dir, 'pedido.md'), readFileSync(path.join(outOf(t), 'pedidos', `${t}.md`), 'utf8'))
+  // Lado único: a referência é um dos dois lados às cegas (o diff sem a mensagem do commit), e não vai à parte.
+  const refPatch = git(REPO, ['diff', '--stat', '-p', parent, ref])
+  if (!pair.includes('referencia')) writeFileSync(path.join(dir, 'referencia.patch'), git(REPO, ['show', '--format=%B', '--stat', '-p', ref]))
+  writeFileSync(path.join(dir, 'regras-AGENTS.md'), git(REPO, ['show', `${parent}:AGENTS.md`]))
   // Chaves curtas: o revisor não precisa copiar ids longos (aspas, travessões) sem errar.
   const keys = {}
   const fails = {}
   let k = 0
   for (const label of ['A', 'B']) {
+    if (labels[label] === 'referencia') {
+      writeFileSync(path.join(dir, `${label}.patch`), refPatch)
+      fails[label] = { total: null, naoRodou: false, falhas: [], testesQueSumiram: [] }
+      continue
+    }
     const out = paths.out(t, labels[label], n)
     writeFileSync(path.join(dir, `${label}.patch`), readFileSync(path.join(out, 'diff.patch')))
     const ev = readJson(path.join(out, 'eval.json'))
@@ -52,14 +67,16 @@ export function prepare(t, n) {
   }
   writeFileSync(path.join(dir, 'falhas-de-referencia.json'), JSON.stringify(fails, null, 2))
   writeFileSync(paths.map(t, n), JSON.stringify({ labels, keys }, null, 2))
-  return { dir, prompt: reviewerPrompt(t, dir) }
+  return { dir, prompt: reviewerPrompt(t, dir, pair.includes('referencia')) }
 }
 
-export function reviewerPrompt(t, dir) {
+export function reviewerPrompt(t, dir, singleSide = false) {
+  const sources = singleSide
+    ? '- A.patch e B.patch: duas implementações independentes do mesmo pedido, a partir do mesmo commit (uma delas é a que o usuário aprovou na época — não tente descobrir qual).'
+    : '- referencia.patch: a solução que o usuário aprovou — é a régua, não a única resposta certa.\n- A.patch e B.patch: duas implementações independentes do mesmo pedido, a partir do mesmo commit.'
   return `Você é revisor de código, às cegas. Leia os arquivos da pasta ${dir}:
 - pedido.md: o pedido original do usuário (a tarefa).
-- referencia.patch: a solução que o usuário aprovou — é a régua, não a única resposta certa.
-- A.patch e B.patch: duas implementações independentes do mesmo pedido, a partir do mesmo commit.
+${sources}
 - regras-AGENTS.md: as regras do projeto naquele commit.
 - falhas-de-referencia.json: os testes do commit de referência que falharam em A e em B (cada um com uma chave f1..fN), e os testes que passavam antes e sumiram.
 Para conferir contexto, o código no commit de partida (só leitura) está em ${paths.worktree(t)}. Não leia nenhuma outra pasta e não tente descobrir qual implementação é de qual configuração.

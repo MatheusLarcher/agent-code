@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { buildSpecialistAgents } from './specialists'
+import { MODEL_EFFORT } from '../../shared/ipc'
 
 describe('cadastro de especialistas', () => {
   it('sem registro de tarefas, não anuncia executor nem crítico', () => {
@@ -87,5 +88,68 @@ describe('cadastro de especialistas', () => {
     const critic = buildSpecialistAgents({ ledger: true, memory: false }).critico
     expect(critic.prompt).toContain('"failed" para "pending"')
     expect(critic.prompt).toContain('SEM `lease_token`')
+  })
+
+  it('ferramentas no prompt do executor: testes dos tocados, suíte uma vez, espera em background, empacotar só quando pedido', () => {
+    const executor = buildSpecialistAgents({ ledger: true, memory: false }).executor
+    expect(executor.prompt).toContain('rode só os testes dos arquivos que você tocou')
+    expect(executor.prompt).toContain('`npx tsc -p tsconfig.node.json --noEmit`')
+    expect(executor.prompt).toContain('rodam UMA vez, no fechamento do envio')
+    expect(executor.prompt).toContain('(`run_in_background`)')
+    expect(executor.prompt).toContain('Nunca um laço com `sleep` dentro do turno')
+    expect(executor.prompt).toContain('só quando a tarefa pede o artefato, e uma vez')
+  })
+
+  it('autoCompactWindow de 120k em executor e crítico; navegador e memória herdam', () => {
+    const agents = buildSpecialistAgents({ ledger: true, memory: true })
+    expect(agents.executor.autoCompactWindow).toBe(120_000)
+    expect(agents.critico.autoCompactWindow).toBe(120_000)
+    expect(agents['navegador-de-codigo'].autoCompactWindow).toBeUndefined()
+    expect(agents.memoria.autoCompactWindow).toBeUndefined()
+  })
+
+  it('esforço por papel: executor high, crítico medium, navegador e memória low (o principal fica com o da conversa)', () => {
+    const agents = buildSpecialistAgents({ ledger: true, memory: true, model: 'claude-opus-5-5' })
+    expect(agents.executor.effort).toBe('high')
+    expect(agents.critico.effort).toBe('medium')
+    expect(agents['navegador-de-codigo'].effort).toBe('low')
+    expect(agents.memoria.effort).toBe('low')
+    // Modelo da conta (sem modelo fixo) ou Automático: o mesmo.
+    expect(buildSpecialistAgents({ ledger: true, memory: false }).executor.effort).toBe('high')
+    expect(buildSpecialistAgents({ ledger: true, memory: false, model: 'auto' }).critico.effort).toBe('medium')
+  })
+
+  it('modelo sem esforço (Ollama): o campo é omitido; modelo com escada curta: recortado ao teto dele', () => {
+    const ollama = buildSpecialistAgents({ ledger: true, memory: true, model: 'qwen3-coder:480b-cloud' })
+    for (const agent of Object.values(ollama)) expect(agent.effort).toBeUndefined()
+    MODEL_EFFORT['modelo-curto-teste'] = ['low', 'medium']
+    try {
+      const curto = buildSpecialistAgents({ ledger: true, memory: false, model: 'modelo-curto-teste' })
+      expect(curto.executor.effort).toBe('medium')
+      expect(curto.critico.effort).toBe('medium')
+      expect(curto['navegador-de-codigo'].effort).toBe('low')
+    } finally {
+      delete MODEL_EFFORT['modelo-curto-teste']
+    }
+  })
+
+  it('omitClaudeMd só em quem lê (navegador e crítico); o executor mantém as regras do projeto', () => {
+    const agents = buildSpecialistAgents({ ledger: true, memory: true })
+    expect(agents['navegador-de-codigo'].omitClaudeMd).toBe(true)
+    expect(agents.critico.omitClaudeMd).toBe(true)
+    expect(agents.executor.omitClaudeMd).toBeUndefined()
+    // Ninguém roda em segundo plano: o supervisor precisa do resultado para cobrar evidência.
+    for (const agent of Object.values(agents)) expect(agent.background).toBeUndefined()
+  })
+
+  it('pipeline nos prompts: mapa do código, uma revisão, mesmo executor vivo', () => {
+    const agents = buildSpecialistAgents({ ledger: true, memory: true })
+    expect(agents.executor.prompt).toContain('O mapa do código vem no seu prompt')
+    expect(agents.executor.prompt).toContain('não reexplore o projeto')
+    expect(agents.executor.description).toContain('mapa do código')
+    expect(agents.critico.prompt).toContain('Uma revisão só')
+    expect(agents.critico.prompt).toContain('o preferido, quando ele existe')
+    expect(agents.critico.prompt).toContain('roda sem o CLAUDE.md do projeto')
+    expect(agents.critico.description).toContain('test_run alegado ou 3+ arquivos')
   })
 })

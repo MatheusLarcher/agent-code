@@ -4,15 +4,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { endsWithQuestion, lastAssistantOf, markDelivered, nextPromptIndex, userTexts } from './drive.mjs'
+import { endsWithQuestion, lastAssistantOf, markDelivered, nextPromptIndex, pendingBackgroundIn, userTexts } from './drive.mjs'
 import { codePass, newFailures } from './evaluate.mjs'
 import { ruleCase, writeFence } from './fence.mjs'
 import { isolatedEnv } from './instance.mjs'
 import { claudeProjectSlug, parseFirstEdit } from './measure.mjs'
 import { absolutePaths, decidePermission, insideAny, recommendedAnswers } from './policy.mjs'
-import { paths, ROUNDS } from './config.mjs'
-import { roundRow, taskVerdict } from './report.mjs'
-import { drawLabels } from './review.mjs'
+import { outOf, paths, referenceSpecOf, ROUNDS, roundTimeoutOf, sidesOf } from './config.mjs'
+import { autonomyVerdict, eventCounts, roundRow, taskVerdict, wallProjection } from './report.mjs'
+import { drawLabels, reviewPair } from './review.mjs'
+import { attentionKinds, sessionCounters } from './baseline-sessao.mjs'
 import * as replay from './replay.mjs'
 import { diffStats } from './worktree.mjs'
 
@@ -111,6 +112,14 @@ test('pergunta: só o rótulo com "(Recomendado)"; "Não recomendado" nunca', ()
   assert.deepEqual(recommendedAnswers(q).map((a) => a.selected), [['Y (Recomendado)'], ['P']])
 })
 
+test('segundo plano sem notificação de volta é trabalho em andamento, não fim', () => {
+  const started = 'tool_result: Command running in background with ID: b054psicr. Output is being written'
+  assert.equal(pendingBackgroundIn([started]), 1)
+  assert.equal(pendingBackgroundIn([started, '<task-notification>\n<task-id>b054psicr</task-id>\n<status>completed</status>']), 0)
+  assert.equal(pendingBackgroundIn([started, 'running in background with ID: bx2'], ), 2)
+  assert.equal(pendingBackgroundIn(['nada em segundo plano']), 0)
+})
+
 test('mensagens da ponte: assistant-text e pergunta seguida de lista', () => {
   const msgs = [{ kind: 'user', text: '[ctx] # Handoff X\nfaça' }, { kind: 'assistant-text', text: 'Feito.\n\nQuer A ou B?\n- A: rápido\n- B: completo', final: true }]
   assert.equal(lastAssistantOf(msgs), 'Feito.\n\nQuer A ou B?\n- A: rápido\n- B: completo')
@@ -198,6 +207,84 @@ test('aprovação: pass^k do novo, nenhuma nota média pior e dados completos', 
 test('sorteio A/B devolve os dois lados', () => {
   assert.deepEqual(drawLabels(() => 0), { A: 'hoje', B: 'novo' })
   assert.deepEqual(drawLabels(() => 1), { A: 'novo', B: 'hoje' })
+  // Lado único (a1): o lado × a referência, às cegas.
+  assert.deepEqual(reviewPair('a1'), ['novo', 'referencia'])
+  assert.deepEqual(reviewPair('s1'), ['hoje', 'novo'])
+  assert.deepEqual(drawLabels(() => 1, reviewPair('a1')), { A: 'referencia', B: 'novo' })
+})
+
+test('a1: teto de 60 min, lado único, referência em faixa e saída própria; s1–s3 inalteradas', () => {
+  assert.equal(roundTimeoutOf('a1'), 60 * 60_000)
+  assert.equal(roundTimeoutOf('s1'), 10 * 60_000)
+  assert.deepEqual(Object.keys(sidesOf('a1')), ['novo'])
+  assert.deepEqual(Object.keys(sidesOf('s2')), ['hoje', 'novo'])
+  assert.equal(referenceSpecOf('a1'), '8c89585..526d549')
+  assert.equal(referenceSpecOf('s3'), '974d348')
+  assert.match(outOf('a1'), /replay-autonomia-2026-10-10$/)
+  assert.match(paths.published('a1', 'novo', 1), /replay-autonomia-2026-10-10[\\/]a1[\\/]novo-r1$/)
+})
+
+/** Transcript sintético: user com carimbo abre turno; assistant com usage, texto e ferramentas. */
+const stamp = (text) => `[Contexto do sistema: mensagem enviada do PC X em 06/10/2026.]\n\n[SKILL_CATALOG_UPDATE]x[/SKILL_CATALOG_UPDATE]\n${text}`
+const at = (min) => new Date(Date.UTC(2026, 9, 6, 14, 0) + min * 60_000).toISOString()
+const user = (min, text) => ({ type: 'user', timestamp: at(min), message: { content: stamp(text) } })
+const result = (min, text) => ({ type: 'user', timestamp: at(min), message: { content: [{ type: 'tool_result', tool_use_id: 't', content: text }] } })
+const asst = (min, id, content, input = 100) => ({ type: 'assistant', timestamp: at(min), message: { id, usage: { input_tokens: input, cache_read_input_tokens: 0 }, content } })
+
+test('contadores da sessão base: perguntas, 7 min, turnos em pergunta, prompts atrasados, tempo, chamadas, contexto e avisos', () => {
+  const main = [
+    user(0, '# Implementação 1/2 — X\nfaça'),
+    asst(1, 'm1', [{ type: 'text', text: 'ATENÇÃO: outra conversa mexeu em a.ts' }, { type: 'tool_use', name: 'AskUserQuestion', input: {} }], 200),
+    result(8, 'O usuário não respondeu em 7 minutos. Siga sem a resposta dele.'),
+    asst(9, 'm2', [{ type: 'text', text: 'Feito.\n\nQuer que eu siga com B?' }], 400),
+    user(30, '# Implementação 2/2 — Y\nfaça'),
+    asst(31, 'm3', [{ type: 'text', text: '- DESVIO DO PLANO: usei Z\nPronto, testes verdes.' }], 600),
+    user(32, 'ele disse ATENÇÃO: x?'),
+    asst(33, 'm4', [{ type: 'text', text: 'ele disse ATENÇÃO: nada' }], 800)
+  ]
+  const sub = [asst(10, 's1', [{ type: 'text', text: 'ok' }], 1000)]
+  const c = sessionCounters(main, [sub])
+  assert.equal(c.turns, 3)
+  assert.equal(c.handoffPrompts, 2)
+  assert.equal(c.lateHandoffPrompts, 1, 'o prompt 2 chegou 21 min depois do fim do turno anterior')
+  assert.equal(c.askUserQuestion, 1)
+  assert.equal(c.expired7min, 1)
+  assert.equal(c.turnsEndingInQuestion, 1)
+  assert.equal(c.activeSecs, (9 + 1 + 1) * 60)
+  assert.equal(c.wallSecs, 33 * 60)
+  assert.equal(c.calls, 5)
+  assert.equal(c.avgContextTokens, Math.round((200 + 400 + 600 + 800 + 1000) / 5))
+  assert.equal(c.atencaoLines, 1, 'citação no meio da linha não conta')
+  assert.equal(c.desvioLines, 1)
+  assert.deepEqual(attentionKinds('**ATENÇÃO:** a\n> DESVIO DO PLANO: b\nnada ATENÇÃO: c'), { atencao: 1, desvio: 1 })
+})
+
+test('validação da autonomia: eventos, veredito por meta e projeção de parede', () => {
+  assert.deepEqual(eventCounts([{ kind: 'pergunta' }, { kind: 'allow' }, { kind: 'insistencia' }, { kind: 'insistencia' }]), {
+    pergunta: 1, insistencia: 2, 'proximo-prompt': 0, 'primeiro-prompt-forcado': 0
+  })
+  const base = { askUserQuestion: 1, expired7min: 1, turnsEndingInQuestion: 2, lateHandoffPrompts: 0, activeSecs: 6000, calls: 280, avgContextTokens: 400_000, atencaoLines: 0, desvioLines: 0 }
+  const notas = (v) => ({ atende: v, bugs: v, bordas: v, regras: v })
+  const row = (n, over = {}) => ({
+    t: 'a1', side: 'novo', n, exists: true, status: 'done', error: null,
+    events: eventCounts([]), activeSecs: 3000, calls: 150, avgContextTokens: 150_000, askUserQuestion: 0, turnsEndingInQuestion: 0,
+    atencao: 2, desvio: 0, typecheck: true, newFailures: 0, missing: 0, ref: '5/5', refOk: true,
+    review: { novo: notas(4), referencia: notas(4) }, ...over
+  })
+  assert.equal(autonomyVerdict(base, [row(1), row(2)]).approved, true)
+  const asked = autonomyVerdict(base, [row(1), row(2, { events: eventCounts([{ kind: 'pergunta' }]) })])
+  assert.equal(asked.approved, false)
+  assert.deepEqual(asked.failed, ['pergunta'])
+  const slower = autonomyVerdict(base, [row(1, { activeSecs: 6001 }), row(2)])
+  assert.deepEqual(slower.failed, ['tempo-ativo'])
+  const worseReview = autonomyVerdict(base, [row(1, { review: { novo: notas(3), referencia: notas(4) } }), row(2)])
+  assert.deepEqual(worseReview.failed, ['revisao'])
+  const timedOut = autonomyVerdict(base, [row(1, { status: 'timeout' }), row(2)])
+  assert.deepEqual(timedOut.failed, ['concluiu'])
+  const missingRound = autonomyVerdict(base, [row(1), { ...row(2), exists: false }])
+  assert.equal(missingRound.approved, false)
+  assert.equal(missingRound.incomplete, true)
+  assert.deepEqual(wallProjection(base, [row(1), row(2)]), { turnsSaved: 2, minutesSaved: 28, basis: '14 min de parada média por turno que perguntava (medição de 09/10)' })
 })
 
 test('diff, slug do projeto, medição e ambiente isolado', () => {

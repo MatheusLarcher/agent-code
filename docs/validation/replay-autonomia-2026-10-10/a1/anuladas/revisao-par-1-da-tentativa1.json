@@ -1,0 +1,66 @@
+{
+  "par": 1,
+  "labels": {
+    "A": "referencia",
+    "B": "novo"
+  },
+  "comparacao": "A é melhor: põe a lógica da sala em meetingRoom.ts sem passar das 500 linhas, mantém quem espera na própria cadeira quando um Manager entra ou sai e testa sem cadeira dupla a cada passo; B entrega o essencial, mas faz quem espera trocar de cadeira, deixa scene.ts e crowd.ts acima de 500 linhas e mexe em mais medidas que o necessário.",
+  "referencia": {
+    "label": "A",
+    "notas": {
+      "atende": 5,
+      "bugs": 5,
+      "bordas": 5,
+      "regras": 5,
+      "justificativa": "Entrega todas as etapas. Na sala de reunião, a cadeira do Manager tem memória (managerChairs/managerOf em meetingRoom.ts e layout.ts, com managerOf vazio no EMPTY_LAYOUT). A classe MeetingVenues junta a fila da TV com as cadeiras reais e refaz a sala a cada sync; quem já espera numa cadeira que continua livre fica nela, pelo parâmetro prev do meetingSpots. Em crowd.upsert, um home que muda mais de 5 cm volta o agente a 'init'. O teste de regressão em destinations.test.ts confere a cada 0,1 s se há dois agentes na mesma cadeira (seatX/seatZ, sit>0,9) e cobre A, B, Manager que sai e outro que chega, dois chamados com dois Managers, a fila andando e o home novo. O assento fica em 0,46 e a cadeira inteira sai do SEAT_TOP (BACK_CENTER_Y, ARM_Y e ARM_TOP exportados e usados no seatedPose.test.ts), com chairModel.test.ts novo. No sitLower, a perna é limitada por baixo e por cima: pé no chão e ponta do pé só se a canela não alcança. O seatedLean inclina o tronco só o que falta para quem tem braço curto. O cochilo tem um ramo próprio para os avatares GLB. Foram criados seatedReach.test.ts (com typingArm exportado de reach.ts) e testGlb.ts. O scene.ts fica em 499 linhas e o crowd.ts em 500, sem crescer. O phone:build ficou pendente, como pede o plano. Ponto menor: mudou o app-harness além da assinatura (opção --boneco e fotos dos clipes), o que serve à verificação pedida."
+    },
+    "falhas": []
+  },
+  "novo": {
+    "label": "B",
+    "notas": {
+      "atende": 4,
+      "bugs": 3,
+      "bordas": 3,
+      "regras": 2,
+      "justificativa": "Entrega as partes principais: managerChairOf com memória no layout.ts, fila refeita no sync, regra do home novo no crowd.ts, cadeira derivada do SEAT_TOP (ARM_TOP, BACK_* e COLUMN_TOP exportados), pé no chão, teste seatedReach.test.ts com reachInfo e testGlb.ts. Problemas: (1) o meetingSpots não tem memória e reparte as cadeiras pela ordem da fila. Quando um plano é enviado e a cabeceira fica livre, quem espera levanta e troca de cadeira; quando abre outro planejamento, troca de novo. Isso contraria o critério 6 ('cada agente fica na sua cadeira'). (2) A lógica nova foi para o scene.ts (roomOrder, onRoom, setVenues no sync), que vai a 506 linhas, e o crowd.ts vai a 502. O pedido avisava desse limite de 500 de forma explícita. (3) Ajustes maiores que o necessário: assento a 0,48, SEATED_HIP mudado para +0,09 (o pedido dizia que acompanha sozinho) e SEAT_FRONT recuado 6 cm em todas as 24 estações. Depois disso o executor ainda sobra com 2,2 cm de folga, então o ajuste não foi o menor possível. (4) O teste de regressão só olha o fim de cada passo de 30 s, por b.x/b.z e sit===1, e chama meetingSpots/setVenues à mão sem passar pela ligação da cena. (5) O cochilo usa um único conjunto de ângulos para o boneco e para os avatares GLB."
+    },
+    "falhas": [
+      {
+        "id": "src/renderer/src/office3d/agentCast.test.ts > (arquivo não carregou)",
+        "tipo": "nome",
+        "motivo": "O testGlb.ts de B exporta AVATAR_DIR em vez de AGENTS_DIR, e o bindHeight ficou dentro do próprio agentCast.test.ts. O join(undefined) quebra o carregamento, mas a abertura dos GLB existe igual."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) A: quem espera a TV sentado na cabeceira levanta e vai para outra cadeira quando um Agent Manager chega nela",
+        "tipo": "nome",
+        "motivo": "O teste depende da classe MeetingVenues, que não existe em B, e o office() quebra no construtor. B faz o mesmo no scene.ts (guarda a fila e chama setVenues(meetingSpots(fila, managerChairs(layout))) no sync), e quem espera na cabeceira vai para a próxima cadeira livre, como no próprio teste 'fila velha' de B."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) B: o plano de um Manager é enviado e chega outro: quem ficou não troca de cadeira e o novo pega a livre",
+        "tipo": "nome",
+        "motivo": "Falhou só pela falta da MeetingVenues. O managerChairOf de B mantém p2 na cadeira 1 e dá a cadeira 0 a p3."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) um Manager sai do modelo e outro chega: ninguém dobra; dois chamados esperando com dois Managers; atendido, a fila anda",
+        "tipo": "nome",
+        "motivo": "Falhou só pela falta da MeetingVenues. Na sequência do teste, B troca quem espera de cadeira, mas sem nenhum instante com dois sentados na mesma cadeira; no fim todos ficam sentados e b vai para o lado da TV. O que o teste exige é atendido."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) quem espera a TV não levanta nem troca de cadeira quando um plano é enviado e outro planejamento é aberto",
+        "tipo": "comportamento",
+        "motivo": "O meetingSpots de B não lembra a cadeira de quem espera. Quando p1 sai de cena, b passa para a cabeceira livre e c para a cadeira de b; os dois levantam, e o teste exige que ninguém levante nem troque de cadeira."
+      },
+      {
+        "id": "src/renderer/src/office3d/destinations.test.ts > sala de reunião: uma cadeira por agente (Agent Managers e quem espera a TV) lugar fixo que muda (home novo) levanta o agente e o leva ao lugar novo",
+        "tipo": "nome",
+        "motivo": "O crowd.upsert de B tem a mesma regra (lugar fixo que muda mais de 5 cm volta a 'init' e o agente vai até o lugar novo). A falha vem só do office() construindo MeetingVenues."
+      },
+      {
+        "id": "src/renderer/src/office3d/seatedReach.test.ts > (arquivo não carregou)",
+        "tipo": "nome",
+        "motivo": "O arquivo não carregou por causa do AGENTS_DIR (em B é AVATAR_DIR) e também importa typingArm/REACH_SLACK, que em B equivalem ao reachInfo do reach.ts. Recalculei com as constantes de B e os 9 GLB: todos ficam com folga do braço ≥5% (exigido ≥3%), antebraço dentro de ±20°, tornozelo no chão, sola reta e joelho sob o tampo."
+      }
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONFIG_KEY, DEVICE_KEY, configFromLocation, deviceId, deviceName, loadConfig, parseConfig, saveConfig } from './config'
 import { apiUrl, errorText, HttpError, pickBestBase } from './net'
-import { isHiddenMessage, reduce, syncQueued } from './reducer'
+import { isHiddenMessage, keepDetails, mergeDetails, reduce, syncQueued } from './reducer'
 import { fmtReset, parseDownloads, readableMedia } from './format'
 import type { ChatMsg } from './types'
 
@@ -115,6 +115,22 @@ describe('redutor do feed', () => {
     expect(out[2]).toMatchObject({ queued: true, id: 'queued-5-0' })
     const same = msgs.slice(0, 2)
     expect(syncQueued(same, { queued: [{ text: 'na fila 1' }] })).toBe(same) // nada mudou: mesma lista
+  })
+
+  it('histórico leve: mergeDetails põe o detalhe inteiro no lugar da versão cortada; keepDetails não perde o que já veio', () => {
+    const light: ChatMsg[] = [{ kind: 'user', id: 'u1', text: 'oi' }, tool('t1', { input: { file_path: 'a' }, light: true }), tool('t2', { light: true })]
+    const full = tool('t1', { input: { file_path: 'a', content: 'inteiro' }, result: { isError: false, text: 'ok' } })
+    const merged = mergeDetails(light, [full, tool('zz')])
+    expect(merged).not.toBe(light)
+    expect(merged[1]).toMatchObject({ input: { content: 'inteiro' }, light: false })
+    expect(merged[2]).toBe(light[2]) // ainda leve: o detalhe não veio
+    expect(mergeDetails(light, [tool('nope')])).toBe(light) // nada mudou: mesma lista
+    // A ressincronização (lista leve de novo) herda o t1 já inteiro.
+    const again = keepDetails(merged, light.slice())
+    expect(again[1]).toBe(merged[1])
+    expect(again[2]).toBe(light[2])
+    const plain: ChatMsg[] = [{ kind: 'user', id: 'u1', text: 'oi' }]
+    expect(keepDetails(merged, plain)).toBe(plain) // sem nada leve: a lista que veio
   })
 })
 

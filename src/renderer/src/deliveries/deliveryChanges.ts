@@ -1,10 +1,16 @@
 import {
+  currentEnvio,
+  envioPosition,
   HANDOFF_PO_HOLD_PREFIX,
   isEnvioHeldByPo,
   isEnvioRemoved,
+  isIncompleteWithoutError,
+  isRoutineEnvio,
+  isStallMotivo,
   type HandoffEntrega,
   type HandoffEnvio
 } from '@shared/handoffTracking'
+import { queueIncompleteText, queueResumedText } from '@shared/handoffNotice'
 import type { ToastType } from '../ui/UiProvider'
 import { projectName } from './deliveryModel'
 
@@ -117,13 +123,37 @@ function waitingIn(envios: readonly HandoffEnvio[], conversationId: string): Han
   return envios.filter((e) => e.conversationId === conversationId && e.status === 'na_fila' && !isEnvioRemoved(e))
 }
 
-const STOPPED: ReadonlySet<HandoffEnvio['status']> = new Set(['incompleta', 'parada', 'falhou'])
+/** A fila PARA de verdade: erro, ou `parada` que não é inatividade (Stop). O
+ *  incompleto e a 1ª parada por inatividade seguem sozinhos (handoffQueue.ts). */
+function stopsQueue(envio: HandoffEnvio): boolean {
+  return (
+    envio.status === 'falhou' ||
+    (envio.status === 'incompleta' && !isIncompleteWithoutError(envio)) ||
+    (envio.status === 'parada' && !isStallMotivo(envio.motivo))
+  )
+}
+
+/** O prompt que saiu sozinho da fila (a pendência do anterior foi junto) ou foi retomado. */
+function autoDispatchNotice(prevAll: readonly HandoffEnvio[], next: readonly HandoffEnvio[], old: HandoffEnvio, envio: HandoffEnvio): DeliveryNotice | null {
+  const notice = (msg: string): DeliveryNotice => ({ kind: 'fila', tipo: 'aviso', msg: `${msg} — ${where(envio)}`, conversationId: envio.conversationId })
+  if (old.status === 'parada' && isStallMotivo(old.motivo) && envio.status === 'enviado') {
+    return notice(queueResumedText(envioPosition(next, envio)))
+  }
+  if (old.status === 'na_fila' && envio.status !== 'na_fila' && !isRoutineEnvio(envio)) {
+    const previous = currentEnvio(prevAll.filter((e) => e.conversationId === envio.conversationId && !isRoutineEnvio(e)))
+    if (previous && previous.id !== envio.id && isIncompleteWithoutError(previous)) {
+      return notice(queueIncompleteText(envioPosition(next, envio), previous.motivo))
+    }
+  }
+  return null
+}
 
 /**
  * Todos os avisos entre duas leituras completas (todos os projetos). A FILA
- * PARADA ganha o aviso dela: o envio corrente terminou sem concluir (ou o PO
- * segurou o próximo) com prompts esperando — no lugar do "envio incompleto/
- * parado", para não avisar duas vezes. Tirar da fila é ação sua: não avisa.
+ * PARADA ganha o aviso dela: o envio corrente terminou com erro ou foi parado
+ * (ou o PO segurou o próximo) com prompts esperando — no lugar do "envio
+ * parado", para não avisar duas vezes. Tirar da fila é ação sua: não avisa. A
+ * fila que segue sozinha (incompleto, retomada) avisa quando o prompt sai.
  */
 export function deliveryNotices(prev: readonly HandoffEnvio[], next: readonly HandoffEnvio[]): DeliveryNotice[] {
   const before = new Map(prev.map((e) => [e.id, e]))
@@ -132,8 +162,10 @@ export function deliveryNotices(prev: readonly HandoffEnvio[], next: readonly Ha
     const old = before.get(envio.id)
     if (!old || (isEnvioRemoved(envio) && !isEnvioRemoved(old))) continue
     const own = envioNotices(old, envio)
+    const auto = autoDispatchNotice(prev, next, old, envio)
+    if (auto) out.push(auto)
     const waiting = waitingIn(next, envio.conversationId)
-    if (waiting.length > 0 && old.status !== envio.status && STOPPED.has(envio.status)) {
+    if (waiting.length > 0 && old.status !== envio.status && stopsQueue(envio)) {
       out.push(...own.filter((n) => n.kind !== 'incompleta' && n.kind !== 'parada'))
       const n = waiting.length === 1 ? '1 prompt espera' : `${waiting.length} prompts esperam`
       out.push({ kind: 'fila', tipo: 'aviso', msg: `A fila parou: ${where(envio)} — ${n} no quadro`, conversationId: envio.conversationId })

@@ -12,7 +12,18 @@ import { decideQueue, queuedEnvios } from './handoffQueue'
 import type { ProjectEvaluator } from './projectQueueEvaluation'
 import type { ProjectGit } from './projectQueueGit'
 import { ProjectQueueJudge } from './projectQueueJudge'
-import { dirtyReason, moveTo, passTurn, projectStep, queuedPrompt, remainingMinutes, startDecision, viewFolder, type PlanView } from './projectQueueRules'
+import {
+  dirtyReason,
+  moveTo,
+  passTurn,
+  projectStep,
+  queuedPrompt,
+  remainingMinutes,
+  startDecision,
+  viewFolder,
+  type PlanLiveness,
+  type PlanView
+} from './projectQueueRules'
 import type { FolderRecord, ProjectQueueData, ProjectQueueStore } from './projectQueueStore'
 
 /**
@@ -35,6 +46,11 @@ export interface ProjectQueueServiceDeps {
   notify(conversationId: string): void
   /** A foto nova da fila (handoff:projectChanged). */
   publish(snapshot: HandoffProjectSnapshot): void
+  /** O sinal de vida do acompanhamento (HandoffTracker): sem ele, só a escrita recente no banco diz "rodando". */
+  turnRunning?(conversationId: string): boolean
+  lastActivityMs?(conversationId: string): number | null
+  /** O boot deste processo (ms): na carência (BOOT_GRACE_MS) o que consta rodando segue `rodando`. */
+  bootedAt?(): number
   now?(): number
   caseInsensitive?: boolean
   log?(line: string): void
@@ -80,6 +96,18 @@ export class ProjectQueueService {
     return this.deps.now?.() ?? Date.now()
   }
 
+  /** "Rodando" exige sinal de vida (projectQueueRules.minutesWithoutTurn): o turno neste
+   *  processo, a carência do boot, ou escrita/atividade recente. */
+  private liveness(): PlanLiveness {
+    const bootedAt = this.deps.bootedAt?.()
+    return {
+      turnRunning: (id) => this.deps.turnRunning?.(id) ?? false,
+      lastActivityMs: (id) => this.deps.lastActivityMs?.(id) ?? null,
+      ...(bootedAt === undefined ? {} : { bootedAt }),
+      now: this.now()
+    }
+  }
+
   key(cwd: string): string {
     return projectFolderKey(resolve(cwd), this.caseInsensitive)
   }
@@ -110,7 +138,7 @@ export class ProjectQueueService {
         if (!byConv.has(plan.conversationId)) byConv.set(plan.conversationId, await repo.listHandoffEnvios({ conversationId: plan.conversationId }))
       }
       const conv = new Map(record.plans.map((p) => [p.loteId, p.conversationId]))
-      return viewFolder(record.plans, (loteId) => (byConv.get(conv.get(loteId) ?? '') ?? []).filter((e) => e.loteId === loteId))
+      return viewFolder(record.plans, (loteId) => (byConv.get(conv.get(loteId) ?? '') ?? []).filter((e) => e.loteId === loteId), this.liveness())
     } catch (err) {
       this.deps.log?.(`[fila do projeto] não consegui ler os envios: ${err instanceof Error ? err.message : String(err)}`)
       return null
@@ -215,7 +243,10 @@ export class ProjectQueueService {
     const posicao = index >= 0 ? index + 1 : null
     if (step.kind === 'decided') {
       const otherTurn = index > 0 || views.some((v, i) => i !== index && v.state === 'rodando')
-      return { decision: step.decision, posicao, estado: step.decision.kind === 'hold' && otherTurn ? 'esperando' : null }
+      // O corrente consta rodando sem turno: a faixa mostra "parada: …" e o "Enviar mesmo assim".
+      const noTurn = views[index]?.semTurnoMin !== undefined
+      const estado = step.decision.kind !== 'hold' ? null : otherTurn ? 'esperando' : noTurn ? 'parada' : null
+      return { decision: step.decision, posicao, estado }
     }
     const dirty = this.dirtyCount.get(located.loteId)
     if (dirty && !step.view.plan.startAnyway) {
@@ -263,11 +294,15 @@ export class ProjectQueueService {
       }
     })
     // Só avisa quando a fila mudou de verdade (a contagem de tempo do turno não muda nada).
-    const signature = views.map((v) => `${v.plan.loteId}:${v.state}:${currentEnvio(v.envios)?.id ?? ''}`).join('|')
+    const signature = this.signature(views)
     if (this.signatures.get(key) === signature) return
     this.signatures.set(key, signature)
     for (const view of views) this.deps.notify(view.plan.conversationId)
     await this.publish()
+  }
+
+  private signature(views: readonly PlanView[]): string {
+    return views.map((v) => `${v.plan.loteId}:${v.state}:${currentEnvio(v.envios)?.id ?? ''}`).join('|')
   }
 
   /** Mudança feita aqui (ação, decisão): revê e avisa sempre. */
@@ -375,7 +410,14 @@ export class ProjectQueueService {
   // -------------------------------------------------------------------------
 
   async tick(): Promise<void> {
-    await this.judge.tick(await this.data())
+    const data = await this.data()
+    await this.judge.tick(data)
+    // O sinal de vida muda sem escrita no banco (o plano "rodando" que morreu
+    // calado vira parado): a foto e as conversas acompanham na passada.
+    for (const key of Object.keys(data.folders)) {
+      const views = await this.views(key)
+      if (views && this.signatures.get(key) !== this.signature(views)) await this.refresh(key)
+    }
   }
 
   start(): void {

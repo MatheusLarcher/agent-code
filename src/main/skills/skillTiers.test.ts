@@ -5,13 +5,16 @@ import { join } from 'node:path'
 import type { DiscoveredSkill } from '../skillDiscovery'
 import { createSkillCatalogSnapshot, renderAgentSkillCatalog } from '../skillDiscovery'
 import {
-  CRITICAL_BUDGET_BYTES,
+  HIGH_BUDGET_BYTES,
   DEFAULT_NATIVE_EXTRA_SKILLS,
+  guessSkillCategory,
   rememberNativeSkillNames,
   resolveSkillTiers,
   skillCatalogPolicy,
   skillTierRows
 } from './skillTiers'
+import TIER_INDEX from './skillTierIndex.json'
+import { SKILL_CATEGORIES, SKILL_TIERS } from '../../shared/ipc'
 
 const skill = (name: string, description = `descrição de ${name}`, skillFile = `C:/skills/${name}/SKILL.md`): DiscoveredSkill => ({
   name,
@@ -29,16 +32,43 @@ const ON = { tiered: true, overrides: {} }
 const read = (path: string): string => `# conteúdo de ${path}`
 
 describe('resolveSkillTiers', () => {
-  it('usa o índice, o ajuste do usuário vence, e skill nova entra como média em "Outras"', () => {
+  it('usa o índice, o ajuste do usuário vence, e skill nova entra no nível médio com a categoria sugerida', () => {
     const tiers = resolveSkillTiers(
-      [skill('verification-before-completion'), skill('click-path-audit'), skill('brag'), skill('skill-inventada')],
+      [
+        skill('verification-before-completion'),
+        skill('click-path-audit'),
+        skill('brag'),
+        skill('deploy-helper', 'Ship containers with Docker'),
+        skill('inventada', 'faz algo')
+      ],
       { brag: { tier: 'low', category: 'Vídeo e mídia' } }
     )
     const by = Object.fromEntries(tiers.map((t) => [t.name, [t.tier, t.category]]))
-    expect(by['verification-before-completion']).toEqual(['critical', 'Testes e qualidade'])
+    expect(by['verification-before-completion']).toEqual(['high', 'Testes e qualidade'])
     expect(by['click-path-audit']).toEqual(['low', 'Depuração'])
     expect(by['brag']).toEqual(['low', 'Vídeo e mídia'])
-    expect(by['skill-inventada']).toEqual(['medium', 'Outras'])
+    expect(by['deploy-helper']).toEqual(['medium', 'Git e DevOps'])
+    expect(by['inventada']).toEqual(['medium', 'Outras'])
+  })
+})
+
+describe('guessSkillCategory', () => {
+  it('sugere pela palavra do nome ou da descrição, sem acento; "Outras" só sem nenhuma pista', () => {
+    expect(guessSkillCategory('owasp-check', 'Find vulnerabilities in a web app')).toBe('Segurança')
+    expect(guessSkillCategory('jest-runner', 'Run unit tests')).toBe('Testes e qualidade')
+    expect(guessSkillCategory('notas', 'Gera relatório em PDF')).toBe('Documentos')
+    expect(guessSkillCategory('vue-forms', 'Componentes de formulário')).toBe('Frontend')
+    expect(guessSkillCategory('xyz', 'faz algo')).toBe('Outras')
+  })
+})
+
+describe('índice de níveis', () => {
+  it('toda skill do índice tem nível válido e nenhuma ficou em "Outras"', () => {
+    for (const [name, e] of Object.entries(TIER_INDEX as Record<string, { tier: string; category: string }>)) {
+      expect(SKILL_TIERS, name).toContain(e.tier)
+      expect(SKILL_CATEGORIES, name).toContain(e.category)
+      expect(e.category, name).not.toBe('Outras')
+    }
   })
 })
 
@@ -65,7 +95,7 @@ describe('skillCatalogPolicy — desligado = exatamente como hoje', () => {
 describe('skillCatalogPolicy — catálogo em níveis', () => {
   const all = [skill('verification-before-completion'), skill('brag'), skill('click-path-audit'), skill('react-testing')]
 
-  it('lista nativa: críticas + médias + as embutidas do CLI; nunca as baixas', () => {
+  it('lista nativa: níveis alto + médio + as embutidas; nunca o baixo do CLI; nunca as baixas', () => {
     const native = skillCatalogPolicy(ON, { read }).sdkSkills(all) as string[]
     expect(native).toEqual(expect.arrayContaining(['verification-before-completion', 'brag', ...DEFAULT_NATIVE_EXTRA_SKILLS]))
     expect(native).not.toContain('click-path-audit')
@@ -81,7 +111,7 @@ describe('skillCatalogPolicy — catálogo em níveis', () => {
     rememberNativeSkillNames([], all)
   })
 
-  it('crítica vai INTEIRA no prompt de sistema', () => {
+  it('nível alto vai INTEIRO no prompt de sistema', () => {
     const { text, warning } = skillCatalogPolicy(ON, { read }).systemBlock(all)
     expect(text).toContain('# conteúdo de C:/skills/verification-before-completion/SKILL.md')
     expect(text).toMatch(/verification-before-completion/)
@@ -89,8 +119,8 @@ describe('skillCatalogPolicy — catálogo em níveis', () => {
     expect(warning).toBeNull()
   })
 
-  it('críticas acima do teto: avisa e a que não coube vira média (nunca cortada calada)', () => {
-    const big = (path: string): string => (path.includes('verification') ? 'x'.repeat(CRITICAL_BUDGET_BYTES + 10) : read(path))
+  it('nível alto acima do teto: avisa e a que não coube cai para o médio (nunca cortada calada)', () => {
+    const big = (path: string): string => (path.includes('verification') ? 'x'.repeat(HIGH_BUDGET_BYTES + 10) : read(path))
     const policy = skillCatalogPolicy(ON, { read: big })
     const block = policy.systemBlock(all)
     expect(block.text).toBe('')
@@ -129,12 +159,12 @@ describe('skillCatalogPolicy — catálogo em níveis', () => {
 describe('skillCatalogPolicy — achados da revisão', () => {
   const all = [skill('verification-before-completion'), skill('brag'), skill('click-path-audit')]
 
-  it('o catálogo só chama de crítica (texto no prompt) a que entrou no prompt na subida', () => {
+  it('o catálogo só chama de nível alto (texto no prompt) a que entrou no prompt na subida', () => {
     const policy = skillCatalogPolicy(ON, { read })
-    policy.systemBlock([skill('brag')]) // subida: nenhuma crítica no disco ainda
-    const later = [...all] // a crítica apareceu depois
+    policy.systemBlock([skill('brag')]) // subida: nenhuma de nível alto no disco ainda
+    const later = [...all] // a de nível alto apareceu depois
     const { catalog } = policy.announce(createSkillCatalogSnapshot(policy.nativeExpected(later)), later)
-    expect(catalog).toMatch(/Critical[^\n]*\n\(none\)/)
+    expect(catalog).toMatch(/High[^\n]*\n\(none\)/)
     expect(catalog).toContain('/verification-before-completion — C:/skills/verification-before-completion/SKILL.md')
   })
 
@@ -151,7 +181,7 @@ describe('skillCatalogPolicy — achados da revisão', () => {
     expect(native).toEqual(expect.arrayContaining(['plugin:a', 'plugin:b']))
   })
 
-  it('as críticas são lidas uma vez por lista descoberta', () => {
+  it('as de nível alto são lidas uma vez por lista descoberta', () => {
     let reads = 0
     const policy = skillCatalogPolicy(ON, { read: (p) => (reads++, read(p)) })
     policy.systemBlock(all)
@@ -162,13 +192,13 @@ describe('skillCatalogPolicy — achados da revisão', () => {
   })
 
   it('aviso no plural com o teto vindo da constante', () => {
-    const big = (): string => 'x'.repeat(CRITICAL_BUDGET_BYTES + 1)
+    const big = (): string => 'x'.repeat(HIGH_BUDGET_BYTES + 1)
     const { warning } = skillCatalogPolicy(
-      { tiered: true, overrides: { brag: { tier: 'critical', category: 'Vídeo e mídia' } } },
+      { tiered: true, overrides: { brag: { tier: 'high', category: 'Vídeo e mídia' } } },
       { read: big }
     ).systemBlock(all)
     expect(warning).toMatch(/verification-before-completion, brag não couberam/)
-    expect(warning).toMatch(/foram tratadas como médias/)
+    expect(warning).toMatch(/foram tratadas como de nível médio/)
   })
 })
 
@@ -188,7 +218,7 @@ describe('skillTierRows (o editor das Configurações)', () => {
 })
 
 describe('resolveSkillTiers com o kit real', () => {
-  it('lê o SKILL.md de verdade para a crítica', async () => {
+  it('lê o SKILL.md de verdade para a de nível alto', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'tiers-'))
     await mkdir(join(dir, 'verification-before-completion'))
     const file = join(dir, 'verification-before-completion', 'SKILL.md')

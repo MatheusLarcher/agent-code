@@ -168,7 +168,7 @@ describe('RemoteServer — ponte LAN', () => {
     expect(msgs[0].text).toBe('oi')
   })
 
-  it('/api/history NUNCA manda mais que as 30 últimas mensagens (conversa longa)', async () => {
+  it('/api/history manda só a última página (50) e diz que há mais antigas; `before=` traz a página anterior', async () => {
     const longConv: RemoteConversation = {
       id: 'clong',
       title: 'Conversa longa',
@@ -176,19 +176,59 @@ describe('RemoteServer — ponte LAN', () => {
       busy: false,
       connected: true,
       updatedAt: 3,
-      // 50 mensagens — só as 20..49 (as ÚLTIMAS 30) devem voltar.
-      messages: Array.from({ length: 50 }, (_, i) => ({ kind: 'user', id: `m${i}`, text: `msg ${i}` }))
+      // 120 mensagens — só as 70..119 (as ÚLTIMAS 50) devem voltar.
+      messages: Array.from({ length: 120 }, (_, i) => ({ kind: 'user', id: `m${i}`, text: `msg ${i}` }))
     }
     // setState SUBSTITUI o snapshot inteiro — soma à conversa `c1` existente
     // (não troca por ela) para não quebrar os testes seguintes que dependem dela.
     server.setState({ conversations: [conv, longConv] })
     const r = await getJson(`/api/history?token=${token}&conv=clong`)
     expect(r.status).toBe(200)
-    const msgs = (r.json as { messages: Array<{ text: string }> }).messages
-    expect(msgs).toHaveLength(30)
-    // são as mais RECENTES (a mais antiga do corte é "msg 20", a última é "msg 49")
-    expect(msgs[0].text).toBe('msg 20')
-    expect(msgs[msgs.length - 1].text).toBe('msg 49')
+    const page = r.json as { messages: Array<{ text: string }>; hasOlder: boolean }
+    expect(page.messages).toHaveLength(50)
+    expect(page.messages[0].text).toBe('msg 70')
+    expect(page.messages[49].text).toBe('msg 119')
+    expect(page.hasOlder).toBe(true)
+    const older = (await getJson(`/api/history?token=${token}&conv=clong&before=m70`)).json as { messages: Array<{ text: string }>; hasOlder: boolean }
+    expect(older.messages[0].text).toBe('msg 20')
+    expect(older.messages[49].text).toBe('msg 69')
+    expect(older.hasOlder).toBe(true)
+    const first = (await getJson(`/api/history?token=${token}&conv=clong&before=m20`)).json as { messages: unknown[]; hasOlder: boolean }
+    expect(first.messages).toHaveLength(20)
+    expect(first.hasOlder).toBe(false)
+    const capped = (await getJson(`/api/history?token=${token}&conv=clong&limit=100`)).json as { messages: unknown[] }
+    expect(capped.messages).toHaveLength(100)
+  })
+
+  it('/api/history vai LEVE (ferramenta cortada, light) e /api/history-details devolve a inteira', async () => {
+    const big = 'y'.repeat(4000)
+    const heavyConv: RemoteConversation = {
+      id: 'cheavy',
+      title: 'Pesada',
+      cwd: '/proj',
+      busy: false,
+      connected: true,
+      updatedAt: 4,
+      messages: [
+        { kind: 'user', id: 'u1', text: 'faz' },
+        { kind: 'tool-use', id: 't1', name: 'Write', input: { file_path: 'C:/proj/a.ts', content: big }, parentToolUseId: null, result: { isError: false, text: big } },
+        { kind: 'assistant-text', id: 'a1', text: big, final: true, answer: true }
+      ]
+    }
+    server.setState({ conversations: [conv, heavyConv] })
+    const light = (await getJson(`/api/history?token=${token}&conv=cheavy`)).json as { messages: Array<{ id: string; light?: boolean; text?: string; input?: { content: string } }> }
+    expect(light.messages.map((m) => m.id)).toEqual(['u1', 't1', 'a1'])
+    expect(light.messages[1].light).toBe(true)
+    expect(light.messages[1].input?.content.length).toBeLessThan(500)
+    expect(light.messages[2].text).toHaveLength(4000) // a resposta vai inteira
+    const full = (await getJson(`/api/history?token=${token}&conv=cheavy&full=1`)).json as { messages: Array<{ light?: boolean }> }
+    expect(full.messages[1].light).toBeUndefined()
+    const details = (await getJson(`/api/history-details?token=${token}&conv=cheavy&ids=t1,nope`)).json as { messages: Array<{ id: string; light?: boolean; input: { content: string } }> }
+    expect(details.messages).toHaveLength(1)
+    expect(details.messages[0].id).toBe('t1')
+    expect(details.messages[0].light).toBeUndefined()
+    expect(details.messages[0].input.content).toHaveLength(4000)
+    expect((await getJson(`/api/history-details?token=${token}&conv=cheavy`)).status).toBe(400)
   })
 
   it('/api/history com conversa inexistente devolve lista vazia (sem erro)', async () => {
@@ -203,6 +243,7 @@ describe('RemoteServer — ponte LAN', () => {
     expect(r.status).toBe(200)
     expect((r.json as { targetId: string }).targetId).toBe('u1')
     expect((r.json as { messages: Array<{ id: string }> }).messages.some((m) => m.id === 'u1')).toBe(true)
+    expect(r.json as object).toMatchObject({ hasOlder: false, hasNewer: false })
   })
 
   it('POST /api/send encaminha o comando via onInbound', async () => {

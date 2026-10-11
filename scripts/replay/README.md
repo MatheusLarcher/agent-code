@@ -1,6 +1,6 @@
 # Replay: refazer tarefas reais com os interruptores desligados × ligados
 
-Prova (plano-20261008-2158, etapa `teste-replay`) de que o ciclo completo nos handoffs, a leitura guiada e o catálogo de skills em níveis não pioram a qualidade. Três tarefas reais do agent-code são refeitas a partir do commit pai de cada uma, 2 rodadas por lado (escolha do usuário em 09/10; o handoff pedia 3). O resultado final vai para `docs/validation/replay-<data>/`.
+Prova (plano-20261008-2158, etapa `teste-replay`) de que a leitura guiada e o catálogo de skills em níveis não pioram a qualidade (o interruptor das 7 fases por etapa nos handoffs, que também era comparado, saiu do app em 10/10: o rigor passou a ser decidido por etapa no planejamento, com Aceite/Verificar com/Decidido). Três tarefas reais do agent-code são refeitas a partir do commit pai de cada uma, 2 rodadas por lado (escolha do usuário em 09/10; o handoff pedia 3). O resultado final vai para `docs/validation/replay-<data>/`.
 
 As tarefas são simples (`config.mjs`): commits pequenos, com teste, cujo pedido original está no banco do app. Em 09/10 13:03 o usuário trocou as três primeiras (mais de 2 h por rodada) e pediu no máximo 20 min por teste. Por isso o trabalho do agente (handoff + implementação) tem teto de 10 min (regra do usuário em 09/10 15:10). O teto de 10 min é **estrito para handoff + implementação**: passou do prazo, a rodada reprova, mesmo que o código parcial avaliado no corte esteja verde. Só uma implementação com estado `done` no prazo pode passar; estado faltante não aprova. Se o handoff consumir todo o orçamento, a implementação não recebe tempo adicional. Não houve aprovação humana para relaxar esse limite; uma pergunta posterior expirou sem resposta. A avaliação (uns 3 min) vem depois e não conta no teto. A conversa que parou antes do teto conta como terminada, mesmo que a confirmação do fim passe dele.
 
@@ -64,3 +64,34 @@ Uma rodada faz, em ordem:
 8. Mede o tempo (`medir-exploracao.mjs`, cópia sem mudança da mídia do plano).
 
 O "passou" final do avaliador de código sai depois da revisão às cegas. Falha de teste de referência classificada como "nome" não conta; "comportamento" conta.
+
+## Validação da autonomia do handoff (tarefa `a1`, plano-20261010-0616)
+
+Prova de que, com o build novo, a conversa de handoff decide sozinha: nenhuma pergunta não destrutiva chega ao usuário, nenhum turno termina perguntando, a fila solta os prompts 2..N sozinha, e tempo ativo, chamadas e contexto médio não pioram. Resultados em `docs/validation/replay-autonomia-2026-10-10/`.
+
+- **Base = uma sessão real que perguntou:** `3708b226` (06/10), handoff do `plano-20261006-1026` (cadeiras do escritório 3D). Ela teve 1 AskUserQuestion, 1 espera de 7 min, 1 turno terminado em pergunta, 116 min ativos, 284 chamadas e contexto médio de 417 mil tokens. As outras candidatas da medição saíram: `921d3343` (pesquisa num repositório do GitHub, que a cerca nega, e sem commit de referência), `21831ff9` (era a conversa do Agent Manager) e `41fb8e53` (270 arquivos e 27 h).
+- **Os contadores da base** saem do transcript da sessão, guardado no banco do app (`sdk_session_entries`), por `baseline-sessao.mjs`. As mesmas contas rodam sobre a conversa de implementação de cada rodada (`run.autonomy`).
+- **A tarefa `a1`** (`config.mjs`):
+  - referência = a faixa `8c89585..526d549` (a entrega foram 3 commits seguidos);
+  - teto de 60 min;
+  - lado único `novo`, com os interruptores da config do usuário (leitura guiada e catálogo em níveis ligados);
+  - plano = cópia do plano real, sem o `_handoff`. O Manager só escreve o handoff, com as regras novas.
+- **A autonomia é a padrão:** sem card, perguntas `nenhuma` e permitir tudo exceto destrutivo. O condutor continua respondendo pela recomendada; se uma pergunta chegar, ela conta como falha da meta.
+- **A revisão às cegas** compara o diff da rodada com o diff de referência (A/B sorteados).
+
+```
+node scripts/replay/replay.mjs prepare a1 && node scripts/replay/replay.mjs baseline a1 && node scripts/replay/replay.mjs plan a1
+node scripts/replay/replay.mjs round a1 novo 1   # depois a rodada 2; uma por vez, em segundo plano
+node scripts/replay/review.mjs prepare a1 <n>    # revisor às cegas; depois ingest
+node scripts/replay/replay.mjs publish a1 && node scripts/replay/replay.mjs retire a1
+node scripts/replay/report.mjs                   # tabela base × novo-r1 × novo-r2 e veredito por meta
+```
+
+As metas não se ajustam para passar:
+- `pergunta`, `insistencia`, `proximo-prompt` e `primeiro-prompt-forcado` = 0;
+- tempo ativo, chamadas e contexto médio ≤ base;
+- typecheck e suíte verdes;
+- testes de referência passando;
+- revisão sem nota abaixo da referência.
+
+O tempo de parede entra só como **projeção**: turnos que deixaram de perguntar × 14 min de parada média (medição de 09/10).

@@ -4,11 +4,12 @@
  * detalhe, +N −M e a pílula; o toque abre a entrada legível e o resultado. Um
  * entregável criado por Write ganha "Baixar" (pela ponte nativa do APK).
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CodeBlock } from '@renderer/components/CodeBlock'
 import { describeTool, TOOL_CODE_MAX, TOOL_RESULT_MAX, toolBadge, toolErrored, toolInputView, writtenPath } from '@renderer/components/toolDescribe'
 import { client } from '../app/runtime'
 import { triggerDownload } from '../core/download'
+import { useStore } from '../core/store'
 import type { ToolUseMsg } from '../core/types'
 import { Icon } from '../ui/icons'
 
@@ -49,11 +50,31 @@ export function ToolCard({ m }: { m: ToolUseMsg }): JSX.Element {
   )
 }
 
-/** A entrada legível e o resultado (o cartão aberto; também a linha do chat aberta). */
+/**
+ * A entrada legível e o resultado (o cartão aberto; também a linha do chat aberta).
+ * Mensagem LEVE (o PC cortou entrada/resultado): pede o detalhe inteiro ao abrir e
+ * mostra "carregando"; se falhou, o que há mais "tentar de novo".
+ */
 export function ToolBody({ m }: { m: ToolUseMsg }): JSX.Element {
+  const failed = useStore(client.store, (s) => !!m.id && s.detailsFailed.has(m.id))
+  useEffect(() => {
+    if (m.light && m.id) void client.loadDetails([m.id]).catch(() => undefined)
+  }, [m.light, m.id])
+  if (m.light && !failed) {
+    return (
+      <div className="tool-body tool-body-light">
+        <span className="spinner" /> Carregando detalhes…
+      </div>
+    )
+  }
   const view = toolInputView(m.name, m.input)
   return (
     <div className="tool-body">
+      {m.light && (
+        <button type="button" className="tool-retry" onClick={() => void client.loadDetails(m.id ? [m.id] : []).catch(() => undefined)}>
+          Não deu para carregar o detalhe inteiro — tentar de novo
+        </button>
+      )}
       {view.caption && <div className="tool-caption">{view.caption}</div>}
       {view.code ? <CodeBlock code={view.code.slice(0, TOOL_CODE_MAX)} language={view.language} /> : <div className="tool-empty">(sem conteúdo)</div>}
       {m.result && (

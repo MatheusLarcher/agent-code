@@ -2,7 +2,7 @@
  * Uma mensagem do chat no celular: do usuário, resposta (Markdown do desktop), pensamento, avisos e ferramentas.
  * `resolveRef` (só o chat do Agent Manager, na aba Planos): os [[Nome]] de card saem na cor do tipo.
  */
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { CardRefText, Markdown, type CardRefResolver } from '@renderer/components/Markdown'
 import { client } from '../app/runtime'
 import { triggerDownload } from '../core/download'
@@ -74,15 +74,23 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
   )
 }
 
-/** Recolhido por padrão (como no PC): o raciocínio é longo e raramente é o que se quer ler no celular. */
-function Thinking({ text }: { text: string }): JSX.Element {
+/** Recolhido por padrão (como no PC): o raciocínio é longo e raramente é o que se quer ler no celular. Leve (cortado pelo PC): ao abrir, pede o inteiro. */
+function Thinking({ id, text, light }: { id?: string; text: string; light: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (open && light && id) void client.loadDetails([id]).catch(() => undefined)
+  }, [open, light, id])
   return (
     <div className={`msg thinking${open ? ' open' : ''}`}>
       <button type="button" className="thinking-head" onClick={() => setOpen((o) => !o)}>
         {open ? '▾' : '▸'} Pensando…
       </button>
-      {open && <div className="thinking-body">{text}</div>}
+      {open && (
+        <div className="thinking-body">
+          {text}
+          {light && <span className="thinking-more"><span className="spinner" /> carregando o resto…</span>}
+        </div>
+      )}
     </div>
   )
 }
@@ -115,7 +123,7 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
         />
       )
     case 'thinking':
-      return <Thinking text={m.text} />
+      return <Thinking id={m.id} text={m.text} light={!!m.light} />
     case 'system':
       return (
         <div className="msg system session-chips">

@@ -84,9 +84,9 @@ export function isolatedEnv(dataDir, base = process.env, realHome = base.USERPRO
 /** Pasta de cache da instância (skills, planejamentos, memórias): <dados>/agent-code. */
 export const cacheDirOf = (dataDir) => path.join(dataDir, 'agent-code')
 
-/** Skills dos kits do app (ciclo, ECC): só entram pelo interruptor, nunca pela cópia das skills do usuário. */
+/** Skills dos kits do app (ECC): só entram pelo interruptor, nunca pela cópia das skills do usuário. */
 const kitSkillNames = () =>
-  new Set(['skills-ciclo', 'skills-ecc'].flatMap((d) => (existsSync(path.join(APP_ROOT, '.agents', d)) ? readdirSync(path.join(APP_ROOT, '.agents', d)) : [])))
+  new Set(['skills-ecc'].flatMap((d) => (existsSync(path.join(APP_ROOT, '.agents', d)) ? readdirSync(path.join(APP_ROOT, '.agents', d)) : [])))
 
 /** Prepara a pasta de dados: skills do usuário (como no app dele, sem as dos kits) e o plano congelado. */
 export function seedDataDir(dataDir, { userSkillsDir, plan }) {
@@ -202,7 +202,7 @@ export async function configure(page, { side, manager }) {
   await page.evaluate(
     (patch) => window.api.setConfig(patch),
     {
-      handoff: { ciclo: side.ciclo, leituraGuiada: side.leituraGuiada },
+      handoff: { leituraGuiada: side.leituraGuiada },
       skillCatalog: { tiered: side.tiered },
       planning: { model: manager.model, effort: manager.effort },
       // Iguais nos dois lados e fora do teste: PO, vigia, memorista e TypeSafe gastam conta e mexem no quadro.
@@ -213,8 +213,8 @@ export async function configure(page, { side, manager }) {
     }
   )
   const cfg = await page.evaluate(() => window.api.getConfig())
-  const got = { ciclo: cfg.handoff?.ciclo, leituraGuiada: cfg.handoff?.leituraGuiada, tiered: cfg.skillCatalog?.tiered, planning: cfg.planning }
-  if (got.ciclo !== side.ciclo || got.leituraGuiada !== side.leituraGuiada || got.tiered !== side.tiered) {
+  const got = { leituraGuiada: cfg.handoff?.leituraGuiada, tiered: cfg.skillCatalog?.tiered, planning: cfg.planning }
+  if (got.leituraGuiada !== side.leituraGuiada || got.tiered !== side.tiered) {
     throw new Error(`config não aplicou: ${JSON.stringify(got)}`)
   }
   return got

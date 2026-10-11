@@ -1,0 +1,18 @@
+{
+  "session": "3708b226-14e5-4348-910a-ccd0f8a397e2",
+  "turns": 3,
+  "handoffPrompts": 1,
+  "lateHandoffPrompts": 0,
+  "askUserQuestion": 1,
+  "expired7min": 1,
+  "turnsEndingInQuestion": 1,
+  "activeSecs": 6978,
+  "wallSecs": 7474,
+  "calls": 284,
+  "avgContextTokens": 416926,
+  "atencaoLines": 0,
+  "desvioLines": 0,
+  "firstAt": "2026-10-06T14:17:23.155Z",
+  "lastAt": "2026-10-06T16:21:56.825Z",
+  "firstRequest": "# Handoff — Cadeira na altura padrão (mãos no teclado) e uma cadeira por agente na sala de reunião\n\n## Como trabalhar nesta conversa\n\n- **O plano está pronto e fechado.** Os cards ficam em `D:\\OneDrive\\Documentos\\agent-code\\planning\\agent-code\\plano-20261006-1026`: um arquivo por card em `cards\\<id>"
+}

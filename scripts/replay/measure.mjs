@@ -99,7 +99,9 @@ function totalsOf(file, sidechain = false) {
       const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : ''
       if (text.includes(STAMP)) {
         first = ts
-        handoff = /\]\s*(\[[A-Z_]+\][\s\S]*?\[\/[A-Z_]+\]\s*)*#\s*(Handoff|Prompt)\b/i.test(text)
+        // O prompt de handoff começa com um título Markdown ("# Handoff", "# Implementação", ou "# Arquivos"
+        // quando a leitura guiada põe a seção no topo); pedido comum e o pedido ao Manager não.
+        handoff = /\]\s*(\[[A-Z_]+\][\s\S]*?\[\/[A-Z_]+\]\s*)*#\s+\S/i.test(text)
       }
     }
     if (o.type === 'assistant' && first !== null) {

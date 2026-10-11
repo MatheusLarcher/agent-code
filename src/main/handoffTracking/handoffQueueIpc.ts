@@ -13,13 +13,19 @@ import { editQueued, removeQueued, reorderQueued, type QueueEditResult } from '.
 import { projectFolderKey } from '../../shared/handoffProject'
 import {
   currentEnvio,
+  envioPosition,
   HANDOFF_PO_HOLD_PREFIX,
   isEnvioHeldByPo,
   isEnvioRemoved,
+  isIncompleteWithoutError,
   isRoutineEnvio,
   type HandoffEnvio,
-  type HandoffQueueItem
+  type HandoffQueueDecision,
+  type HandoffQueueItem,
+  type HandoffQueueUndispatchResult
 } from '../../shared/handoffTracking'
+import { queueIncompleteText, queueResumedText } from '../../shared/handoffNotice'
+import { publishHandoffNotice } from './handoffNotices'
 import { Channels } from '../../shared/ipc'
 import type { HandoffRepository } from '../persistence/types'
 import { decideQueue, previousRunning, queuedEnvios } from './handoffQueue'
@@ -45,12 +51,27 @@ export type HandoffQueueIpcListener = (event: unknown, ...args: unknown[]) => un
 export interface HandoffQueueIpcDeps {
   handle: (channel: string, listener: HandoffQueueIpcListener) => void
   repository(): HandoffRepository | null
-  tracker: Pick<HandoffTracker, 'settled' | 'dispatched'> & Partial<Pick<HandoffTracker, 'stoppedByUser'>>
+  tracker: Pick<HandoffTracker, 'settled' | 'dispatched'> & Partial<Pick<HandoffTracker, 'stoppedByUser' | 'undispatched'>>
   /** A fila do projeto; sem ela, só a regra da fila do quadro (por conversa). */
   project?: Pick<ProjectQueueService, 'gate' | 'describe' | 'snapshot' | 'action' | 'reply'> &
     Partial<Pick<ProjectQueueService, 'reorder' | 'dirtyFiles'>>
   /** Uma ação da faixa mudou os envios da conversa (handoff:changed + fila do projeto). */
   changed?(conversationId: string): void
+  /** Injetável para teste; padrão, o barramento dos avisos de handoff. */
+  publishNotice?(conversationId: string, tipo: 'fila', texto: string): void
+}
+
+/**
+ * O aviso de um despacho que a fila fez SOZINHA (não o "mesmo assim"): o
+ * prompt seguinte com a pendência do anterior, ou a retomada. `null` no resto.
+ */
+export function autoDispatchNotice(envios: readonly HandoffEnvio[], decision: HandoffQueueDecision): string | null {
+  if (decision.kind !== 'next') return null
+  const position = envioPosition(envios, decision.envio)
+  if (decision.retomada) return queueResumedText(position)
+  const previous = currentEnvio(envios.filter((e) => !isRoutineEnvio(e)))
+  if (previous && previous.id !== decision.envio.id && isIncompleteWithoutError(previous)) return queueIncompleteText(position, previous.motivo)
+  return null
 }
 
 const ConversationId = z.string().min(1).max(200)
@@ -186,6 +207,10 @@ export function registerHandoffQueueIpc(deps: HandoffQueueIpcDeps): void {
   const offline = { ok: false as const, message: 'O banco está indisponível agora.' }
   const noProject = { ok: false as const, message: 'A fila do projeto não está ativa.' }
 
+  // O aviso "saiu sozinho"/"retomado" da última decisão de cada conversa: vai ao
+  // celular quando o despachante confirma o envio (o app avisa pela mudança de status).
+  const pendingNotice = new Map<string, { envioId: string; texto: string }>()
+
   handle(Channels.handoffQueueGate, GateReq, async (req): Promise<HandoffQueueGateResult> => {
     const repo = repository()
     if (!repo) return offline
@@ -201,13 +226,29 @@ export function registerHandoffQueueIpc(deps: HandoffQueueIpcDeps): void {
     const decision = deps.project
       ? await deps.project.gate(req.conversationId, envios, req.force === true)
       : decideQueue(envios, { force: req.force })
+    const texto = req.force ? null : autoDispatchNotice(envios, decision)
+    if (texto && decision.kind === 'next') pendingNotice.set(req.conversationId, { envioId: decision.envio.id, texto })
+    else pendingNotice.delete(req.conversationId)
     return { ok: true, decision }
   })
 
-  handle(Channels.handoffQueueDispatched, DispatchedReq, async (req): Promise<HandoffQueueDispatchedResult> => ({
-    ok: true,
-    dispatched: await deps.tracker.dispatched(req.conversationId, req.envioId)
-  }))
+  handle(Channels.handoffQueueDispatched, DispatchedReq, async (req): Promise<HandoffQueueDispatchedResult> => {
+    const dispatched = await deps.tracker.dispatched(req.conversationId, req.envioId)
+    const notice = pendingNotice.get(req.conversationId)
+    if (dispatched && notice?.envioId === req.envioId) {
+      pendingNotice.delete(req.conversationId)
+      ;(deps.publishNotice ?? publishHandoffNotice)(req.conversationId, 'fila', notice.texto)
+    }
+    return { ok: true, dispatched }
+  })
+
+  // O despacho do renderer falhou DEPOIS da marca: o envio volta à fila (só o
+  // `enviado` cujo turno não começou — HandoffJobs.undispatched), e o aviso guardado sai.
+  handle(Channels.handoffQueueUndispatch, DispatchedReq, async (req): Promise<HandoffQueueUndispatchResult> => {
+    const undone = (await deps.tracker.undispatched?.(req.conversationId, req.envioId)) ?? false
+    if (undone && pendingNotice.get(req.conversationId)?.envioId === req.envioId) pendingNotice.delete(req.conversationId)
+    return { ok: true, undone }
+  })
 
   handle(Channels.handoffQueueList, ListReq, async (req): Promise<HandoffQueueListResult> => {
     const repo = repository()

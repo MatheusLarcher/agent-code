@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useRef } from 'react'
 import { needsUserCount } from './deliveryModel'
 import { openConversationById, type OpenConversationDeps } from './deliveriesNav'
+import type { AgentCodeApi } from '@shared/api'
 import { useDeliveries, type DeliveriesApi, type DeliveriesState } from './useDeliveries'
-import { useDeliveryToasts } from './useDeliveryToasts'
+import { useDeliveryToasts, type DeliveryToastDeps } from './useDeliveryToasts'
 
 /**
  * O que o App monta das Entregas, sempre: a leitura de todos os envios, o
@@ -17,12 +18,22 @@ export interface DeliveryCenter {
   openConversation: (conversationId: string) => void
 }
 
+/** O canal dos avisos ao vivo: o da api injetada, ou o do preload (ausente em testes antigos). */
+function noticeSource(api: DeliveriesApi | undefined): DeliveryToastDeps['subscribeNotices'] {
+  const source = (api ?? (typeof window !== 'undefined' ? (window as { api?: Partial<AgentCodeApi> }).api : undefined)) as
+    | Partial<Pick<AgentCodeApi, 'onHandoffNotice'>>
+    | undefined
+  const on = source?.onHandoffNotice
+  return typeof on === 'function' ? (cb) => on(cb) : undefined
+}
+
 export function useDeliveryCenter(deps: OpenConversationDeps, options: { api?: DeliveriesApi } = {}): DeliveryCenter {
   const depsRef = useRef(deps)
   depsRef.current = deps
   const state = useDeliveries(options)
   const openConversation = useCallback((id: string): void => void openConversationById(id, depsRef.current), [])
-  useDeliveryToasts(state.envios, { notify: deps.notify, openConversation })
+  const subscribeNotices = useMemo(() => noticeSource(options.api), [options.api])
+  useDeliveryToasts(state.envios, { notify: deps.notify, openConversation, subscribeNotices })
   const count = useMemo(() => needsUserCount(state.envios), [state.envios])
   return { state, count, openConversation }
 }

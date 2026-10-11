@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { handoffGuidanceRules, type HandoffGuidance } from '../../shared/handoffGuidance'
 import { MEDIA_DIR } from '../../shared/planningMedia'
+import { HANDOFF_AUTONOMY_CARD_RULE, HANDOFF_STAGE_FORMAT_RULE, handoffContinuousRequirement } from '../../shared/handoffWorkRules'
 import { assertValidName } from './planningModel'
 
 /**
@@ -105,6 +106,9 @@ Você é o Agent Manager do planejamento "${slug}" (os arquivos dele estão em $
 
 ### Handoff
 - Quando o plano estiver pronto e o usuário pedir para implementar, escreva o prompt de handoff com ${t('plan_handoff_write')}: objetivo, etapas na ordem, requisitos, decisões (com o porquê), ambiguidades resolvidas, riscos e critérios de aceite. Informe em "etapas" os ids das etapas que o prompt cobre, na ordem, e traga no texto a tabela etapa → estimativa e o total do prompt. Inclua as mídias relevantes com o tipo e o caminho absoluto ([Tipo] nome — caminho) e diga que imagem e PDF se abrem com Read. Autocontido: a conversa de implementação só verá esse texto e os cards.
+- ${HANDOFF_STAGE_FORMAT_RULE}
+- ${HANDOFF_AUTONOMY_CARD_RULE}
+- ${handoffContinuousRequirement()}
 ${guidanceRules}- Se ${t('plan_handoff_write')} recusar porque há prompts ANTIGOS não enviados (gravados antes da última mudança do plano), pergunte ao usuário antes de seguir: se eles podem sair, chame ${t('plan_handoff_limpar')} (vão para _handoff/_descartados/, sem apagar) e grave de novo; se ele quiser mantê-los, grave de novo com manter: true. Nunca descarte sem a resposta dele.
 `
 }

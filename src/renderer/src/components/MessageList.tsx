@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ChatMemoryAttachment, useChatMemoryHistory } from './ChatMemories'
 import type { UIMessage } from '../types'
 import { QuestionMap } from './QuestionMap'
 import { useKeepEndOnResize } from './MessageListAnchor'
@@ -22,6 +23,7 @@ export type { TtsControls } from './ChatRows'
 const PAGE = WINDOW_PAGE
 
 export function MessageList({
+  convId,
   messages,
   busy,
   tts,
@@ -31,6 +33,7 @@ export function MessageList({
   scrollSeq,
   quote
 }: {
+  convId?: string | null
   messages: UIMessage[]
   busy: boolean
   tts: TtsControls
@@ -86,6 +89,8 @@ export function MessageList({
   const { loadingOlder, showAtLeast } = win
   const startIdx = win.start
   const shown = rows.slice(startIdx)
+  const visibleUsers = shown.flatMap((r) => r.type !== 'step' && r.msg.kind === 'user' && !r.msg.injected ? [r.msg.id] : [])
+  const memories = useChatMemoryHistory(convId, messages, visibleUsers)
   const hasOlder = win.hasOlder
 
   // The footer (composer, "Última resposta"…) grew or shrank → the list box
@@ -192,7 +197,10 @@ export function MessageList({
       <AnimGateProvider gate={animGate}>
         <LazyMarkdownProvider value={lazyAnswers}>
           {shown.map((r) =>
-            r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <ChatRow key={r.key} m={r.msg} ctx={rowCtx} />
+            r.type === 'step' ? <ChatStepRow key={r.key} step={r} ctx={rowCtx} /> : <Fragment key={r.key}>
+              <ChatRow m={r.msg} ctx={rowCtx} />
+              {r.msg.kind === 'user' && !r.msg.injected && <ChatMemoryAttachment entries={memories.byUser.get(r.msg.id) ?? []} error={r.msg.id === visibleUsers[0] ? memories.error : undefined} onRetry={memories.reload} />}
+            </Fragment>
           )}
         </LazyMarkdownProvider>
       </AnimGateProvider>

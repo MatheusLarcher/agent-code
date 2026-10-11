@@ -64,7 +64,6 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.board.requirePlan',
       'config.board.po.enabled',
       'config.board.po.model',
-      'config.handoff.ciclo',
       'config.handoff.leituraGuiada',
       'config.skillCatalog.tiered',
       'config.skillCatalog.overrides',

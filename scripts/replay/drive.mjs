@@ -2,7 +2,7 @@
 // responde permissões pela política (policy.mjs), responde perguntas com a opção
 // recomendada, e insiste quando o agente encerra o turno perguntando.
 // A mesma regra vale para os dois lados.
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { decidePermission, recommendedAnswers } from './policy.mjs'
 
@@ -23,6 +23,37 @@ export function quietSince(dir) {
 
 /** Texto da insistência: aceita o recomendado (a política combinada) e pede para terminar. */
 export const NUDGE = 'Siga com a opção que você recomenda e termine a tarefa. Não precisa me perguntar de novo.'
+
+/**
+ * Tarefas lançadas em segundo plano (Bash/Agent com run_in_background) que ainda não
+ * devolveram a `<task-notification>`, no texto de um ou mais transcripts. O agente que
+ * espera o próprio segundo plano encerra o turno ("sigo quando terminar") e volta quando
+ * a notificação chega: para o condutor, isso é trabalho em andamento, não fim.
+ */
+export function pendingBackgroundIn(texts) {
+  const started = new Set()
+  const finished = new Set()
+  for (const text of texts) {
+    for (const m of String(text).matchAll(/running in background with ID: ([A-Za-z0-9_-]+)/g)) started.add(m[1])
+    for (const m of String(text).matchAll(/<task-id>([A-Za-z0-9_-]+)<\/task-id>/g)) finished.add(m[1])
+  }
+  return [...started].filter((id) => !finished.has(id)).length
+}
+
+/** O mesmo sobre todos os transcripts sob `dir` (subagentes incluídos). */
+export function pendingBackground(dir) {
+  const texts = []
+  const walk = (d, depth) => {
+    if (depth > 4 || !existsSync(d)) return
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) walk(p, depth + 1)
+      else if (e.name.endsWith('.jsonl')) texts.push(readFileSync(p, 'utf8'))
+    }
+  }
+  walk(dir, 0)
+  return pendingBackgroundIn(texts)
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -102,7 +133,7 @@ export function endsWithQuestion(text) {
  * `timeoutMs` é o teto do TRABALHO: a conversa que parou antes dele termina como 'done'
  * mesmo que a confirmação do fim (`idleMs`) passe do teto; depois do teto, nada é enviado.
  */
-export async function driveUntilDone(bridge, ctx, { pick, timeoutMs, idleMs = 90_000, maxNudges = 3, nudgeText = NUDGE, onTick, quietMs, prompts = [], log }) {
+export async function driveUntilDone(bridge, ctx, { pick, timeoutMs, idleMs = 90_000, maxNudges = 3, nudgeText = NUDGE, onTick, quietMs, pendingBackground: pendingBg, prompts = [], log }) {
   const t0 = Date.now()
   const late = () => Date.now() - t0 >= timeoutMs
   let idleSince = null
@@ -138,7 +169,8 @@ export async function driveUntilDone(bridge, ctx, { pick, timeoutMs, idleMs = 90
         delivered.add(0)
       }
     }
-    const quiet = worked && conv && !conv.busy && !conv.permission && !(conv.queued ?? []).length && !conv.recovery
+    // Esperando o próprio segundo plano (sem a notificação de volta) ainda é trabalho.
+    const quiet = worked && conv && !conv.busy && !conv.permission && !(conv.queued ?? []).length && !conv.recovery && !(pendingBg && pendingBg() > 0)
     if (!quiet) {
       idleSince = null
       if (late()) break

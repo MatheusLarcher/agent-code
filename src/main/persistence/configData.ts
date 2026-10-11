@@ -71,8 +71,10 @@ export function normalizeSkillOverrides(value: unknown): SkillCatalogConfig['ove
   for (const [name, choice] of Object.entries(value as Record<string, unknown>)) {
     const c = choice as { tier?: unknown; category?: unknown } | null
     if (!name.trim() || !c || typeof c !== 'object') continue
-    if (!SKILL_TIERS.includes(c.tier as SkillTier) || !SKILL_CATEGORIES.includes(c.category as SkillCategory)) continue
-    out[name] = { tier: c.tier as SkillTier, category: c.category as SkillCategory }
+    // 'critical' é o nome antigo do nível alto: migra em vez de descartar o ajuste.
+    const tier = c.tier === 'critical' ? 'high' : c.tier
+    if (!SKILL_TIERS.includes(tier as SkillTier) || !SKILL_CATEGORIES.includes(c.category as SkillCategory)) continue
+    out[name] = { tier: tier as SkillTier, category: c.category as SkillCategory }
   }
   return out
 }
@@ -120,7 +122,19 @@ const partialConfigSchema = z
       })
       .strict()
       .optional(),
-    handoff: z.object({ ciclo: z.boolean().optional(), leituraGuiada: z.boolean().optional() }).strict().optional(),
+    // O interruptor `ciclo` saiu do app: config antiga ainda o traz. Descartado
+    // ANTES do `.strict()` — senão a config inteira cairia no padrão e o usuário
+    // perderia os ajustes. As outras chaves continuam estritas.
+    handoff: z
+      .preprocess(
+        (value) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value) || !('ciclo' in value)) return value
+          const { ciclo: _removed, ...rest } = value as Record<string, unknown>
+          return rest
+        },
+        z.object({ leituraGuiada: z.boolean().optional() }).strict()
+      )
+      .optional(),
     skillCatalog: z
       .object({
         tiered: z.boolean().optional(),

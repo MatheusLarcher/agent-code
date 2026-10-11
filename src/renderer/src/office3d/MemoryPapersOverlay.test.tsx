@@ -57,6 +57,17 @@ describe('os papéis de memória da mesa (MemoryPapersOverlay)', () => {
     expect(screen.getAllByTestId('memory-papers-item')).toHaveLength(2)
   })
 
+  it('o caminho no topo da folha: hover mostra o caminho completo, clique abre a pasta com a memória selecionada', async () => {
+    const a = api()
+    render(<MemoryPapersOverlay agent="Loja" reads={['2D/vps.md']} memoriesDir={'D:\\mem\\'} onClose={vi.fn()} api={a} />)
+    fireEvent.click(await screen.findByTestId('memory-papers-item'))
+    const path = await screen.findByTestId('memory-paper-path')
+    expect(path.textContent).toBe('2D/vps.md')
+    expect(path.getAttribute('title')).toMatch(/^D:\\mem\\2D\\vps\.md\n/)
+    fireEvent.click(path)
+    await waitFor(() => expect(a.revealFile).toHaveBeenCalledWith({ mode: 'folder', memory: '2D/vps.md' }))
+  })
+
   it('memória fora do acervo avisa; falha do Abrir vira notify (sem o provedor, aparece na folha); Esc e ✕ fecham', async () => {
     const notify = vi.fn()
     const close = vi.fn()

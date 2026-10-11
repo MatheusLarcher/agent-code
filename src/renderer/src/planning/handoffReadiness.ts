@@ -11,6 +11,7 @@
  */
 import type { OpenedPlanningDto, PlanningCardDto, PlanningCardType, PlanningStageStatus, PlanMediaDto } from '@shared/ipc'
 import { MEDIA_KIND_LABEL, mediaKindOf } from '@shared/planningMedia'
+import { HANDOFF_CONTINUOUS_RULES, HANDOFF_DECIDE_RULE } from '@shared/handoffWorkRules'
 
 export type HandoffIssueKind =
   | 'ambiguidade-aberta'
@@ -169,6 +170,21 @@ function detailSection(title: string, cards: PlanningCardDto[], render: (c: Plan
 }
 
 /**
+ * "Aceite:", "Verificar com:" e "Decidido:" de uma etapa, tirados dos cards
+ * dela — o plan_handoff_write recusa etapa sem as duas primeiras.
+ */
+function stageCriteria(inStage: PlanningCardDto[]): string[] {
+  const titles = (list: PlanningCardDto[]): string => list.map((c) => c.titulo).join('; ')
+  const requisitos = inStage.filter((c) => c.tipo === 'requisito')
+  const decididos = inStage.filter((c) => c.tipo === 'decisao' || (c.tipo === 'ambiguidade' && !isOpenAmbiguity(c)))
+  return [
+    `   - Aceite: ${requisitos.length ? `os requisitos desta etapa atendidos — ${titles(requisitos)}` : 'o que os cards desta etapa descrevem, funcionando no fluxo real'}.`,
+    '   - Verificar com: os testes dos arquivos que a etapa tocar e o typecheck/build do projeto, com a saída no relatório.',
+    `   - Decidido: ${decididos.length ? titles(decididos) : 'nada específico; valem as decisões gerais abaixo'}.`
+  ]
+}
+
+/**
  * O rascunho automático do prompt de handoff: objetivo, etapas na ordem com os
  * seus cards, requisitos, decisões com o porquê, sugestões com a fonte,
  * ambiguidades resolvidas (e as ainda abertas, se o usuário enviar assim) e a
@@ -218,6 +234,7 @@ export function buildDraftHandoff(plan: OpenedPlanningDto): string {
       const inStage = cards.filter((c) => c.etapa === e.id)
       if (inStage.length === 0) out.push('   - _(nenhum card nesta etapa)_')
       for (const c of inStage) out.push(`   - ${TYPE_LABEL[c.tipo]}: ${c.titulo} (${cardRef(c)})`)
+      out.push(...stageCriteria(inStage))
     })
     out.push('')
   }
@@ -267,7 +284,8 @@ export function buildDraftHandoff(plan: OpenedPlanningDto): string {
     '',
     '- Antes de começar, declare as etapas acima como o seu plano (TodoWrite ou TaskCreate), na mesma ordem, e siga-as sem replanejar.',
     `- Consulte \`${dir}\` (roteiro e cards) sempre que precisar de detalhe: os cards são a fonte das decisões.`,
-    '- Se o código real contradisser o plano, diga ao usuário o que encontrou e pergunte antes de desviar dele.',
+    `- ${HANDOFF_DECIDE_RULE}`,
+    ...HANDOFF_CONTINUOUS_RULES.map((rule) => `- ${rule}`),
     ''
   )
 

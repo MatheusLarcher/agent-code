@@ -128,6 +128,31 @@ describe('useDeliveryCenter — contador e toasts de mudança', () => {
     expect(m.select).not.toHaveBeenCalledWith('conv-b')
   })
 
+  it('aviso ao vivo do handoff: "Decidido sozinho em <conversa>" e ATENÇÃO viram toast; os da fila não (vêm do status)', async () => {
+    let push: ((n: unknown) => void) | null = null
+    const fake = fakeDeliveriesApi(world())
+    const api = { ...fake.api, onHandoffNotice: (cb: (n: unknown) => void) => ((push = cb), () => (push = null)) }
+    function Harness(): JSX.Element {
+      const { notify } = useUI()
+      useDeliveryCenter(
+        { convsRef: { current: [conv('conv-a')] }, loadByIds: async () => [], addLoaded: vi.fn(), select: vi.fn(), notify },
+        { api: api as unknown as DeliveriesApi }
+      )
+      return <span />
+    }
+    render(
+      <UiProvider>
+        <Harness />
+      </UiProvider>
+    )
+    await waitFor(() => expect(push).not.toBeNull())
+    push!({ convId: 'conv-a', tipo: 'decisao', texto: 'Decidido sozinho: Zod (recomendada) — pergunta: Lib', at: 1 })
+    push!({ convId: 'conv-a', tipo: 'atencao', texto: 'ATENÇÃO: outra conversa mexeu em x.ts', at: 2 })
+    push!({ convId: 'conv-a', tipo: 'fila', texto: 'Envio 2/3 retomado depois de parar por inatividade', at: 3 })
+    await waitFor(() => expect(toasts()).toHaveLength(2))
+    expect(toasts()).toEqual(['Decidido sozinho em Implementação: Zod (recomendada) — pergunta: Lib', 'Implementação — ATENÇÃO: outra conversa mexeu em x.ts'])
+  })
+
   it('sem o canal no window.api (versões antigas, testes do App): nada quebra, contador zero', async () => {
     const notify = vi.fn()
     function Bare(): JSX.Element {

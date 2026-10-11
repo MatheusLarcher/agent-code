@@ -1,5 +1,5 @@
 import { downloadablesFromMessages } from '../downloadAllowlist'
-import type { RemoteConversation, RemoteConversationLight, RemoteStatePayload } from '../../shared/ipc'
+import type { RemoteConversation, RemoteConversationLight, RemoteEtapasProgress, RemoteStatePayload } from '../../shared/ipc'
 import { searchUserPrompts, type RemoteSearchResult } from '../../shared/remoteSearch'
 
 /**
@@ -18,6 +18,10 @@ export interface RemoteMessageSource {
 
 /** O celular não espera o banco: sem resposta nisto, o histórico volta "indisponível" (503) e ele tenta de novo depois. */
 export const LOAD_DEADLINE_MS = 3_000
+
+/** O placar das etapas do plano de uma conversa de handoff (handoffTracking/handoffEtapasView.ts),
+ *  síncrono: undefined = sem placar, ou ainda carregando. */
+export type RemoteEtapasSource = (convId: string) => RemoteEtapasProgress | undefined
 
 export type RemoteQuestion = NonNullable<RemoteConversation['questions']>[number]
 export type RemoteConversationSummary = Omit<RemoteConversation, 'messages'> & { messageCount: number }
@@ -44,7 +48,10 @@ export class RemoteConversationStore {
   /** As perguntas de cada lista de mensagens: recalculadas só quando a lista muda. */
   private readonly questions = new WeakMap<readonly unknown[], RemoteQuestion[]>()
 
-  constructor(private readonly source?: RemoteMessageSource) {}
+  constructor(
+    private readonly source?: RemoteMessageSource,
+    private readonly etapas?: RemoteEtapasSource
+  ) {}
 
   /** Sem `delta`, a lista inteira é trocada; com `delta`, só as que mudaram (e as que saíram). */
   apply(payload: RemoteStatePayload): void {
@@ -117,10 +124,13 @@ export class RemoteConversationStore {
     return fromDb
   }
 
-  /** O `/api/state`: o resumo de cada conversa, com as perguntas quando as mensagens estão à mão. */
+  /** O `/api/state`: o resumo de cada conversa, com as perguntas quando as mensagens estão à mão
+   *  e o placar das etapas do plano (`etapas`) quando o main o tem — a chave fica ausente sem ele. */
   summaries(): RemoteConversationSummary[] {
     return this.list().map((conversation) => {
-      const { messages: _messages, messageCount, ...rest } = conversation
+      // `etapas` é do main (o placar lido do banco): o que a tela publicasse não vale.
+      const { messages: _messages, messageCount, etapas: _published, ...rest } = conversation
+      const etapas = this.etapas?.(conversation.id)
       const messages = this.messagesNow(conversation.id)
       const queued = conversation.queued ?? []
       const count = messages?.length ?? messageCount ?? 0
@@ -138,7 +148,7 @@ export class RemoteConversationStore {
       } else if (queuedQuestions.length) {
         questions = queuedQuestions
       }
-      return { ...rest, queued, messageCount: count, ...(questions ? { questions } : {}) }
+      return { ...rest, queued, messageCount: count, ...(questions ? { questions } : {}), ...(etapas ? { etapas } : {}) }
     })
   }
 

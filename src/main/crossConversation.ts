@@ -1,4 +1,5 @@
 import { basename } from 'node:path'
+import { editedFiles } from './central/centralIndex'
 import type { ProjectConversationCount, VersionedConversation } from './persistence/types'
 
 /**
@@ -37,6 +38,8 @@ export interface ConversationTopic {
   cwd: string
   lastUserMessage: string
   updatedAt: number
+  /** Arquivos que o agente principal criou/editou (até 8, mais recente primeiro) — o mesmo da Central. */
+  files: string[]
 }
 
 // ---- presença ---------------------------------------------------------------
@@ -98,12 +101,14 @@ export function topicFromConversation(row: VersionedConversation): ConversationT
     }
   }
   if (!lastUser) return null
+  const cwd = typeof p.cwd === 'string' ? p.cwd : ''
   return {
     convId: row.id,
     title: oneLine(typeof p.title === 'string' && p.title.trim() ? p.title : '(sem título)', TITLE_MAX),
-    cwd: typeof p.cwd === 'string' ? p.cwd : '',
+    cwd,
     lastUserMessage: lastUser,
-    updatedAt: timeOf(p.updatedAt, row.updatedAt)
+    updatedAt: timeOf(p.updatedAt, row.updatedAt),
+    files: editedFiles(messages, cwd)
   }
 }
 
@@ -153,10 +158,17 @@ export const CROSS_CONVERSATION_HEADER =
   'depois dos blocos de contexto.\n' +
   'Não atrapalhe quem está trabalhando agora: no mesmo projeto, não reverta, não sobrescreva nem descarte mudanças que não ' +
   'são suas (git checkout/restore/reset/stash/clean, apagar arquivos), não pare processos que você não iniciou e não ' +
-  'reinicie o app. Se precisar mexer nos mesmos arquivos que outro agente, avise o usuário antes.'
+  'reinicie o app. Se precisar mexer nos mesmos arquivos que outro agente, avise o usuário (linha \'ATENÇÃO:\' no chat), ' +
+  'confira o git diff desses arquivos antes de editar e siga sem esperar resposta; só ação destrutiva espera.'
 
 function samePath(a: string, b: string): boolean {
   return !!a && !!b && a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
+}
+
+/** "arquivos editados: a, b" — só das conversas do MESMO projeto e com arquivo editado. */
+function filesNote(topic: ConversationTopic | undefined, cwd: string, selfCwd: string): string {
+  const files = topic?.files ?? []
+  return files.length && samePath(cwd, selfCwd) ? `arquivos editados: ${files.join(', ')}` : ''
 }
 
 function projectLabel(cwd: string, selfCwd: string): string {
@@ -173,17 +185,21 @@ export function renderWorkingNow(selfConvId: string, selfCwd: string, presenceLi
     const topic = byId.get(p.convId)
     const question = p.question || topic?.lastUserMessage || ''
     const title = topic ? `"${topic.title}"` : 'conversa sem título conhecido'
-    return `${i + 1}. ${title} — ${projectLabel(p.cwd, selfCwd)}\n   Pedido do usuário a esse agente: ${question ? `"${oneLine(question, QUESTION_MAX)}"` : '(não disponível)'}`
+    const files = filesNote(topic, p.cwd, selfCwd)
+    return `${i + 1}. ${title} — ${projectLabel(p.cwd, selfCwd)}\n   Pedido do usuário a esse agente: ${question ? `"${oneLine(question, QUESTION_MAX)}"` : '(não disponível)'}${files ? `\n   ${files}` : ''}`
   })
   const extra = working.length > WORKING_MAX ? `\n(+${working.length - WORKING_MAX} outros)` : ''
   return `Agentes trabalhando agora em outras conversas: ${working.length}\n${lines.join('\n')}${extra}`
 }
 
 /** A parte "assuntos": vai só quando muda (o que já foi dito segue no histórico). */
-export function renderTopics(selfConvId: string, topics: ConversationTopic[]): string {
+export function renderTopics(selfConvId: string, topics: ConversationTopic[], selfCwd = ''): string {
   const others = topics.filter((t) => t.convId !== selfConvId).slice(0, TOPICS_MAX)
   if (others.length === 0) return ''
-  const lines = others.map((t) => `- "${t.title}" — ${t.cwd ? basename(t.cwd) : 'sem projeto'} — última mensagem do usuário: "${oneLine(t.lastUserMessage, TOPIC_MESSAGE_MAX)}"`)
+  const lines = others.map((t) => {
+    const files = filesNote(t, t.cwd, selfCwd)
+    return `- "${t.title}" — ${t.cwd ? basename(t.cwd) : 'sem projeto'} — última mensagem do usuário: "${oneLine(t.lastUserMessage, TOPIC_MESSAGE_MAX)}"${files ? ` — ${files}` : ''}`
+  })
   return `Outros assuntos das últimas 24 h (lista repetida só quando muda):\n${lines.join('\n')}`
 }
 
