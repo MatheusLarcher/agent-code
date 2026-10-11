@@ -4,6 +4,7 @@
  */
 import { vi } from 'vitest'
 import type {
+  PlanningMockupDto,
   OpenedPlanningDto,
   PlanningCardDto,
   PlanningChangedMsg,
@@ -119,6 +120,9 @@ export function mockPlanningApi(initial: OpenedPlanningDto = makePlan()) {
     /** Sem disco: nenhuma mídia nova; os testes da tela trocam a implementação. */
     planningImportMedia: vi.fn(async () => ({ ok: true as const, media: [] as PlanMediaDto[] })),
     planningReadMedia: vi.fn(async () => ({ ok: false as const, code: 'not_found' as const, message: 'mídia não encontrada' })),
+    /** Sem disco: nenhum mockup; os testes do "Ver mockup" trocam a implementação. */
+    planningListMockups: vi.fn(async (): Promise<PlanningMockupDto[]> => []),
+    planningOpenMockup: vi.fn(async () => ({ ok: true as const })),
     onPlanningChanged: vi.fn((cb: (msg: PlanningChangedMsg) => void) => {
       listeners.add(cb)
       return () => void listeners.delete(cb)

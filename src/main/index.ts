@@ -122,6 +122,7 @@ import { HandoffEtapasCache } from './handoffTracking/handoffEtapasView'
 import { onHandoffNotice } from './handoffTracking/handoffNotices'
 import { startHandoffSweep } from './handoffTracking/handoffSweep'
 import { exportFlowPdf } from './planning/flowPdfExport'
+import { registerPlanningMockupsIpc } from './planning/planningMockups'
 import { PlanningConversations, planningStartOptions } from './planning/planningConversations'
 import { setPlanningDataRoot } from './planning/planningRoot'
 import { registerConversationTitleIpc } from './titles/conversationTitleIpc'
@@ -1807,6 +1808,8 @@ export function registerIpc(): void {
   // O chip da autorização do PO: a foto e o "Revogar".
   poAuthorizations.registerIpc((channel, listener) => ipcMain.handle(channel, listener))
   ipcMain.handle(Channels.planningExportPdf, (e, req: unknown) => exportFlowPdf(e.sender, req))
+  // Botão "Ver mockup" da tela de planejamento: lista os .html do plano e abre no Chrome.
+  registerPlanningMockupsIpc((channel, listener) => ipcMain.handle(channel, listener))
   // Título automático da conversa (claude-haiku-5-5): a lógica mora em titles/.
   registerConversationTitleIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener) })
   // Fila de espera das conversas, gravada no banco para sobreviver ao reinício.

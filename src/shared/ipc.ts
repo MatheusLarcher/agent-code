@@ -2260,6 +2260,10 @@ export const Channels = {
   planningReadMedia: 'planning:readMedia',
   /** Salva o flow do planejamento em PDF (diálogo "Salvar como" + printToPDF). */
   planningExportPdf: 'planning:exportPdf',
+  /** Os mockups (.html/.htm) do plano: no _sandbox e em midia/, o mais novo primeiro. */
+  planningListMockups: 'planning:listMockups',
+  /** Abre um mockup do plano no Google Chrome (sem ele, no navegador padrão). */
+  planningOpenMockup: 'planning:openMockup',
   /** Main → renderer: arquivos de um planejamento aberto mudaram por fora do
    *  app (editor, git, agente). Gravações do próprio app não disparam. */
   planningChanged: 'planning:changed',
@@ -2930,6 +2934,17 @@ export interface FlowPdfRequest {
 
 /** Resposta de Channels.planningExportPdf. `canceled`: o usuário fechou o "Salvar como". */
 export type FlowPdfResult = { ok: true; path: string } | { ok: false; canceled?: true; message?: string }
+
+/** Um mockup do plano (Channels.planningListMockups). `rel`: caminho relativo à pasta de origem. */
+export interface PlanningMockupDto {
+  path: string
+  rel: string
+  origem: 'sandbox' | 'midia'
+  mtimeMs: number
+}
+
+/** Resposta de Channels.planningOpenMockup. */
+export type PlanningOpenMockupResult = { ok: true } | { ok: false; message: string }
 
 /** Resposta de Channels.conversationSuggestTitle. `ok: false` = sem título
  *  (entrada inválida, LLM falhou, estourou o tempo): quem chamou fica com o recuo. */

@@ -150,6 +150,24 @@ describe('o foco dentro da TV (TvFocus)', () => {
     }
   })
 
+  it('plano com mockup: o "Ver mockup" aparece no cabeçalho do plano dentro da TV e abre no navegador', async () => {
+    const { api } = mockPlanningApi()
+    const tela = { path: `${CWD}\\docs\\spec\\${SLUG}\\_sandbox\\tela.html`, rel: 'tela.html', origem: 'sandbox' as const, mtimeMs: 1 }
+    api.planningListMockups.mockResolvedValue([tela])
+    const info: TvFocusInfo = { kind: 'plan', roomId: 'office', convId: 'p1', plans: [pl('p1', 'Plano de teste')], waiting: 0 }
+    const planning = (
+      <UiProvider>
+        <PlanningWorkspace projectCwd={CWD} slug={SLUG} chat={<div>chat</div>} managerModel={null} />
+      </UiProvider>
+    )
+    render(<TvFocus info={info} projectors={{ mirror: vi.fn() }} onClose={vi.fn()} planning={planning} activeConvId="p1" />)
+    const tv = screen.getByTestId('tv-focus-plan')
+    const btn = await within(tv).findByRole('button', { name: 'Ver mockup' })
+    expect(btn.closest('.pl-head')).toBeTruthy()
+    fireEvent.click(btn)
+    await waitFor(() => expect(api.planningOpenMockup).toHaveBeenCalledWith({ projectCwd: CWD, slug: SLUG, path: tela.path }))
+  })
+
   describe('a aba Implantação (os envios do plano para implementação)', () => {
     const plano: Extract<TvFocusInfo, { kind: 'plan' }> = { kind: 'plan', roomId: 'office', convId: 'p1', plans: [pl('p1', 'Checkout', 'checkout')], waiting: 0 }
     const center = (envios: HandoffEnvio[] | null, error: string | null = null): DeliveryCenterValue => ({

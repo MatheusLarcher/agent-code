@@ -21,6 +21,7 @@ import { useUI } from '../ui/UiProvider'
 import { CardBirthFlow } from './CardBirthFlow'
 import { CardEditor } from './CardEditor'
 import { ManagerChatFloat } from './ManagerChatFloat'
+import { MockupButton } from './MockupButton'
 import { ObraSeal, PlacaDaObra } from './PlacaDaObra'
 import { PlanningCanvas } from './PlanningCanvas'
 import { ProgressList } from './ProgressList'
@@ -326,6 +327,7 @@ function PlanningScreenBody({ projectCwd, slug, chatSlot, headerActions, onOpenC
         {counter.total > 0 && <span className="pl-head-progress">{counterText(counter)}</span>}
         {obra && <ObraSeal obra={obra} />}
         <span className="pl-head-spacer" />
+        <MockupButton projectCwd={projectCwd} slug={slug} />
         {headerActions && (
           <div className="pl-head-actions">
             <PlanningPlanContext.Provider value={plan}>{headerActions}</PlanningPlanContext.Provider>

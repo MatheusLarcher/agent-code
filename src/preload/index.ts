@@ -124,6 +124,8 @@ import type {
   PlanningChangedMsg,
   FlowPdfRequest,
   FlowPdfResult,
+  PlanningMockupDto,
+  PlanningOpenMockupResult,
   PlanningHandoffListDto,
   PlanningHandoffSentDto,
   PlanningHandoffSentMark,
@@ -385,6 +387,9 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   planningReadMedia: (req: PlanningRef & { name: string }): Promise<PlanningResult<PlanningMediaContentDto>> =>
     ipcRenderer.invoke(Channels.planningReadMedia, req),
   planningExportPdf: (req: FlowPdfRequest): Promise<FlowPdfResult> => ipcRenderer.invoke(Channels.planningExportPdf, req),
+  planningListMockups: (req: PlanningRef): Promise<PlanningMockupDto[]> => ipcRenderer.invoke(Channels.planningListMockups, req),
+  planningOpenMockup: (req: PlanningRef & { path: string }): Promise<PlanningOpenMockupResult> =>
+    ipcRenderer.invoke(Channels.planningOpenMockup, req),
   onPlanningChanged: (cb: (m: PlanningChangedMsg) => void): (() => void) => on(Channels.planningChanged, cb),
   kvGet: (key: string): Promise<string | null> => ipcRenderer.invoke(Channels.kvGet, key),
   kvSet: (key: string, value: string): Promise<void> => ipcRenderer.invoke(Channels.kvSet, key, value),

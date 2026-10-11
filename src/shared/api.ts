@@ -70,6 +70,8 @@ import type {
   PlanningChangedMsg,
   FlowPdfRequest,
   FlowPdfResult,
+  PlanningMockupDto,
+  PlanningOpenMockupResult,
   PlanningHandoffListDto,
   PlanningHandoffSentDto,
   PlanningHandoffSentMark,
@@ -477,6 +479,10 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   planningReadMedia(req: PlanningRef & { name: string }): Promise<PlanningResult<PlanningMediaContentDto>>
   /** Pergunta onde salvar e grava o flow do planejamento em PDF. */
   planningExportPdf(req: FlowPdfRequest): Promise<FlowPdfResult>
+  /** Mockups (.html/.htm) do _sandbox e de midia/ do plano, o mais novo primeiro. */
+  planningListMockups(req: PlanningRef): Promise<PlanningMockupDto[]>
+  /** Abre um mockup da lista no Google Chrome (sem ele, no navegador padrão). */
+  planningOpenMockup(req: PlanningRef & { path: string }): Promise<PlanningOpenMockupResult>
   /** Arquivos de um planejamento aberto mudaram por fora do app — recarregue. */
   onPlanningChanged(cb: (msg: PlanningChangedMsg) => void): () => void
   kvGet(key: string): Promise<string | null>
