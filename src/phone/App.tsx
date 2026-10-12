@@ -2,6 +2,7 @@
 import { useEffect } from 'react'
 import { client } from './app/runtime'
 import { useStore } from './core/store'
+import { installBridgeApi } from './office/bridgeApi'
 import { BlockedScreen, PairingScreen, PairScreen } from './pairing/ConnectScreens'
 import { FilialScanner } from './pairing/FilialScanner'
 import { installBackButton } from './shell/backButton'
@@ -18,6 +19,7 @@ export function App(): JSX.Element {
     // Uma vez por carga da página (o StrictMode/HMR não pode abrir duas conexões).
     if (started) return
     started = true
+    installBridgeApi(client) // o window.api do Quadro/SM (e do escritório) pela ponte
     client.start()
     installBackButton() // só no APK: o voltar do Android navega em vez de fechar
   }, [])

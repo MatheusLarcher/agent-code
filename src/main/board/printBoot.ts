@@ -20,6 +20,8 @@ export interface PrintBootDeps {
   board: Pick<BoardService, 'projectId' | 'list'>
   /** O quadro do projeto mudou (o 📷 relê). */
   changed(projectId: string): void
+  /** Onde registrar (padrão: ipcMain.handle); o main passa a ponte do celular (appIpcBridge.ts). */
+  handle?(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void
 }
 
 /** WebP: o `nativeImage` não lê; o Chromium de uma janela oculta decodifica e devolve PNG. */
@@ -82,7 +84,8 @@ export function startBoardPrints(deps: PrintBootDeps): void {
     })
   )
 
-  ipcMain.handle(Channels.boardPrints, async (_e, query: unknown): Promise<BoardPrintsResult> => {
+  const handle = deps.handle ?? ((channel, listener) => ipcMain.handle(channel, listener))
+  handle(Channels.boardPrints, async (_e, query: unknown): Promise<BoardPrintsResult> => {
     const q = (query ?? {}) as { projectCwd?: unknown; boardItemId?: unknown }
     const repo = deps.repository()
     if (!repo) return { available: false, prints: [] }
@@ -99,7 +102,7 @@ export function startBoardPrints(deps: PrintBootDeps): void {
     }
   })
 
-  ipcMain.handle(Channels.boardPrintImage, async (_e, id: unknown): Promise<BoardPrintImageResult> => {
+  handle(Channels.boardPrintImage, async (_e, id: unknown): Promise<BoardPrintImageResult> => {
     if (typeof id !== 'string' || !id) return { ok: false, message: 'print inválido' }
     const repo = deps.repository()
     if (!repo) return { ok: false, message: 'o banco do app está indisponível agora' }

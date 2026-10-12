@@ -34,6 +34,12 @@ export const INTERACTIVE_READ_CHANNELS: ReadonlySet<string> = new Set([
 
 type Listener = (event: unknown, ...args: unknown[]) => unknown
 
+/** O listener na faixa interativa, se o canal é uma dessas leituras (a ponte do celular usa também). */
+export function interactiveListener<L extends Listener>(channel: string, listener: L): L {
+  if (!INTERACTIVE_READ_CHANNELS.has(channel)) return listener
+  return ((event: unknown, ...args: unknown[]) => interactiveRead(async () => listener(event, ...args))) as L
+}
+
 /**
  * Liga a faixa interativa nos handlers desses canais, registrados por qualquer
  * módulo: chamar UMA vez, antes de qualquer `ipcMain.handle`.
@@ -41,7 +47,6 @@ type Listener = (event: unknown, ...args: unknown[]) => unknown
 export function routeInteractiveReads(ipcMain: { handle(channel: string, listener: Listener): void }): void {
   const handle = ipcMain.handle.bind(ipcMain)
   ipcMain.handle = (channel: string, listener: Listener): void => {
-    if (!INTERACTIVE_READ_CHANNELS.has(channel)) return handle(channel, listener)
-    return handle(channel, (event, ...args) => interactiveRead(async () => listener(event, ...args)))
+    return handle(channel, interactiveListener(channel, listener))
   }
 }

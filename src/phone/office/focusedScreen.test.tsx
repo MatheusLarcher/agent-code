@@ -31,7 +31,13 @@ const messages: UIMessage[] = [
   tool('w1', 'Write', { file_path: `${CWD}\\out\\loja.apk`, content: 'x' })
 ]
 const officeFeed = feed({ conversations: [conv('a', { title: 'Loja', cwd: CWD, messages })], busyIds: new Set(['a']) })
-const client = { url: (p: string) => `http://pc${p}`, fileUrl: (p: string) => `http://pc/api/file?path=${encodeURIComponent(p)}` }
+const client = {
+  url: (p: string) => `http://pc${p}`,
+  fileUrl: (p: string) => `http://pc/api/file?path=${encodeURIComponent(p)}`,
+  // Sem o Quadro/SM neste teste: a ponte IPC só precisa existir.
+  post: async <T,>(): Promise<T> => ({ ok: false, error: 'sem ponte no teste' }) as T,
+  eventTaps: new Set<(msg: { convId?: string; event?: unknown }) => void>()
+}
 
 beforeEach(() => {
   localStorage.clear()

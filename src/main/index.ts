@@ -32,6 +32,8 @@ import { configureAppRestart, appRestart } from './appRestartRuntime'
 import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
 import { attachPlanningEvents } from './remote/planningBridge'
+import { AppIpcBridge } from './remote/appIpcBridge'
+import { isRemoteIpcEventChannel } from '../shared/remoteIpc'
 import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mcpInbound'
 import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
@@ -233,7 +235,7 @@ import type {
   TokenUsageHistory,
   TurnTimeTotals
 } from '../shared/ipc'
-import { routeInteractiveReads } from './interactiveReadIpc'
+import { interactiveListener, routeInteractiveReads } from './interactiveReadIpc'
 
 // Antes de qualquer `ipcMain.handle`: as leituras que a tela espera vão às
 // conexões reservadas do PostgreSQL (interactiveReadIpc.ts).
@@ -652,7 +654,15 @@ const memorista = new Memorista({
   })
 })
 
+// O Quadro e o SM no celular (shared/remoteIpc.ts): os canais da lista registram
+// pela ponte, que repassa ao ipcMain e guarda o listener para o POST /api/ipc.
+const appIpc = new AppIpcBridge((channel, listener) => ipcMain.handle(channel, listener), interactiveListener)
+// Ligado depois que a ponte do celular existe (o `remote` mais abaixo).
+let forwardAppIpcEvent: ((channel: string, payload: unknown) => void) | null = null
+
 function send(channel: string, payload: unknown): void {
+  // board:changed e scrum:changed também vão a cada celular, com ou sem janela.
+  if (isRemoteIpcEventChannel(channel)) forwardAppIpcEvent?.(channel, payload)
   const window = mainWindow
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
   try {
@@ -1316,8 +1326,11 @@ const remote = new RemoteServer({
   // O celular transcreve no aparelho e corrige o texto com a mesma lista.
   vocabulary: () => (process.env.AGENT_CODE_VOICE_HOTWORDS === '0' ? [] : BUNDLED_VOCABULARY),
   tts: (text, opts) => speak(text, { treat: !opts?.treated }),
-  ttsParts: (text) => speechParts(text)
+  ttsParts: (text) => speechParts(text),
+  // POST /api/ipc: só os canais de REMOTE_IPC_INVOKE, com os mesmos handlers da tela.
+  appIpc
 })
+forwardAppIpcEvent = (channel, payload) => remote.appIpcEvent(channel, payload)
 // Planos no celular: toda mudança de planejamento (agente e vigia) vira `planning-changed` no SSE.
 attachPlanningEvents(remote)
 
@@ -1758,14 +1771,14 @@ export function registerIpc(): void {
   // Read-only window onto the task ledger. It degrades instead of throwing:
   // the panel is an observation surface, and a storage hiccup must not become
   // an error dialog on top of the chat.
-  ipcMain.handle(Channels.tasksBoard, async (_e, query?: TaskBoardQuery) => {
+  appIpc.handle(Channels.tasksBoard, async (_e, query?: TaskBoardQuery) => {
     try {
       return await buildTaskBoard(taskLedger(), query)
     } catch {
       return { available: false, items: [] }
     }
   })
-  ipcMain.handle(
+  appIpc.handle(
     Channels.boardList,
     async (_e, query: { projectCwd: string; conversationId?: string; includeDismissed?: boolean }) => {
       // Sem repositório gravável o quadro não é "vazio", é indisponível — e a
@@ -1785,21 +1798,21 @@ export function registerIpc(): void {
       }
     }
   )
-  ipcMain.handle(Channels.boardDismiss, async (_e, id: string, dismissed: boolean) => {
+  appIpc.handle(Channels.boardDismiss, async (_e, id: string, dismissed: boolean) => {
     try {
       return await board.dismiss(id, dismissed)
     } catch {
       return null
     }
   })
-  ipcMain.handle(Channels.boardMove, async (_e, id: string, toStatus: BoardItemStatus) => {
+  appIpc.handle(Channels.boardMove, async (_e, id: string, toStatus: BoardItemStatus) => {
     try {
       return await board.move(id, toStatus)
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'Não foi possível mover o cartão.' }
     }
   })
-  ipcMain.handle(Channels.boardItemEvents, async (_e, boardItemId: string) => {
+  appIpc.handle(Channels.boardItemEvents, async (_e, boardItemId: string) => {
     try {
       return await board.listItemEvents(boardItemId)
     } catch {
@@ -1810,7 +1823,8 @@ export function registerIpc(): void {
   startBoardPrints({
     repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
     board,
-    changed: (projectId) => send(Channels.boardChanged, { projectId })
+    changed: (projectId) => send(Channels.boardChanged, { projectId }),
+    handle: (channel, listener) => appIpc.handle(channel, listener)
   })
   // O "Fala, PO" (poChat/): o chat com o PO a partir do quadro — só lê o quadro.
   startPoChat({
@@ -1852,7 +1866,8 @@ export function registerIpc(): void {
       const progress = await loadPlanProgress(envio)
       const step = progress.steps.find((s) => s.id === etapaId)
       return step ? { n: step.n, total: progress.total } : null
-    }
+    },
+    handle: (channel, listener) => appIpc.handle(channel, listener)
   })
   // Tela de Planejamento: toda a lógica (validação, vigia, erros) mora em planningIpc.
   planningIpc = registerPlanningIpc({ handle: (channel, listener) => ipcMain.handle(channel, listener), send })
@@ -1866,7 +1881,8 @@ export function registerIpc(): void {
   })
   // A fila do quadro (um prompt por vez no plano) e a do projeto (um plano por vez na pasta).
   registerHandoffQueueIpc({
-    handle: (channel, listener) => ipcMain.handle(channel, listener),
+    // A ponte do celular: o handoffQueueEdit também atende o POST /api/ipc.
+    handle: (channel, listener) => appIpc.handle(channel, listener),
     repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
     tracker: handoffTracker,
     project: projectQueue,
@@ -1895,7 +1911,7 @@ export function registerIpc(): void {
     isSandbox: isSandboxPath,
     correctionsFile: () => join(getCacheInfo().localDir, 'central', 'corrections.jsonl')
   })
-  ipcMain.handle(Channels.tasksDetail, async (_e, taskId: string) => {
+  appIpc.handle(Channels.tasksDetail, async (_e, taskId: string) => {
     try {
       return await buildTaskDetail(taskLedger(), taskId)
     } catch {

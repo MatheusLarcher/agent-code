@@ -7,6 +7,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { backToList, client, nav, openTab, type Tab } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
 import { useStore } from '../core/store'
+import { BoardTab } from '../board/BoardTab'
 import { CentralView } from '../central/CentralView'
 import { ChatView } from '../chat/ChatView'
 import { ConversationList } from '../conversations/ConversationList'
@@ -14,7 +15,6 @@ import { PlanningTab } from '../planning/PlanningTab'
 import { Settings } from '../settings/Settings'
 import { Icon, type IconName } from '../ui/icons'
 import { BACK, useBackHandler } from './backButton'
-import { QuadroPlaceholder } from './QuadroPlaceholder'
 import { StatusMenu } from './StatusMenu'
 import { viewport } from './useViewport'
 
@@ -68,7 +68,7 @@ export function Shell(): JSX.Element {
   return (
     <>
       <div className="tab-host">
-        {tab === 'escritorio' ? null : tab === 'central' ? <CentralView /> : tab === 'quadro' ? <QuadroPlaceholder /> : tab === 'planos' ? <PlanningTab /> : showChat ? <ChatView /> : <ConversationList />}
+        {tab === 'escritorio' ? null : tab === 'central' ? <CentralView /> : tab === 'quadro' ? <BoardTab /> : tab === 'planos' ? <PlanningTab /> : showChat ? <ChatView /> : <ConversationList />}
         {/* O 3D fica montado depois da 1ª visita (pausado fora da aba): voltar não recarrega a cena. */}
         {officeSeen ? (
           <Suspense fallback={null}>

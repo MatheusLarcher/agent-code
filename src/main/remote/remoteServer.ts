@@ -9,6 +9,8 @@ import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from
 import { OfficeCallsBridge } from './officeCallsBridge'
 import { HandoffNoticeBridge } from './handoffNoticeBridge'
 import { servePlanningRoute } from './planningBridge'
+import { answerAppIpc, appIpcEventLine, type AppIpcBridge } from './appIpcBridge'
+import { isRemoteIpcEventChannel } from '../../shared/remoteIpc'
 import { RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
 import { detailsByIds, historyPage, historyWindow, lightenMessages } from './remoteHistory'
 import type { RemoteSearchResult } from '../../shared/remoteSearch'
@@ -93,6 +95,8 @@ export interface RemoteServerDeps {
   /** Onde escutar (padrão: todas as interfaces, para o celular na rede). A instância de
    *  teste usa só o loopback: nada de aviso do firewall. */
   host?: () => string
+  /** Os canais do Quadro/SM que o celular chama no POST /api/ipc (appIpcBridge.ts). */
+  appIpc?: Pick<AppIpcBridge, 'invoke'>
 }
 
 const DEFAULT_PORT = 8765
@@ -179,6 +183,13 @@ export class RemoteServer {
   readonly handoffNotices = new HandoffNoticeBridge((line) => {
     for (const c of this.clients) c.write(line)
   })
+
+  /** Um aviso do main (board:changed, scrum:changed) a cada celular conectado. */
+  appIpcEvent(channel: string, payload: unknown): void {
+    if (!isRemoteIpcEventChannel(channel)) return
+    const line = appIpcEventLine(channel, payload)
+    for (const c of this.clients) c.write(line)
+  }
   private keepAlive: ReturnType<typeof setInterval> | null = null
   /** Whether the PC is connected to the VPS broker (set by the RelayClient). */
   private relayConnected = false
@@ -379,6 +390,7 @@ export class RemoteServer {
       if (path === '/api/recovery' && req.method === 'POST') return this.serveRecovery(req, res)
       if (path === '/api/permission-respond' && req.method === 'POST') return this.servePermissionRespond(req, res)
       if (path === '/api/central-choose' && req.method === 'POST') return this.serveCentralChoose(req, res)
+      if (path === '/api/ipc' && req.method === 'POST') return this.serveAppIpc(req, res)
       if (path === '/api/search') return this.serveSearch(url, res)
       if (path === '/api/history') return this.serveHistory(url, res)
       if (path === '/api/history-window') return this.serveHistoryWindow(url, res)
@@ -921,6 +933,13 @@ export class RemoteServer {
     else this.deps.onInbound(convId, text, images, files)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ ok: true }))
+  }
+
+  /** POST /api/ipc: o Quadro e o SM no celular; a lógica mora em appIpcBridge.ts. */
+  private async serveAppIpc(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const bridge = this.deps.appIpc
+    const answer = await answerAppIpc(await readBody(req), (channel, args) => (bridge ? bridge.invoke(channel, args) : Promise.resolve(null)))
+    sendJson(res, answer.status, answer.body)
   }
 }
 

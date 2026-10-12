@@ -1,0 +1,104 @@
+/* Aba Quadro: filtros, colunas em segmentos, lista de cartões, folha do cartão
+   (o BoardCardDetail do PC adaptado) e o diário do Scrum Master em tela cheia.
+   Alvos ≥ 44 px; cabe em 360 px. */
+
+/* ---- topo e filtros ---- */
+.bd-sm-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+.bd-filters { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; }
+.bd-project {
+  flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 8px 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg-2); color: var(--text); font-size: 14.5px;
+}
+.bd-project:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.bd-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; color: var(--muted); }
+.bd-toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+.bd-cols button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 0 4px; font-size: 13.5px; }
+.bd-count { font-size: 11.5px; font-weight: 700; color: var(--faint); }
+.bd-cols button.active .bd-count { color: var(--accent); }
+
+/* ---- lista ---- */
+.bd-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 18px; }
+.bd-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; text-align: left;
+  min-height: 56px; padding: 10px 12px; border-radius: 12px; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--faint);
+}
+.bd-card.in_progress { box-shadow: inset 3px 0 0 var(--warn); }
+.bd-card.completed { box-shadow: inset 3px 0 0 var(--ok); }
+.bd-card.dismissed { opacity: 0.6; }
+.bd-card:active { background: var(--bg-3); }
+.bd-card-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; word-break: break-word; }
+.bd-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.bd-card-conv { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- folha do cartão: o .board-detail do PC vira conteúdo da folha ---- */
+.bd-sheet .board-detail { position: static; max-height: none; overflow: visible; padding: 4px 0 0; background: none; border: none; box-shadow: none; }
+.bd-sheet .board-detail-head { display: flex; align-items: flex-start; gap: 8px; }
+.bd-sheet .board-detail-head h3 { flex: 1; margin: 10px 0 10px; font-size: 17px; line-height: 1.35; word-break: break-word; }
+.bd-sheet .board-detail-head .nav-btn {
+  flex: 0 0 auto; min-width: 44px; height: 44px; border: none; border-radius: 10px;
+  background: none; color: var(--muted); font-size: 24px; line-height: 1;
+}
+.bd-sheet .board-detail-head .nav-btn:active { background: var(--bg-3); }
+.bd-sheet .board-detail-kv { display: grid; grid-template-columns: minmax(84px, auto) 1fr; gap: 8px 12px; margin: 0; font-size: 13.5px; }
+.bd-sheet .board-detail-kv dt { color: var(--muted); }
+.bd-sheet .board-detail-kv dd { margin: 0; min-width: 0; word-break: break-word; }
+.bd-sheet .board-status.in_progress { color: var(--warn); }
+.bd-sheet .board-status.completed { color: var(--ok); }
+.bd-sheet .board-link { min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; text-align: left; }
+.bd-sheet .board-muted { color: var(--muted); }
+.bd-sheet .board-detail-trail,
+.bd-sheet .board-detail-meta,
+.bd-sheet .board-detail-timeline { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12.5px; }
+.bd-sheet .board-detail-trail { display: flex; gap: 9px; align-items: flex-start; color: var(--muted); }
+.bd-sheet .board-detail-action {
+  display: flex; gap: 9px; align-items: flex-start; margin-top: 12px; padding: 8px 10px; border-radius: 10px; font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+.bd-sheet .board-who { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; color: var(--muted); }
+.bd-sheet .board-who.po { border-color: var(--accent-dim); color: var(--accent); }
+.bd-sheet .board-who.user { border-color: var(--ok); color: var(--ok); }
+.bd-sheet .board-who.system { border-style: dashed; }
+.bd-sheet .board-detail-action .board-who { border-color: color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }
+.bd-sheet .board-detail-meta { display: grid; gap: 6px; }
+.bd-sheet .board-detail-meta-row { display: flex; justify-content: space-between; gap: 10px; }
+.bd-sheet .board-detail-meta-row span:first-child { color: var(--muted); }
+.bd-sheet .board-detail-timeline-title { margin-bottom: 7px; color: var(--muted); }
+.bd-sheet .board-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.bd-sheet .board-timeline-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.bd-sheet .board-timeline-text { flex: 1 1 160px; min-width: 0; word-break: break-word; }
+.bd-sheet .board-timeline-when { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.bd-sheet .board-empty { padding: 8px 0; color: var(--faint); }
+.bd-sheet .board-detail-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.bd-sheet .board-dismiss {
+  min-height: 44px; padding: 8px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 13.5px;
+}
+.bd-sheet .board-dismiss:active { background: var(--bg-3); color: var(--text); }
+.bd-sheet .read-retry { color: var(--err); font-size: 12.5px; }
+
+/* ---- "Mover para…" ---- */
+.bd-move { display: flex; flex-direction: column; gap: 8px; }
+.bd-move-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.bd-move-btn { flex: 1 1 120px; min-height: 44px; }
+.bd-move-btn.doing { color: var(--warn); }
+.bd-move-btn.done { color: var(--ok); }
+.bd-move-btn:disabled { opacity: 0.5; }
+
+/* ---- Scrum Master em tela cheia (o painel lateral do PC: .smp) ---- */
+.bd-scrum .smp {
+  position: fixed; inset: 0; width: 100%; max-width: none; z-index: 80; border-radius: 0; border: none;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 14px calc(var(--sab, 0px) + 14px);
+}
+.bd-scrum .smp-head h2 { font-size: 17px; }
+.bd-scrum .smp-close { min-width: 44px; min-height: 44px; font-size: 20px; }
+.bd-scrum .smp-tabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+.bd-scrum .smp-tabs::-webkit-scrollbar { display: none; }
+.bd-scrum .smp-tab { flex: 0 0 auto; min-height: 40px; }
+.bd-scrum .smp-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.bd-scrum .smp-btn,
+.bd-scrum .smp-chip { min-height: 40px; }
+@media (max-width: 380px) {
+  .bd-sm-btn { padding: 6px 8px; font-size: 12.5px; }
+  .bd-scrum .smp { padding-left: 10px; padding-right: 10px; }
+}
