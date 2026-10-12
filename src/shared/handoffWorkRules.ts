@@ -32,11 +32,13 @@ export const HANDOFF_TOOLING_RULES: readonly string[] = [
 ]
 
 /**
- * Contexto: a conversa de handoff compacta em 200k. O resumo da etapa no chat
- * sobrevive à compactação; reler resultado antigo de ferramenta só infla o contexto.
+ * Contexto: a conversa de handoff compacta depois de 200k, ao fechar uma etapa
+ * (stageCompaction.ts) — ou no meio dela, se o contexto chega ao teto. O mapa e
+ * o resumo da etapa no chat sobrevivem à compactação; reler resultado antigo de
+ * ferramenta só infla o contexto.
  */
 export const HANDOFF_STAGE_SUMMARY_RULE =
-  'Ao fechar cada item do roteiro no TodoWrite/TaskCreate, escreva no chat um resumo de 5 linhas da etapa (o que mudou, onde, a prova, o que ficou de fora, o próximo passo) e, logo depois, o autocheck de 3 linhas; o resumo é o que sobrevive à compactação. Não releia resultados antigos de ferramenta: confie no resumo e no mapa do prompt.'
+  'Depois de ler o código de uma etapa e antes de mudar qualquer arquivo, escreva no chat o mapa curto dela (caminho:linha, o que há lá e as decisões que você tirou). Ao fechar cada item do roteiro no TodoWrite/TaskCreate, escreva no chat um resumo de 5 linhas da etapa (o que mudou, onde, a prova, o que ficou de fora, o próximo passo) e, logo depois, o autocheck de 3 linhas; o mapa e o resumo são o que sobrevive à compactação. Não releia resultados antigos de ferramenta: confie no resumo, no mapa da etapa e no mapa do prompt.'
 
 /** O formato de cada etapa no prompt de handoff (o plan_handoff_write confere "Aceite:" e "Verificar com:"). */
 export const HANDOFF_STAGE_FORMAT_RULE =

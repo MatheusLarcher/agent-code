@@ -44,6 +44,7 @@ import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './
 import { buildSpecialistAgents } from './agents/specialists'
 import { TASKS_HINT } from './agents/tasksHint'
 import { APP_DISABLED_PLUGINS, handoffSessionEnv } from './agents/sessionTuning'
+import { StageCompaction, stageCompactCeiling } from './agents/stageCompaction'
 import { applyPlanningSessionOptions, handoffAppendBlock, planGateApplies, sessionSkillDenial, sessionWriteScopes } from './planning/planningSession'
 import { planningPreToolDecision, planningRequiresBashApproval, planningToolDenial } from './planning/planningPolicy'
 import { planningDataDir } from './planning/planningRoot'
@@ -183,6 +184,11 @@ marker so the user can download it right here.`
 /** De onde a mensagem do usuário partiu: o próprio PC ou um celular pareado na
  *  ponte LAN (`remote/remoteServer.ts`). */
 export type MessageOrigin = 'pc' | 'celular'
+
+/** A mensagem é o comando `/compact`, com ou sem instruções depois dele. */
+export function isCompactCommand(text: string): boolean {
+  return /^\/compact(?:\s|$)/.test(text.trim())
+}
 
 /**
  * Carimbo que abre TODA mensagem do usuário.
@@ -628,6 +634,8 @@ export class AgentSession {
   /** Context-window size of the most recent model request (last `assistant`
    *  message's input usage) — the true "context used", not the per-turn sum. */
   private lastContextTokens = 0
+  /** Handoff: a compactação automática espera a etapa fechar (stageCompaction.ts). Null nas outras conversas. */
+  private readonly stageCompaction: StageCompaction | null
   /** O modelo com que a sessão subiu (evento `system` init) — o que vale para
    *  uma resposta sem `model`. Nunca o sentinela do Automático. */
   private sessionModel = ''
@@ -940,6 +948,7 @@ export class AgentSession {
     // Uma vez, na subida (inclusive na retomada): mudar o card depois só vale
     // na próxima conversa. Nunca lança — ausente/ilegível = padrão autônomo.
     this.handoffAutonomy = opts.handoff && !opts.planning ? readHandoffAutonomy(opts.cwd, opts.handoff.slug) : null
+    this.stageCompaction = opts.handoff && !opts.planning ? new StageCompaction() : null
   }
 
   /** Todo evento sai por aqui. A saída do turno leva os `turnIds` dele (quando o CLI
@@ -1323,6 +1332,7 @@ export class AgentSession {
             this.detachedReturned(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
+            if (!input.agent_id) this.stageCompaction?.observeTool(input.tool_name, input.tool_input, input.tool_response)
             // Handoff: o aviso de prazo da etapa (80% e 100%, uma vez por marco).
             // Só texto anexado — nunca interrompe; null no resto (handoffDeadlineHook.ts).
             const notice = await sessionDeadlineNotice(this.opts, input.agent_id)
@@ -1338,6 +1348,17 @@ export class AgentSession {
             this.markActivity()
           }
           return {}
+        }] }],
+        // Handoff: a automática fica para depois de fechar a etapa, até o teto do
+        // modelo (stageCompaction.ts). Manual e as outras conversas: passa sempre.
+        PreCompact: [{ hooks: [async (input) => {
+          if (input.hook_event_name !== 'PreCompact' || !this.stageCompaction) return {}
+          const ceiling = stageCompactCeiling(this.sessionModel || this.opts.model)
+          if (this.stageCompaction.decide(input.trigger, this.lastContextTokens, ceiling) === 'allow') return {}
+          if (this.stageCompaction.takeDeferredNotice()) {
+            this.emit({ kind: 'status', id: nextId(), text: 'Compactação adiada até o agente fechar a etapa em andamento.' })
+          }
+          return { decision: 'block' as const, reason: 'Etapa do handoff em andamento: compacta ao fechá-la.' }
         }] }],
         // Fim do subagente pelo hook: rede de segurança do task_notification,
         // com dedupe no tradutor (agentTasks.ts). Nunca altera o subagente.
@@ -1517,21 +1538,13 @@ export class AgentSession {
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     appRestart?.assertOpen()
-    // "/compact" only exists as a command in Claude Code's own terminal UI — the
-    // Agent SDK's streaming-input mode (what this app uses) never intercepts it;
-    // a literal "/compact" message is just sent to the model, which replies that
-    // it doesn't recognize the command. Verified against a real session before
-    // writing this: no compact_boundary event, no local-command handling exists
-    // in the SDK's Query interface. So this short-circuits it locally instead of
-    // wasting a turn on a reply nobody wants. Manual compaction isn't available
-    // in this integration; autoCompactEnabled (see the Options below) is the only
-    // real compaction this app gets, and it's automatic, not on-demand.
-    if (messageKind === 'normal' && text.trim() === '/compact') {
-      this.emit({
-        kind: 'status',
-        id: nextId(),
-        text: 'Compactação manual não está disponível aqui: o SDK usado por este app não expõe esse comando (ele só existe no terminal do Claude Code). A conversa é compactada automaticamente quando o contexto enche.'
-      })
+    // "/compact [instruções]" é comando do CLI: ele só o reconhece com o texto
+    // CRU no início da mensagem — com o carimbo de contexto na frente, chegava
+    // ao modelo como texto comum. Vai sozinho, sem carimbo, catálogos nem nota
+    // de cancelamento (verificado contra o CLI 0.3.296: emite compact_boundary
+    // e fecha o turno com um `result` vazio).
+    if (messageKind === 'normal' && isCompactCommand(text)) {
+      await this.sendCompactCommand(text.trim(), messageUuid)
       return
     }
     this.beginTurn()
@@ -1655,6 +1668,26 @@ export class AgentSession {
     this.beginTurn()
     this.contextCapture.sent(uuid, text, outText, promptParts, cancelNote, images?.length ?? 0, false, messageKind)
     await this.enqueueInput(msg, uuid)
+  }
+
+  /** `/compact` digitado: a mensagem crua, como turno próprio (ver send()). */
+  private async sendCompactCommand(command: string, messageUuid?: string): Promise<void> {
+    this.beginTurn()
+    this.quotaRejected = false
+    this.providerContinuation = false
+    const uuid = messageUuid || randomUUID()
+    this.submittedMessages.set(uuid, command.length > 500 ? `${command.slice(0, 500)}…` : command)
+    if (this.submittedMessages.size > 100) {
+      const oldest = this.submittedMessages.keys().next().value
+      if (oldest) this.submittedMessages.delete(oldest)
+    }
+    this.contextCapture.sent(uuid, command, command, { stamp: '', memory: '', skills: '', projects: '', others: '' })
+    await this.enqueueInput({
+      type: 'user',
+      message: { role: 'user', content: command },
+      parent_tool_use_id: null,
+      uuid
+    } as SDKUserMessage, uuid)
   }
 
   /**
@@ -2402,6 +2435,7 @@ ${lines}
           // A compactação resume o que já foi entregue: o próximo lote de
           // ferramentas volta a mandar o contexto vivo inteiro.
           this.lastLiveContext = null
+          this.stageCompaction?.compacted()
           // The CLI already knows how to compact (manual `/compact` or automatic
           // when the context window fills up) — it rewrites its own transcript
           // and keeps going. This app only translates that into a visible line,
@@ -2410,6 +2444,8 @@ ${lines}
             compact_metadata?: { trigger?: 'manual' | 'auto'; pre_tokens?: number; post_tokens?: number }
           }).compact_metadata
           const trigger = meta?.trigger === 'auto' ? 'automática (contexto cheio)' : 'manual'
+          // A barra de contexto mostra o tamanho já compactado, sem esperar a próxima resposta.
+          if (typeof meta?.post_tokens === 'number') this.lastContextTokens = meta.post_tokens
           const savings =
             typeof meta?.pre_tokens === 'number' && typeof meta?.post_tokens === 'number'
               ? ` — ${meta.pre_tokens.toLocaleString('pt-BR')} → ${meta.post_tokens.toLocaleString('pt-BR')} tokens`
