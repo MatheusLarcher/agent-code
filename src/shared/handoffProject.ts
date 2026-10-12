@@ -83,7 +83,7 @@ export interface HandoffProjectFolder {
   cwd: string
   /** Na ordem da fila: o 1º tem a vez. Planos terminados saem. */
   plans: HandoffProjectPlan[]
-  /** O plano com a vez começou e não terminou: as conversas avulsas da pasta mostram o aviso. */
+  /** O plano com a vez está rodando (ou entre um prompt e o próximo): as conversas avulsas da pasta mostram o aviso. Parado ou na fila não avisa. */
   implantacaoEmCurso: boolean
   /** A avaliação mais recente do PO nesta pasta. */
   avaliacao: HandoffProjectEvaluation | null

@@ -169,7 +169,7 @@ export class ProjectQueueService {
         key,
         cwd: record.cwd,
         plans,
-        implantacaoEmCurso: !!views[0]?.started,
+        implantacaoEmCurso: views[0]?.state === 'rodando' || views[0]?.state === 'entre_prompts',
         avaliacao: record.evaluation ? (evaluation as HandoffProjectFolder['avaliacao']) : null,
         avaliando: this.judge.evaluating(key),
         resposta: record.reply ? (reply as HandoffProjectFolder['resposta']) : null

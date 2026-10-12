@@ -32,7 +32,7 @@ const folder = (plans: HandoffProjectPlan[], over: Partial<HandoffProjectFolder>
   key: 'c:/proj',
   cwd: 'C:\\proj',
   plans,
-  implantacaoEmCurso: plans[0]?.comecou ?? false,
+  implantacaoEmCurso: plans[0]?.estado === 'rodando' || plans[0]?.estado === 'entre_prompts',
   avaliacao: null,
   avaliando: null,
   resposta: null,
@@ -137,14 +137,23 @@ describe('projectNotice — o aviso da conversa', () => {
     })
   })
 
-  it('o plano parado com outro esperando: "Passar a vez"; a conversa avulsa da pasta: o aviso', () => {
+  it('o plano parado com outro esperando: "Passar a vez"; a conversa avulsa da pasta: sem aviso (nada roda)', () => {
     const s = snap(folder([A({ estado: 'parado' }), B({ posicao: 2, estado: 'na_fila', comecou: false })]))
     expect(projectNotice(s, { id: 'conv-a', cwd: 'C:\\proj' })?.actions).toEqual([{ acao: 'passar', label: 'Passar a vez' }])
-    expect(projectNotice(s, { id: 'avulsa', cwd: 'c:/PROJ/' })).toMatchObject({
-      tone: 'warn',
-      text: 'Uma implantação está rodando neste projeto — mexer nos mesmos arquivos mistura as mudanças.'
-    })
-    expect(projectNotice(s, { id: 'avulsa', cwd: 'C:\\outro' })).toBeNull()
+    expect(projectNotice(s, { id: 'avulsa', cwd: 'c:/PROJ/' })).toBeNull()
+    expect(projectNotice(snap(folder([B({ estado: 'na_fila', comecou: false })])), { id: 'avulsa', cwd: 'C:\\proj' })).toBeNull()
+  })
+
+  it('a conversa avulsa da pasta: o aviso com o plano da vez rodando ou entre um prompt e o próximo', () => {
+    for (const estado of ['rodando', 'entre_prompts'] as const) {
+      const s = snap(folder([A({ estado }), B({ posicao: 2, estado: 'na_fila', comecou: false })]))
+      expect(projectNotice(s, { id: 'avulsa', cwd: 'c:/PROJ/' })).toEqual({
+        tone: 'warn',
+        text: 'Uma implantação está rodando neste projeto — mexer nos mesmos arquivos mistura as mudanças.',
+        actions: []
+      })
+      expect(projectNotice(s, { id: 'avulsa', cwd: 'C:\\outro' })).toBeNull()
+    }
   })
 })
 

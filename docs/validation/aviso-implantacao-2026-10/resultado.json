@@ -1,0 +1,105 @@
+{
+  "checks": [
+    {
+      "id": "1a",
+      "cenario": "plano rodando — avulsa da pasta",
+      "esperaAviso": true,
+      "temAviso": true,
+      "ok": true,
+      "aviso": "Uma implantação está rodando neste projeto — mexer nos mesmos arquivos mistura as mudanças.",
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": true,
+        "planos": [
+          "Validação do aviso:rodando"
+        ]
+      },
+      "print": "01-rodando-a-avulsa.png"
+    },
+    {
+      "id": "1b",
+      "cenario": "saiu e voltou à avulsa",
+      "esperaAviso": true,
+      "temAviso": true,
+      "ok": true,
+      "aviso": "Uma implantação está rodando neste projeto — mexer nos mesmos arquivos mistura as mudanças.",
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": true,
+        "planos": [
+          "Validação do aviso:rodando"
+        ]
+      },
+      "print": "01-rodando-b-voltou.png"
+    },
+    {
+      "id": "1c",
+      "cenario": "F5 e avulsa de novo",
+      "esperaAviso": true,
+      "temAviso": true,
+      "ok": true,
+      "aviso": "Uma implantação está rodando neste projeto — mexer nos mesmos arquivos mistura as mudanças.",
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": true,
+        "planos": [
+          "Validação do aviso:rodando"
+        ]
+      },
+      "print": "01-rodando-c-f5.png"
+    },
+    {
+      "id": "2a",
+      "cenario": "plano parado — avulsa da pasta",
+      "esperaAviso": false,
+      "temAviso": false,
+      "ok": true,
+      "aviso": null,
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": false,
+        "planos": [
+          "Validação do aviso:parado"
+        ]
+      },
+      "print": "02-parado-a-avulsa.png"
+    },
+    {
+      "id": "2b",
+      "cenario": "saiu e voltou à avulsa",
+      "esperaAviso": false,
+      "temAviso": false,
+      "ok": true,
+      "aviso": null,
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": false,
+        "planos": [
+          "Validação do aviso:parado"
+        ]
+      },
+      "print": "02-parado-b-voltou.png"
+    },
+    {
+      "id": "2c",
+      "cenario": "F5 e avulsa de novo",
+      "esperaAviso": false,
+      "temAviso": false,
+      "ok": true,
+      "aviso": null,
+      "conversaAtiva": "Nova conversa",
+      "folder": {
+        "implantacaoEmCurso": false,
+        "planos": [
+          "Validação do aviso:parado"
+        ]
+      },
+      "print": "02-parado-c-f5.png"
+    }
+  ],
+  "conversaPlano": {
+    "id": "cmv4drgblm5q0x",
+    "title": "Implementação: Validação do aviso"
+  },
+  "avisoDaConversaDoPlano": null
+}

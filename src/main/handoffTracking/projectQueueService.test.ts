@@ -236,6 +236,7 @@ describe('a fila do projeto — "rodando" exige sinal de vida (o status gravado 
       ['Plano A', 'rodando'],
       ['Plano B', 'na_fila']
     ])
+    expect(s.last().folders[0].implantacaoEmCurso).toBe(true)
     expect(motivo(await s.next('conv-b'))).toBe('na fila do projeto (2º): esperando o plano "Plano A" terminar')
 
     // O app fechou no meio do turno (ou a sessão foi descartada sem o tracker ver): o
@@ -248,6 +249,8 @@ describe('a fila do projeto — "rodando" exige sinal de vida (o status gravado 
       ['Plano A', 'parado'],
       ['Plano B', 'na_fila']
     ])
+    // Parado não é implantação rodando: as conversas avulsas da pasta não avisam.
+    expect(s.last().folders[0].implantacaoEmCurso).toBe(false)
     const semTurno = /sem turno rodando há (\d+) min$/
     const waiting = motivo(await s.next('conv-b'))
     expect(waiting).toMatch(/^na fila do projeto \(2º\): esperando o plano "Plano A" terminar — ele consta rodando, mas está sem turno rodando há \d+ min$/)
