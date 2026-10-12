@@ -2,8 +2,9 @@ import type { Pool } from 'pg'
 
 /**
  * As colunas ADITIVAS do quadro no PostgreSQL COMPARTILHADO — o vínculo da
- * pendência (`board_items.parent_id`) e o que o usuário precisa fazer
- * (`board_items.po_user_action`) —, SEM migração numerada.
+ * pendência (`board_items.parent_id`), o que o usuário precisa fazer
+ * (`board_items.po_user_action`) e o controle dessa ação
+ * (`board_items.po_reply_kind`) —, SEM migração numerada.
  *
  * Uma migração numerada nova faria `applyPostgresMigrations` de uma versão mais
  * velha do app — rodando no outro PC — recusar o banco inteiro na próxima
@@ -22,7 +23,7 @@ const LOCK_TIMEOUT_MS = 5_000
 
 /** As colunas que este arquivo sabe garantir. Lista fechada: o nome entra no
  *  `ALTER` como texto, nunca vem de fora. */
-type BoardAdditiveColumn = 'parent_id' | 'po_user_action'
+type BoardAdditiveColumn = 'parent_id' | 'po_user_action' | 'po_reply_kind'
 
 const HAS_COLUMN = `
   SELECT 1 FROM information_schema.columns
@@ -64,4 +65,8 @@ export function ensurePostgresBoardParent(pool: Pool): Promise<boolean> {
 
 export function ensurePostgresBoardUserAction(pool: Pool): Promise<boolean> {
   return ensureBoardColumn(pool, 'po_user_action', 'campo "O que você precisa fazer"')
+}
+
+export function ensurePostgresBoardReplyKind(pool: Pool): Promise<boolean> {
+  return ensureBoardColumn(pool, 'po_reply_kind', 'controle "Pode fazer / responder"')
 }

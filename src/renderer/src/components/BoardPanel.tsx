@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   boardItemAwaitingBadge,
   boardItemStatus as effectiveStatus,
@@ -17,6 +17,7 @@ import type { Touch, Turn } from '../projectActivity'
 import type { TodoItem } from '../types'
 import { fmtAgo as fmtCrewAgo, fmtClock } from './AgentCrew'
 import { BoardCardDetail, COLUMNS, fmtAgo } from './BoardCardDetail'
+import { BoardCardReply, type BoardCardReplyHandler } from './BoardCardReply'
 import { PoTag } from './BoardTagIcon'
 import { CrewRoleIcon } from './CrewIcons'
 import { IconCollapseRight, IconSpinner, IconTrash } from './Icons'
@@ -105,6 +106,9 @@ interface Props {
   onOpenPoChat?: () => void
   /** O cartão aberto no detalhe (o chip "Como está '<card>'?" do "Fala, PO"). */
   onSelectedChange?: (item: BoardItem | null) => void
+  /** A resposta no cartão "Aguardando você" ("Pode fazer" ou o campo de texto):
+   *  manda para a conversa dona do cartão, sem trocar a conversa da tela. */
+  onCardReply?: BoardCardReplyHandler
 }
 
 /** Reexportados para quem já importava daqui; a regra mora em `@shared/ipc`,
@@ -446,7 +450,8 @@ function Card({
   onToggleBalloon,
   onOpenConversation,
   deadline,
-  prints = 0
+  prints = 0,
+  onReply
 }: {
   item: BoardItem
   now: number
@@ -469,6 +474,8 @@ function Card({
   deadline?: CardDeadline
   /** Quantos prints da tarefa testada o cartão tem (o 📷). */
   prints?: number
+  /** A resposta pelo cartão "Aguardando você" (BoardCardReply). */
+  onReply?: BoardCardReplyHandler
 }): JSX.Element {
   const status = effectiveStatus(item)
   const awaiting = boardItemAwaitingBadge(item)
@@ -528,6 +535,8 @@ function Card({
       >
         <IconTrash size={13} />
       </button>
+      {/* Também irmão do <button> do cartão, pelo mesmo motivo do excluir. */}
+      <BoardCardReply item={item} onReply={onReply} />
     </div>
   )
 }
@@ -552,7 +561,8 @@ export function BoardPanel({
   openCard,
   onOpenCardDone,
   onOpenPoChat,
-  onSelectedChange
+  onSelectedChange,
+  onCardReply
 }: Props): JSX.Element {
   const [mapOpen, setMapOpen] = useState(false)
   const [items, setItems] = useState<BoardItem[]>([])
@@ -939,6 +949,7 @@ export function BoardPanel({
                   onOpenConversation={onOpenConversation}
                   deadline={deadlines.get(item.id)}
                   prints={prints.get(item.id)?.length ?? 0}
+                  onReply={onCardReply}
                 />
               ))}
             </div>
@@ -960,17 +971,21 @@ export function BoardPanel({
                 const status = effectiveStatus(item)
                 const awaiting = boardItemAwaitingBadge(item)
                 return (
-                  <button type="button" className="board-row" key={item.id} onClick={() => setSelected(item)}>
-                    <span className={`board-check ${status}`} aria-hidden="true">
-                      {status === 'completed' ? '✓' : ''}
-                    </span>
-                    <span className={`board-row-title ${status}`}>{effectiveTitle(item)}</span>
-                    {awaiting && <AwaitingTag item={item} badge={awaiting} />}
-                    {deadlines.get(item.id) && <DeadlineTag deadline={deadlines.get(item.id)!} />}
-                    <PrintBadge count={prints.get(item.id)?.length ?? 0} />
-                    {(item.poTitle || (item.poStatus && !awaiting)) && <span className="board-tag po">PO</span>}
-                    <span className="board-row-when">{fmtAgo(item.updatedAt, now)}</span>
-                  </button>
+                  <Fragment key={item.id}>
+                    <button type="button" className="board-row" onClick={() => setSelected(item)}>
+                      <span className={`board-check ${status}`} aria-hidden="true">
+                        {status === 'completed' ? '✓' : ''}
+                      </span>
+                      <span className={`board-row-title ${status}`}>{effectiveTitle(item)}</span>
+                      {awaiting && <AwaitingTag item={item} badge={awaiting} />}
+                      {deadlines.get(item.id) && <DeadlineTag deadline={deadlines.get(item.id)!} />}
+                      <PrintBadge count={prints.get(item.id)?.length ?? 0} />
+                      {(item.poTitle || (item.poStatus && !awaiting)) && <span className="board-tag po">PO</span>}
+                      <span className="board-row-when">{fmtAgo(item.updatedAt, now)}</span>
+                    </button>
+                    {/* Embaixo da linha, fora do <button> dela (só aparece quando o PO escolheu um controle). */}
+                    <BoardCardReply item={item} onReply={onCardReply} className="in-list" />
+                  </Fragment>
                 )
               })}
             </div>

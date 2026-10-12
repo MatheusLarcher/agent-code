@@ -13,15 +13,13 @@ import type {
   BoardPoWrite,
   BoardSourceItem
 } from '../persistence/types'
+import { boardReplyKindValue } from './boardUserAction'
 
 /**
  * Regras puras do quadro de tarefas — o que os dois repositórios (SQLite e
  * PostgreSQL) compartilham: colunas, mapeamento linha↔objeto, id estável e a
- * sobreposição das duas camadas.
- *
- * Nada aqui toca banco. O que é regra de verdade mora aqui justamente para não
- * existir em duas versões que divergem em silêncio, que foi a lição da
- * allowlist de download.
+ * sobreposição das duas camadas. Nada aqui toca banco: a regra mora aqui para
+ * não existir em duas versões que divergem em silêncio.
  */
 
 export const BOARD_STATUSES: readonly BoardItemStatus[] = ['pending', 'in_progress', 'completed']
@@ -36,14 +34,14 @@ export const BOARD_COLUMNS = `
 `
 
 /**
- * As colunas lidas, com as ADITIVAS: o vínculo da pendência (`parent_id`) e o que
- * o usuário precisa fazer (`po_user_action`). Fora de `BOARD_COLUMNS` de
- * propósito: as escritas que listam aquelas colunas ficam como estavam, e o
- * PostgreSQL compartilhado só lê cada uma quando ela existe — uma versão mais
- * velha do app no outro PC nunca as conhece. O SQLite tem as duas sempre.
+ * As colunas lidas, com as ADITIVAS (`parent_id`, `po_user_action`,
+ * `po_reply_kind`). Fora de `BOARD_COLUMNS` de propósito: as escritas que listam
+ * aquelas ficam como estavam, e o PostgreSQL compartilhado só lê cada uma quando
+ * ela existe. O SQLite tem todas sempre.
  */
-export function boardSelectColumns(parent = true, userAction = true): string {
-  return `${BOARD_COLUMNS.trimEnd()}${parent ? ', parent_id' : ''}${userAction ? ', po_user_action' : ''}`
+export function boardSelectColumns(parent = true, userAction = true, replyKind = true): string {
+  const extra = [parent && 'parent_id', userAction && 'po_user_action', replyKind && 'po_reply_kind'].filter(Boolean)
+  return [BOARD_COLUMNS.trimEnd(), ...extra].join(', ')
 }
 
 export interface BoardItemRow {
@@ -69,6 +67,7 @@ export interface BoardItemRow {
   /** As aditivas: só quando a leitura as incluiu (`boardSelectColumns`). */
   parent_id?: string | null
   po_user_action?: string | null
+  po_reply_kind?: string | null
 }
 
 export function isBoardStatus(value: unknown): value is BoardItemStatus {
@@ -90,6 +89,8 @@ function text(value: unknown): string | null {
 }
 
 export function boardItemFromRow(row: BoardItemRow): BoardItem {
+  const userAction = text(row.po_user_action ?? null)
+  const replyKind = userAction ? boardReplyKindValue(row.po_reply_kind) : null
   return {
     id: String(row.id),
     projectId: String(row.project_id),
@@ -110,10 +111,10 @@ export function boardItemFromRow(row: BoardItemRow): BoardItem {
     revision: Number(row.revision) || 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
-    // As aditivas só vêm com valor: o cartão comum continua com a forma de
-    // sempre (sem `parentId`/`poUserAction`), como o lido de um banco sem a coluna.
+    // Aditivas só com valor (como num banco sem a coluna); o controle só com ação.
     ...(text(row.parent_id ?? null) ? { parentId: text(row.parent_id ?? null) } : {}),
-    ...(text(row.po_user_action ?? null) ? { poUserAction: text(row.po_user_action ?? null) } : {})
+    ...(userAction ? { poUserAction: userAction } : {}),
+    ...(replyKind ? { poReplyKind: replyKind } : {})
   }
 }
 
@@ -281,7 +282,7 @@ export type BoardSyncCurrent = Pick<
 export interface BoardSyncPlan {
   /** Nada mudou no que o agente declarou: pular a escrita evita inflar `revision`. */
   unchanged: boolean
-  /** Soltar `po_status`/`po_reason`/`po_user_action` — ver `planBoardSourceSync`. */
+  /** Soltar `po_status`/`po_reason`/`po_user_action`/`po_reply_kind` — ver `planBoardSourceSync`. */
   clearPoStatus: boolean
 }
 

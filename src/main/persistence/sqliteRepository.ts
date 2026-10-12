@@ -76,7 +76,12 @@ import {
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
-import { boardUserActionText, nextBoardUserAction } from '../board/boardUserAction'
+import {
+  boardReplyKindValue,
+  boardUserActionText,
+  nextBoardReplyKind,
+  nextBoardUserAction
+} from '../board/boardUserAction'
 import {
   assertProposalLease,
   assertMemoryProposalApplication,
@@ -1103,7 +1108,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         `UPDATE board_items SET
            project_id = ?, project_cwd = ?, source_title = ?, source_status = ?,
            active_form = ?, seq = ?, po_status = NULL, po_reason = NULL, po_user_action = NULL,
-           revision = revision + 1, updated_at = ?
+           po_reply_kind = NULL, revision = revision + 1, updated_at = ?
          WHERE id = ?`
       )
       db.exec('BEGIN IMMEDIATE')
@@ -1237,19 +1242,21 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         return boardItemFromRow(current)
       }
       const now = new Date().toISOString()
+      const userAction = nextBoardUserAction(input, current.po_user_action ?? null)
       const next = {
         poTitle: input.poTitle === undefined ? current.po_title : input.poTitle,
         poNote: input.poNote === undefined ? current.po_note : input.poNote,
         poStatus: input.poStatus === undefined ? current.po_status : input.poStatus,
         poReason: input.poReason === undefined ? current.po_reason : input.poReason,
-        userAction: nextBoardUserAction(input, current.po_user_action ?? null)
+        userAction,
+        replyKind: nextBoardReplyKind(input, current.po_reply_kind ?? null, userAction)
       }
       db.prepare(
         `UPDATE board_items SET
-           po_title = ?, po_note = ?, po_status = ?, po_reason = ?, po_user_action = ?, po_at = ?,
-           revision = revision + 1, updated_at = ?
+           po_title = ?, po_note = ?, po_status = ?, po_reason = ?, po_user_action = ?, po_reply_kind = ?,
+           po_at = ?, revision = revision + 1, updated_at = ?
          WHERE id = ?`
-      ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, next.userAction, now, now, input.id)
+      ).run(next.poTitle, next.poNote, next.poStatus, next.poReason, next.userAction, next.replyKind, now, now, input.id)
       // Uma escrita do PO conta UM fato — a regra de qual mora em
       // `planPoWriteEvent`, a mesma do PostgreSQL.
       const priorEffective = (current.po_status ?? current.source_status) as BoardItemStatus
@@ -1286,9 +1293,10 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
               .get(input.conversationId) as { next?: number }
           )?.next ?? 0
         ) || 0
+      const userAction = boardUserActionText(input.userAction)
       db.prepare(
-        `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action)
-         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?, ?)`
+        `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action, po_reply_kind)
+         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.projectId,
@@ -1302,7 +1310,8 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         now,
         now,
         input.parentId?.trim() || null,
-        boardUserActionText(input.userAction)
+        userAction,
+        userAction ? boardReplyKindValue(input.replyKind) : null
       )
       this.logBoardEvent(db, { boardItemId: id, at: now, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })
       return boardItemFromRow(

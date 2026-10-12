@@ -601,6 +601,15 @@ export const SQLITE_BOARD_USER_ACTION_SCHEMA = `
   ALTER TABLE board_items ADD COLUMN po_user_action TEXT;
 `
 
+/**
+ * Migration 20 — o controle que o cartão mostra para a ação do usuário
+ * (`board_items.po_reply_kind`: 'authorize' | 'answer'). Mesmo molde da 19; no
+ * PostgreSQL, ver `ensurePostgresBoardReplyKind`.
+ */
+export const SQLITE_BOARD_REPLY_KIND_SCHEMA = `
+  ALTER TABLE board_items ADD COLUMN po_reply_kind TEXT;
+`
+
 export interface SqliteMigration {
   version: number
   name: string
@@ -665,7 +674,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   migration(17, 'sqlite-v2-board-prints', SQLITE_BOARD_PRINTS_SCHEMA),
   // Tabela nova com `IF NOT EXISTS` (sqliteTurnTime.ts): o mesmo SQL no guarda.
   migration(18, 'sqlite-v2-turn-time', SQLITE_TURN_TIME_SCHEMA),
-  migration(19, 'sqlite-v2-board-user-action', SQLITE_BOARD_USER_ACTION_SCHEMA, '')
+  migration(19, 'sqlite-v2-board-user-action', SQLITE_BOARD_USER_ACTION_SCHEMA, ''),
+  migration(20, 'sqlite-v2-board-reply-kind', SQLITE_BOARD_REPLY_KIND_SCHEMA, '')
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

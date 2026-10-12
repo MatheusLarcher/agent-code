@@ -1,3 +1,4 @@
+import type { BoardReplyKind } from '../../shared/ipc'
 import type { BoardPoWrite } from '../persistence/types'
 
 /**
@@ -32,4 +33,26 @@ export function nextBoardUserAction(
 ): string | null {
   if (input.userAction !== undefined) return boardUserActionText(input.userAction)
   return input.poStatus !== undefined ? null : current
+}
+
+/** `po_reply_kind` — o controle que o cartão mostra para a ação (ver
+ *  `BoardItem.poReplyKind`). Valor fora do contrato é `null`: nenhum controle. */
+export function boardReplyKindValue(value: unknown): BoardReplyKind | null {
+  return value === 'authorize' || value === 'answer' ? value : null
+}
+
+/**
+ * O controle depois de uma escrita do PO, decidido DEPOIS da ação
+ * (`nextBoardUserAction`): sem ação não há controle. Pedido explícito vale; uma
+ * ação nova sem controle ou uma troca de status limpam; senão fica o atual.
+ */
+export function nextBoardReplyKind(
+  input: Pick<BoardPoWrite, 'poStatus' | 'userAction' | 'replyKind'>,
+  current: string | null,
+  nextUserAction: string | null
+): BoardReplyKind | null {
+  if (!nextUserAction) return null
+  if (input.replyKind !== undefined) return boardReplyKindValue(input.replyKind)
+  if (input.userAction !== undefined || input.poStatus !== undefined) return null
+  return boardReplyKindValue(current)
 }

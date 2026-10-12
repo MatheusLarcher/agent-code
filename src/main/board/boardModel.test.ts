@@ -322,10 +322,11 @@ describe('colunas aditivas — po_user_action (o que o usuário precisa fazer)',
   })
 
   it('a leitura inclui cada aditiva só quando pedida (o PostgreSQL sem a coluna não a lê)', () => {
-    expect(boardSelectColumns()).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action`)
-    expect(boardSelectColumns(true, false)).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id`)
-    expect(boardSelectColumns(false, true)).toBe(`${BOARD_COLUMNS.trimEnd()}, po_user_action`)
-    expect(boardSelectColumns(false, false)).toBe(BOARD_COLUMNS.trimEnd())
+    expect(boardSelectColumns()).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action, po_reply_kind`)
+    expect(boardSelectColumns(true, false, false)).toBe(`${BOARD_COLUMNS.trimEnd()}, parent_id`)
+    expect(boardSelectColumns(false, true, false)).toBe(`${BOARD_COLUMNS.trimEnd()}, po_user_action`)
+    expect(boardSelectColumns(false, true, true)).toBe(`${BOARD_COLUMNS.trimEnd()}, po_user_action, po_reply_kind`)
+    expect(boardSelectColumns(false, false, false)).toBe(BOARD_COLUMNS.trimEnd())
   })
 
   it('a linha vira `poUserAction` só com valor; sem a coluna ou vazia, o cartão tem a forma de sempre', () => {

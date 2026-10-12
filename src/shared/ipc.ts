@@ -260,7 +260,18 @@ export interface BoardItem {
    *  quando o status do PO é substituído. Opcional como `parentId`: banco sem a
    *  coluna e cartão que espera o agente não têm. */
   poUserAction?: string | null
+  /** Como o usuário responde PELO cartão, decidido pelo PO junto do `poUserAction`:
+   *  'authorize' = botão "Pode fazer"; 'answer' = campo de texto embaixo do cartão;
+   *  null/ausente = nenhum controle (o usuário age fora do app ou na conversa).
+   *  Some junto do `poUserAction`. */
+  poReplyKind?: BoardReplyKind | null
 }
+
+/** O controle de resposta no cartão "aguardando você" (ver `BoardItem.poReplyKind`). */
+export type BoardReplyKind = 'authorize' | 'answer'
+
+/** O texto que o botão "Pode fazer" do cartão manda para a conversa dona dele. */
+export const BOARD_AUTHORIZE_MESSAGE = 'Pode fazer.'
 
 /**
  * A sobreposição das duas camadas do cartão. Mora aqui, e não no main, porque
@@ -357,6 +368,12 @@ export function boardItemAwaitingBadge(item: BoardItem): { kind: BoardTurnEndKin
   // A pendência que o PO criou esperando a autorização do usuário (commit,
   // deploy, verificar no app): também espera você — o mesmo selo.
   if (item.dismissedAt === null && (item.poReason ?? '').startsWith(BOARD_PO_AWAITING_REASON)) {
+    return { kind: 'result', label: BOARD_TURN_END_BADGE.result }
+  }
+  // O PENDENTE com VOCÊ num cartão que nunca saiu de "a fazer" (o agente o criou
+  // já esperando a resposta): o PO escreveu o que o usuário precisa fazer, então
+  // ele espera você — e é esse selo que mostra o controle de resposta.
+  if (item.dismissedAt === null && (item.poUserAction ?? '').trim() !== '') {
     return { kind: 'result', label: BOARD_TURN_END_BADGE.result }
   }
   return null

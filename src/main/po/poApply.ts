@@ -1,4 +1,10 @@
-import { boardItemStatus, boardTurnEndReason, parseBoardTurnEndReason, type BoardItem } from '../../shared/ipc'
+import {
+  boardItemStatus,
+  boardTurnEndReason,
+  parseBoardTurnEndReason,
+  type BoardItem,
+  type BoardReplyKind
+} from '../../shared/ipc'
 import type { BoardService } from '../board/boardService'
 import { defaultCompletions, PO_DEFAULT_COMPLETE_REASON, untouchedSinceTurnEnd } from './poCloseDefault'
 import { parsePoHold, type PoNextPrompt } from './poHold'
@@ -78,6 +84,18 @@ export function poCreateUserAction(op: Extract<PoOp, { kind: 'create' }>): strin
   if (op.userAction) return op.userAction
   if (!op.reason.trim().toLowerCase().startsWith(PO_AWAITING_AUTHORIZATION_REASON)) return null
   return clamp(`Autorizar: ${op.title}`, BOARD_USER_ACTION_MAX_CHARS)
+}
+
+/** O controle da NOVA: o sufixo vale; sem ele, a que espera autorização ganha o
+ *  botão "Pode fazer" quando a ação é a padrão ("Autorizar: …") ou começa com
+ *  Autorizar/Aprovar. VOCÊ sem sufixo de outro tipo ("Testar no celular") é
+ *  ação fora do app: nenhum controle. Sem ação, nenhum. */
+export function poCreateReplyKind(op: Extract<PoOp, { kind: 'create' }>): BoardReplyKind | null {
+  if (!poCreateUserAction(op)) return null
+  if (op.replyKind) return op.replyKind
+  if (!op.reason.trim().toLowerCase().startsWith(PO_AWAITING_AUTHORIZATION_REASON)) return null
+  if (!op.userAction) return 'authorize'
+  return /^(autorizar|aprovar)\b/i.test(op.userAction.trim()) ? 'authorize' : null
 }
 
 /** As operações que só podem ser escritas depois de conferidas contra o quadro
@@ -225,6 +243,7 @@ export async function applyPoVerdict(
         id: op.id,
         poReason: boardTurnEndReason(kind, op.reason),
         userAction: op.userAction ?? null,
+        ...(op.userAction && op.replyKind ? { replyKind: op.replyKind } : {}),
         eventNote: op.reason
       })
       progress.touched.push(op.id)
@@ -243,6 +262,7 @@ export async function applyPoVerdict(
       const routine = !!auth && op.status === 'pending' && !!parent && routineFor(op.title, auth)
       // A rotina roda sozinha: não há o que o usuário fazer.
       const userAction = routine ? null : poCreateUserAction(op)
+      const replyKind = routine ? null : poCreateReplyKind(op)
       const created = await deps.board.createPoItem({
         projectId,
         projectCwd: cwd,
@@ -251,7 +271,8 @@ export async function applyPoVerdict(
         status: op.status,
         reason: routine ? PO_ROUTINE_REASON : op.reason,
         ...(op.parentId ? { parentId: op.parentId } : {}),
-        ...(userAction ? { userAction } : {})
+        ...(userAction ? { userAction } : {}),
+        ...(userAction && replyKind ? { replyKind } : {})
       })
       if (created) progress.touched.push(created.id)
       if (created && op.status === 'in_progress') await linkLedgerTaskToCard(deps, convId, created.id, startedAt)

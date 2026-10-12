@@ -4,14 +4,14 @@ import { randomUUID } from 'node:crypto'
 import { Client, type Pool } from 'pg'
 import type { PostgresConnectionDraft } from '../../shared/ipc'
 import { POSTGRES_DATABASE } from './bootstrapStore'
-import { ensurePostgresBoardParent, ensurePostgresBoardUserAction } from './postgresBoardParent'
+import { ensurePostgresBoardParent, ensurePostgresBoardReplyKind, ensurePostgresBoardUserAction } from './postgresBoardParent'
 import { POSTGRES_MIGRATIONS } from './postgresMigrations'
 import { postgresClientConfig, provisionPostgres } from './postgresProvisioning'
 import { PostgresRepository } from './postgresRepository'
 
 /**
  * As colunas aditivas do quadro no PostgreSQL compartilhado (o vínculo da
- * pendência e a ação do usuário): garantidas na abertura, SEM migração numerada
+ * pendência, a ação do usuário e o controle do cartão): garantidas na abertura, SEM migração numerada
  * — uma numerada faria a versão mais velha do app, no outro PC, recusar o banco
  * (`SCHEMA_TOO_NEW`).
  */
@@ -85,6 +85,32 @@ describe('ensurePostgresBoardUserAction — o mesmo molde, para po_user_action',
   it('não é migração numerada: o app antigo do outro PC não recusa o banco', () => {
     expect(POSTGRES_MIGRATIONS.at(-1)?.version).toBe(18)
     expect(POSTGRES_MIGRATIONS.some((entry) => /po_user_action/.test(entry.sql))).toBe(false)
+  })
+})
+
+describe('ensurePostgresBoardReplyKind — o mesmo molde, para po_reply_kind', () => {
+  it('confere a coluna certa e, faltando, cria po_reply_kind com o teto de lock', async () => {
+    const { pool, client } = fakePool([false, true])
+    expect(await ensurePostgresBoardReplyKind(pool)).toBe(true)
+    expect(vi.mocked(pool.query).mock.calls[0][1]).toEqual(['po_reply_kind'])
+    const statements = client.query.mock.calls.map(([sql]) => String(sql))
+    expect(statements).toContain('ALTER TABLE board_items ADD COLUMN IF NOT EXISTS po_reply_kind text')
+    expect(statements.some((sql) => /lock_timeout/.test(sql))).toBe(true)
+  })
+
+  it('coluna já existe: só confere; ALTER que falha devolve false', async () => {
+    const existing = fakePool([true])
+    expect(await ensurePostgresBoardReplyKind(existing.pool)).toBe(true)
+    expect(existing.queries.some((q) => q.startsWith('ALTER'))).toBe(false)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const failing = fakePool([false], new Error('canceling statement due to lock timeout'))
+    expect(await ensurePostgresBoardReplyKind(failing.pool)).toBe(false)
+    expect(failing.queries).toContain('ROLLBACK')
+    warn.mockRestore()
+  })
+
+  it('não é migração numerada', () => {
+    expect(POSTGRES_MIGRATIONS.some((entry) => /po_reply_kind/.test(entry.sql))).toBe(false)
   })
 })
 
