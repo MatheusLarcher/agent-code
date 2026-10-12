@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { HandoffEntrega, HandoffEnvio } from '../../shared/handoffTracking'
 import type { ScrumMasterConfig } from '../../shared/ipc'
-import { noticeEntrega, noticeStepNumber } from '../handoffTracking/handoffDeadline'
+import { noticeEntrega, noticeStepNumber, type DeadlineFollowUp } from '../handoffTracking/handoffDeadline'
 import type { ScrumLogWriter } from './scrumLog'
 import { dueScrumMark, firedFromLog, noteFired, scrumEsperaMs, scrumPrazoMs, travadoDue, type ScrumFired } from './scrumMarks'
 import {
@@ -404,6 +404,12 @@ export class ScrumMaster implements ScrumMasterRuntime {
     } catch (err) {
       this.warn('send', err)
     }
+  }
+
+  deadlineFollowUp(): DeadlineFollowUp {
+    const cfg = this.cfg()
+    if (!cfg?.enabled) return 'nenhum'
+    return cfg.podeParar ? 'para' : 'cobra'
   }
 
   takeCharge(convId: string): string | null {

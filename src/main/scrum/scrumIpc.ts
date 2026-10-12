@@ -45,6 +45,8 @@ export interface ScrumIpcDeps {
   /** "Etapa N de M" de um envio (loadPlanProgress); falha = a das entregas do envio. */
   place(envio: HandoffEnvio, etapaId: string): Promise<{ n: number; total: number } | null>
   now?(): number
+  /** Onde registrar (padrão: ipcMain.handle); o main passa a ponte do celular (appIpcBridge.ts). */
+  handle?(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void
 }
 
 const HistoryReq = z.object({
@@ -136,7 +138,8 @@ export function decideDeclaration(deps: ScrumIpcDeps, log: readonly ScrumDecisao
 }
 
 export function registerScrumIpc(deps: ScrumIpcDeps): void {
-  ipcMain.handle(Channels.scrumPanel, async (): Promise<ScrumPanelResult> => {
+  const handle = deps.handle ?? ((channel, listener) => ipcMain.handle(channel, listener))
+  handle(Channels.scrumPanel, async (): Promise<ScrumPanelResult> => {
     try {
       return await scrumPanelSnapshot(deps)
     } catch (err) {
@@ -144,7 +147,7 @@ export function registerScrumIpc(deps: ScrumIpcDeps): void {
     }
   })
 
-  ipcMain.handle(Channels.scrumHistory, async (_e, req: unknown): Promise<ScrumHistoryResult> => {
+  handle(Channels.scrumHistory, async (_e, req: unknown): Promise<ScrumHistoryResult> => {
     const parsed = HistoryReq.safeParse(req)
     if (!parsed.success) return { ok: false, message: 'pedido inválido' }
     try {
@@ -155,7 +158,7 @@ export function registerScrumIpc(deps: ScrumIpcDeps): void {
     }
   })
 
-  ipcMain.handle(Channels.scrumChatHistory, async (_e, req: unknown): Promise<ScrumChatHistoryResult> => {
+  handle(Channels.scrumChatHistory, async (_e, req: unknown): Promise<ScrumChatHistoryResult> => {
     const parsed = ChatHistoryReq.safeParse(req ?? {})
     if (!parsed.success) return { ok: false, message: 'pedido inválido' }
     try {
@@ -165,13 +168,13 @@ export function registerScrumIpc(deps: ScrumIpcDeps): void {
     }
   })
 
-  ipcMain.handle(Channels.scrumAsk, async (_e, req: unknown): Promise<ScrumAskResult> => {
+  handle(Channels.scrumAsk, async (_e, req: unknown): Promise<ScrumAskResult> => {
     const parsed = AskReq.safeParse(req)
     if (!parsed.success) return { ok: false, message: 'mensagem inválida' }
     return deps.chat.ask(parsed.data)
   })
 
-  ipcMain.handle(Channels.scrumDecideDeclaration, async (_e, req: unknown): Promise<ScrumActionResult> => {
+  handle(Channels.scrumDecideDeclaration, async (_e, req: unknown): Promise<ScrumActionResult> => {
     const parsed = DecideReq.safeParse(req)
     if (!parsed.success) return { ok: false, message: 'pedido inválido' }
     try {

@@ -105,6 +105,21 @@ describe('deadlineNoticeFor — o aviso ao agente, uma vez por marco', () => {
     expect(notice?.text).toContain('Ninguém vai interromper você')
   })
 
+  it('com o Scrum Master ligado, o de 100% não promete que ninguém interrompe', () => {
+    const late = running(40 * MIN + 1, { aviso80Em: '2026-10-05T11:00:00.000Z' })
+    const cobra = deadlineNoticeFor(late, AT, 'cobra')?.text ?? ''
+    expect(cobra).not.toContain('Ninguém vai interromper')
+    expect(cobra).toContain('150% e 200%')
+    expect(cobra).toContain('pode interromper o turno')
+    expect(cobra).toContain('entrega_aviso_demora')
+    expect(cobra).not.toContain('300%')
+    const para = deadlineNoticeFor(late, AT, 'para')?.text ?? ''
+    expect(para).not.toContain('Ninguém vai interromper')
+    expect(para).toContain('aos 300%, pode parar o envio')
+    // O de 80% não fala do que vem depois do estouro.
+    expect(deadlineNoticeFor(running(32 * MIN), AT, 'para')?.text).not.toContain('Scrum Master')
+  })
+
   it('pulou direto para o estouro: só o de 100%, gravando também o de 80% (não vem depois)', () => {
     const before = running(55 * MIN)
     const notice = deadlineNoticeFor(before, AT)
@@ -196,7 +211,25 @@ describe('sessionDeadlineNotice — só a conversa de handoff, só o fio princip
   it('handoff: pergunta ao acompanhamento pela conversa da sessão', async () => {
     const t = tracker('⏱ aviso')
     await expect(sessionDeadlineNotice({ convId: 'c1', handoff: { slug: 'p' } }, undefined, () => t)).resolves.toBe('⏱ aviso')
-    expect(t.deadlineNotice).toHaveBeenCalledWith('c1')
+    // Sem Scrum Master registrado: o de 100% promete o de sempre.
+    expect(t.deadlineNotice).toHaveBeenCalledWith('c1', 'nenhum')
+  })
+
+  it('o aviso leva o que o Scrum Master faz depois do estouro; se ele falhar, o de sempre', async () => {
+    const role = { convId: 'c1', handoff: { slug: 'p' } }
+    const positions = new PlanPositions({ load: vi.fn(), now: () => 0 })
+    const t = tracker('⏱ aviso')
+    const sm = { takeCharge: () => null, deadlineFollowUp: vi.fn((): 'para' => 'para') }
+    await sessionDeadlineNotice(role, undefined, () => t, positions, () => sm)
+    expect(t.deadlineNotice).toHaveBeenLastCalledWith('c1', 'para')
+    const boom = {
+      takeCharge: () => null,
+      deadlineFollowUp: (): 'para' => {
+        throw new Error('config')
+      }
+    }
+    await expect(sessionDeadlineNotice(role, undefined, () => t, positions, () => boom)).resolves.toBe('⏱ aviso')
+    expect(t.deadlineNotice).toHaveBeenLastCalledWith('c1', 'nenhum')
   })
 
   it('conversa comum, Agent Manager e subagente: nem pergunta (nem lê as posições do plano)', async () => {
@@ -229,7 +262,7 @@ describe('sessionDeadlineNotice — só a conversa de handoff, só o fio princip
       pending = null
       return c
     })
-    const sm = () => ({ takeCharge })
+    const sm = () => ({ takeCharge, deadlineFollowUp: (): 'cobra' => 'cobra' })
     await expect(sessionDeadlineNotice(role, 'agent-7', () => tracker('⏱ aviso'), positions, sm)).resolves.toBeNull()
     expect(takeCharge).not.toHaveBeenCalled()
     await expect(sessionDeadlineNotice(role, undefined, () => tracker('⏱ aviso'), positions, sm)).resolves.toBe(
@@ -241,7 +274,8 @@ describe('sessionDeadlineNotice — só a conversa de handoff, só o fio princip
     const boom = () => ({
       takeCharge: () => {
         throw new Error('sm')
-      }
+      },
+      deadlineFollowUp: (): 'cobra' => 'cobra'
     })
     await expect(sessionDeadlineNotice(role, undefined, () => tracker('⏱ aviso'), positions, boom)).resolves.toBe('⏱ aviso')
   })

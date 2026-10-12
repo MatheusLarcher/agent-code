@@ -6,12 +6,16 @@
  * banco indisponível), todo mundo segue como se o SM não existisse.
  */
 
+import type { DeadlineFollowUp } from '../handoffTracking/handoffDeadline'
+
 export interface ScrumDeclaracaoPedido {
   minutos: unknown
   motivo: unknown
 }
 
 export interface ScrumMasterRuntime {
+  /** O que o aviso de prazo de 100% promete depois do estouro, pela config de agora. */
+  deadlineFollowUp(): DeadlineFollowUp
   /** A cobrança pendente da conversa, marcada como entregue; `null` = nenhuma. Síncrona: o hook só consulta o mapa. */
   takeCharge(convId: string): string | null
   /** A nota da parada do SM para a próxima mensagem, uma vez só; `null` = nenhuma. */

@@ -3,7 +3,7 @@ import type { StartAgentOptions } from '../../shared/ipc'
 import type { PlanProgress } from '../../shared/stepProgress'
 import { activeScrumMaster, type ScrumMasterRuntime } from '../scrum/scrumRuntime'
 import { entregaServerApplies, loadPlanProgress } from './entregaTools'
-import { rememberPlanSteps } from './handoffDeadline'
+import { rememberPlanSteps, type DeadlineFollowUp } from './handoffDeadline'
 import { activeHandoffTracker } from './handoffRuntime'
 import type { HandoffTracker } from './handoffTracker'
 
@@ -62,6 +62,15 @@ export class PlanPositions {
 
 const planPositions = new PlanPositions()
 
+/** O que o aviso de 100% promete depois do estouro; sem SM (ou se ele falhar), o de sempre. */
+function scrumFollowUp(scrumOf: () => Pick<ScrumMasterRuntime, 'deadlineFollowUp'> | null): DeadlineFollowUp {
+  try {
+    return scrumOf()?.deadlineFollowUp() ?? 'nenhum'
+  } catch {
+    return 'nenhum'
+  }
+}
+
 /**
  * O texto que o hook anexa ao resultado da ferramenta — o aviso de prazo e,
  * depois dele, a cobrança pendente do Scrum Master —, ou `null`. Só na conversa
@@ -76,7 +85,7 @@ export async function sessionDeadlineNotice(
   agentId: string | undefined,
   trackerOf: () => DeadlineNoticeTracker | null = activeHandoffTracker,
   positions: PlanPositions = planPositions,
-  scrumOf: () => Pick<ScrumMasterRuntime, 'takeCharge'> | null = activeScrumMaster
+  scrumOf: () => Pick<ScrumMasterRuntime, 'takeCharge' | 'deadlineFollowUp'> | null = activeScrumMaster
 ): Promise<string | null> {
   if (!entregaServerApplies(role) || agentId) return null
   let notice: string | null = null
@@ -85,7 +94,7 @@ export async function sessionDeadlineNotice(
     if (tracker) {
       // Sem await: a posição no plano chega para o próximo aviso, nunca segura este.
       void positions.refresh(role.convId, tracker)
-      notice = await tracker.deadlineNotice(role.convId)
+      notice = await tracker.deadlineNotice(role.convId, scrumFollowUp(scrumOf))
     }
   } catch {
     notice = null

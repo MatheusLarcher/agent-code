@@ -28,7 +28,9 @@ import type { EntregaPatchFor } from './handoffRules'
  *   dentro —, o mesmo instante em que a etapa fica atrasada.
  *
  * Nada aqui interrompe o agente: o aviso é texto anexado ao resultado de uma
- * ferramenta (card amb-estouro, opção b).
+ * ferramenta (card amb-estouro, opção b). Quem pode interromper depois do
+ * estouro é o Scrum Master (src/main/scrum), e o aviso de 100% diz isso
+ * conforme a config dele (`DeadlineFollowUp`).
  */
 
 /** Teto de espera do aviso no hook PostToolUse: depois disso a ferramenta segue sem ele. */
@@ -118,16 +120,30 @@ export function noticeStepNumber(envio: HandoffEnvio, entrega: HandoffEntrega): 
   return published ?? planProgress([envio]).steps.find((s) => s.id === entrega.etapaId)?.n ?? entrega.ordem
 }
 
+/**
+ * O que vem depois do estouro, para o aviso de 100% não prometer o que não vale:
+ * `nenhum` = Scrum Master desligado (ninguém interrompe); `cobra` = ligado, sem
+ * poder parar o envio; `para` = ligado e com `podeParar` (o 300%).
+ */
+export type DeadlineFollowUp = 'nenhum' | 'cobra' | 'para'
+
+const FOLLOW_UP_TEXT: Record<DeadlineFollowUp, string> = {
+  nenhum: 'Ninguém vai interromper você; a etapa fica marcada como atrasada.',
+  cobra:
+    'A etapa fica marcada como atrasada. O Scrum Master cobra de novo aos 150% e 200% do prazo e pode interromper o turno ' +
+    'se a cobrança não chegar a você; para tarefa demorada, declare antes com entrega_aviso_demora.',
+  para:
+    'A etapa fica marcada como atrasada. O Scrum Master cobra de novo aos 150% e 200% do prazo, pode interromper o turno ' +
+    'se a cobrança não chegar a você e, aos 300%, pode parar o envio; para tarefa demorada, declare antes com entrega_aviso_demora.'
+}
+
 /** `⏱ Etapa 3 (prazos): 34 de 40 min de trabalho …` — N (`n`) é a posição da etapa no plano (noticeStepNumber). */
-export function deadlineNoticeText(entrega: HandoffEntrega, mark: DeadlineMark, n: number): string {
+export function deadlineNoticeText(entrega: HandoffEntrega, mark: DeadlineMark, n: number, followUp: DeadlineFollowUp = 'nenhum'): string {
   const head = `⏱ Etapa ${n} (${entrega.etapaId}): ${tempoAtivoMinutos(entrega.tempoAtivoMs)} de ${entrega.estimativaPlano ?? 0} min de trabalho`
   if (mark === 80) {
     return `${head} — 80% do prazo da etapa (tempo ativo medido pelo app). Planeje fechar a etapa dentro do prazo.`
   }
-  return (
-    `${head} — passou do prazo da etapa. Feche a etapa agora, corte escopo (diga o que ficou de fora) ou reporte o bloqueio. ` +
-    'Ninguém vai interromper você; a etapa fica marcada como atrasada.'
-  )
+  return `${head} — passou do prazo da etapa. Feche a etapa agora, corte escopo (diga o que ficou de fora) ou reporte o bloqueio. ${FOLLOW_UP_TEXT[followUp]}`
 }
 
 export interface DeadlineNotice {
@@ -143,7 +159,7 @@ export interface DeadlineNotice {
  * ainda não foi). Um por chamada, uma vez por marco; quem pula direto para o
  * estouro recebe só o de 100% — e o de 80% fica gravado para não vir depois.
  */
-export function deadlineNoticeFor(envio: HandoffEnvio, at: string): DeadlineNotice | null {
+export function deadlineNoticeFor(envio: HandoffEnvio, at: string, followUp: DeadlineFollowUp = 'nenhum'): DeadlineNotice | null {
   const entrega = noticeEntrega(envio)
   if (!entrega || entrega.aviso100Em !== null) return null
   const level = deadlineLevel(entrega.tempoAtivoMs, entrega.estimativaPlano)
@@ -151,7 +167,8 @@ export function deadlineNoticeFor(envio: HandoffEnvio, at: string): DeadlineNoti
     const patch: HandoffEntregaPatch = { aviso100Em: at }
     if (entrega.aviso80Em === null) patch.aviso80Em = at
     if (!entrega.atrasada) patch.atrasada = true
-    return { entregaId: entrega.id, mark: 100, text: deadlineNoticeText(entrega, 100, noticeStepNumber(envio, entrega)), patch }
+    const text = deadlineNoticeText(entrega, 100, noticeStepNumber(envio, entrega), followUp)
+    return { entregaId: entrega.id, mark: 100, text, patch }
   }
   if (level === 'alerta' && entrega.aviso80Em === null) {
     return { entregaId: entrega.id, mark: 80, text: deadlineNoticeText(entrega, 80, noticeStepNumber(envio, entrega)), patch: { aviso80Em: at } }

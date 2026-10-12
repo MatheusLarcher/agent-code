@@ -340,7 +340,7 @@ export class HandoffJobs {
    * toast do usuário sair junto. Guarda em `noticeAt` até quando não há o que
    * reler.
    */
-  async deadlineNotice(convId: string, unflushedMs: number): Promise<string | null> {
+  async deadlineNotice(convId: string, unflushedMs: number, followUp: deadline.DeadlineFollowUp = 'nenhum'): Promise<string | null> {
     const s = this.ctx.state(convId)
     const repo = this.ctx.repo()
     if (!s || !repo) return null
@@ -351,7 +351,7 @@ export class HandoffJobs {
       return null
     }
     const envio = deadline.withTimeAdded(loaded, rules.timeDistribution(loaded, unflushedMs, s.cardInProgress))
-    const notice = deadline.deadlineNoticeFor(envio, iso(at))
+    const notice = deadline.deadlineNoticeFor(envio, iso(at), followUp)
     if (await this.writeDeadline(repo, envio.id, deadline.lateMarks(envio), notice)) this.ctx.changed(convId)
     // Depois da escrita: o `changed` dela zera o `noticeAt`.
     const next = deadline.msToNextMark(deadline.withNotice(envio, notice))

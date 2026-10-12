@@ -2,7 +2,7 @@ import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ChatEvent } from '../../shared/ipc'
 import type { HandoffRepository } from '../persistence/types'
 import type { EntregaEstimateOutcome, EntregaEstimateRequest, EntregaTimeOutcome } from './entregaEstimate'
-import { DEADLINE_NOTICE_TIMEOUT_MS, queuedNotice } from './handoffDeadline'
+import { DEADLINE_NOTICE_TIMEOUT_MS, queuedNotice, type DeadlineFollowUp } from './handoffDeadline'
 import { HandoffJobs, type HandoffBoard, type HandoffCorrection } from './handoffJobs'
 import { handoffContentHash } from './handoffModel'
 import { HandoffReconciler } from './handoffReconcile'
@@ -340,12 +340,13 @@ export class HandoffTracker {
    * do marco de 80% ou 100% da etapa em andamento, uma vez por marco, ou `null`.
    * Rápido: entre os marcos não toca o banco (`noticeAt`); com leitura, espera
    * no máximo o teto e segue sem aviso — o que ficar pronto depois sai na
-   * próxima ferramenta. Nunca lança.
+   * próxima ferramenta. Nunca lança. `followUp`: o que o de 100% promete depois
+   * do estouro (a config do Scrum Master).
    */
-  async deadlineNotice(convId: string): Promise<string | null> {
+  async deadlineNotice(convId: string, followUp: DeadlineFollowUp = 'nenhum'): Promise<string | null> {
     const s = this.states.get(convId)
     if (!s) return null
-    const read = (): Promise<string | null> => this.jobs.deadlineNotice(convId, this.unflushedActiveMs(convId))
+    const read = (): Promise<string | null> => this.jobs.deadlineNotice(convId, this.unflushedActiveMs(convId), followUp)
     try {
       return await queuedNotice(s, this.now(), this.deps.noticeTimeoutMs ?? DEADLINE_NOTICE_TIMEOUT_MS, (job) => this.exclusive(convId, job), read)
     } catch (err) {

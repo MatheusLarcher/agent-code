@@ -84,6 +84,17 @@ function harness(o: { config?: Partial<ScrumMasterConfig>; history?: ScrumDecisa
   return { s, sm, tracker, interrupt, config, tipos }
 }
 
+describe('ScrumMaster — o que o aviso de 100% promete depois do estouro', () => {
+  it('segue a config de agora: desligado = nenhum, ligado = cobra, com podeParar = para', () => {
+    const h = harness()
+    expect(h.sm.deadlineFollowUp()).toBe('para')
+    h.config.podeParar = false
+    expect(h.sm.deadlineFollowUp()).toBe('cobra')
+    h.config.enabled = false
+    expect(h.sm.deadlineFollowUp()).toBe('nenhum')
+  })
+})
+
 describe('ScrumMaster — marcos: julga só pelas respostas do agente e entrega pelo hook', () => {
   it('150%: consulta o modelo uma vez com o texto do agente principal e deixa a cobrança para o hook, uma vez', async () => {
     const h = harness()

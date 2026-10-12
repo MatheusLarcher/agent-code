@@ -114,7 +114,8 @@ describe('AgentSession — aviso de prazo no PostToolUse', () => {
     const out = await post!(done('t1'))
     // Exatamente isto: sem `continue: false`, `decision`, `stopReason`.
     expect(out).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: AVISO } })
-    expect(deadlineNotice).toHaveBeenCalledWith('c1')
+    // Sem Scrum Master registrado: o de 100% promete o de sempre ('nenhum').
+    expect(deadlineNotice).toHaveBeenCalledWith('c1', 'nenhum')
     // O que o hook já fazia continua: a chamada saiu do voo.
     expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
     expect(interrupt).not.toHaveBeenCalled()
