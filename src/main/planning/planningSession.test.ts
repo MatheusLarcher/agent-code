@@ -277,6 +277,12 @@ describe('handoffAppendBlock', () => {
     expect(block).toContain('Não releia resultados antigos de ferramenta')
   })
 
+  it('contexto: mapa curto da etapa depois de ler o código, antes de mudar arquivo', () => {
+    const block = handoffAppendBlock({ cwd, handoff: { slug } }) ?? ''
+    expect(block).toContain('Depois de ler o código de uma etapa e antes de mudar qualquer arquivo, escreva no chat o mapa curto dela')
+    expect(block).toContain('o mapa e o resumo são o que sobrevive à compactação')
+  })
+
   it('golden do bloco do handoff (caminhos normalizados)', async () => {
     const block = (handoffAppendBlock({ cwd, handoff: { slug } }) ?? '').split(cwd).join('<cwd>').replace(/\\/g, '/')
     await expect(block).toMatchFileSnapshot('./__golden__/handoff-block.txt')
