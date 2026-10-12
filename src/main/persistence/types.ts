@@ -1,5 +1,5 @@
 import type { SessionStore, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus, TurnTimeTotals } from '../../shared/ipc'
+import type { AppConfig, BoardItem, BoardItemEvent, BoardItemStatus, BoardReplyKind, TurnTimeTotals } from '../../shared/ipc'
 
 export type {
   BoardItem,
@@ -499,6 +499,9 @@ export interface BoardPoWrite {
    *  mantém — MENOS quando `poStatus` vem junto: trocar o status limpa (ver
    *  `nextBoardUserAction`). Banco sem a coluna ignora o campo. */
   userAction?: string | null
+  /** O controle do cartão para a ação (`BoardItem.poReplyKind`). Sem ação, ou com
+   *  ação nova sem ele, fica `null` (ver `nextBoardReplyKind`). */
+  replyKind?: BoardReplyKind | null
   /** Nota do evento quando ela não é o `poReason` gravado — o TITULO que não
    *  pode apagar o motivo do fim de turno leva a própria justificativa aqui. */
   eventNote?: string | null
@@ -532,6 +535,8 @@ export interface BoardPoCreate {
   /** O que o usuário precisa fazer (`BoardItem.poUserAction`); mesma regra de
    *  banco sem a coluna. */
   userAction?: string | null
+  /** O controle para a ação (`BoardItem.poReplyKind`); só vale com `userAction`. */
+  replyKind?: BoardReplyKind | null
 }
 
 export interface BoardQuery {

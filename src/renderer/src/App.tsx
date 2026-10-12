@@ -114,6 +114,7 @@ import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
 import { useAccountActions } from './accounts/useAccountActions'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
 import { BoardPanel, boardProgress, type BoardProgress } from './components/BoardPanel'
+import type { BoardReplyOutcome } from './components/BoardCardReply'
 import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
 
 /** Poll do contador da aba Quadro com o painel FECHADO. Lento: é um badge. */
@@ -3176,6 +3177,18 @@ export function App(): JSX.Element {
     [dispatch]
   )
 
+  // A resposta pelo cartão "Aguardando você" do Quadro ("Pode fazer" ou o campo):
+  // vai para a conversa DONA do cartão pelo mesmo `dispatch` (fila se ocupada,
+  // sessão iniciada se parada), sem trocar a conversa da tela.
+  const replyFromBoardCard = useCallback(
+    async (convId: string, text: string): Promise<BoardReplyOutcome> => {
+      const conv = convsRef.current.find((c) => c.id === convId)
+      if (!conv) return 'missing'
+      return (await dispatch(conv, text, text, [], [], [])) ? 'sent' : 'failed'
+    },
+    [dispatch]
+  )
+
   // Cria a conversa de implementação (nova, ativa, modelo/modos de conversa
   // normal, marcada com handoffSlug) e registra os prompts: o despachante solta
   // um por vez pelo `dispatch` (sem o registro, todos vão pela fila dela).
@@ -4787,6 +4800,7 @@ export function App(): JSX.Element {
                     onOpenCardDone={cardOpener.done}
                     onOpenPoChat={poChat.open}
                     onSelectedChange={poChat.onBoardSelect}
+                    onCardReply={replyFromBoardCard}
                     crew={crew}
                     pendingPermissions={pendingPermissionList}
                     // Sai do painel para o chat: a pergunta é lá que se responde.

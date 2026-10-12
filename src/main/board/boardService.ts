@@ -310,7 +310,9 @@ export class BoardService {
         // A escrita crua: `applyPo` esperaria por esta mesma reabertura.
         const justification = parseBoardTurnEndReason(card.poReason)?.justification
         const poReason = boardTurnEndReason(kind, justification)
-        const keep = card.poUserAction ? { userAction: card.poUserAction } : {}
+        const keep = card.poUserAction
+          ? { userAction: card.poUserAction, ...(card.poReplyKind ? { replyKind: card.poReplyKind } : {}) }
+          : {}
         await this.writePo({ id: card.id, poStatus: 'pending', poReason, ...keep, actor: 'system' })
         reopened.add(card.id)
       } catch {

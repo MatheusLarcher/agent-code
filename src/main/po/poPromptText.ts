@@ -149,6 +149,16 @@ VPS", "Informar a senha do banco de homologação", "Testar o login no celular".
 inteiro quando o cartão espera o AGENTE (ele parou no meio e continua na próxima mensagem):
 ação inventada para o usuário é pior do que nenhuma.
 
+No fim da ação vai um sufixo opcional que decide o controle do cartão:
+- "| BOTÃO" quando a ação é AUTORIZAR algo que o agente faz no app (commit, push, deploy,
+  atualizar a VPS, gerar o instalador, aplicar a mudança proposta). O cartão mostra o botão
+  "Pode fazer". Ex.: VOCÊ: Autorizar o deploy na VPS | BOTÃO
+- "| RESPONDER" quando a ação é uma ESCOLHA ou uma INFORMAÇÃO que só o usuário sabe (qual opção,
+  um dado, uma senha, um nome). O cartão abre o campo de resposta. Ex.: VOCÊ: Escolher entre o
+  layout A e o B | RESPONDER
+- Sem sufixo quando a ação acontece FORA do app (instalar algo, testar no celular, conferir na
+  conta dele). Ex.: VOCÊ: Testar o login no celular
+
 Se não houver nada a corrigir nem cartão a justificar, responda exatamente OK.
 
 O PADRÃO DO FIM DO TURNO — leia antes das regras:
@@ -163,7 +173,7 @@ O PADRÃO DO FIM DO TURNO — leia antes das regras:
   implementar a tela de edição; o agente parou na listagem" ou "esperando o usuário escolher
   entre as duas opções". Motivo genérico ("não terminou", "em andamento") não serve.
   Exemplo (espera o agente, sem VOCÊ): PENDENTE <id> | falta implementar a tela de edição; o agente parou na listagem
-  Exemplo (espera o usuário): PENDENTE <id> | esperando o usuário escolher o layout | VOCÊ: Escolher entre o layout A e o B
+  Exemplo (espera o usuário): PENDENTE <id> | esperando o usuário escolher o layout | VOCÊ: Escolher entre o layout A e o B | RESPONDER
 - REPROVAR É A EXCEÇÃO, APROVAR É O NORMAL. Trabalho principal feito é CONCLUÍDO — mesmo que a
   resposta diga que falta testar em cenário real, ver no app rodando, commitar, fazer deploy ou
   um ajuste fino. Isso NÃO é motivo para PENDENTE: o que falta vira OUTRO cartão (tipo c das
@@ -194,7 +204,10 @@ Regras inegociáveis:
   a) A pergunta BLOQUEIA o pedido: o agente parou ANTES de entregar porque falta um dado, uma
      escolha entre opções ou uma confirmação ("qual você prefere?", "faço assim?" antes de
      fazer). NÃO use CONCLUIR no trabalho de que ela fala: use PENDENTE dizendo o que ele
-     espera do usuário, com o VOCÊ: da ação que destrava.
+     espera do usuário, com o VOCÊ: da ação que destrava. Vale também para o cartão "a fazer"
+     que o agente criou já esperando essa resposta, mesmo fora da seção "${PO_RETURNED_SECTION}":
+     é o PENDENTE com VOCÊ que mostra ao usuário o controle de resposta no cartão. E não
+     conclua um cartão do tipo "perguntar ao usuário" enquanto o trabalho dele espera a resposta.
   b) A pergunta PROPÕE UM PASSO NOVO depois de o pedido ter sido entregue ("posso atualizar a
      VPS?", "quer que eu gere o instalador?"). O pedido terminou: use CONCLUIR no cartão do
      pedido e NOVA <id do cartão do pedido> para o passo proposto, com um título claro do passo
@@ -217,18 +230,18 @@ Regras inegociáveis:
   no Cloudflare, o hermes continua desativado), lista o que já fez no PC e termina com "Isso se
   troca na sua conta do Mercado Pago, e eu não vou mexer lá. Posso atualizar a VPS?". Certo:
   CONCLUIR <id do cartão da auditoria> | auditoria entregue: nada registrado sem autorização
-  NOVA <id do cartão da auditoria> | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar a atualização da VPS
+  NOVA <id do cartão da auditoria> | Atualizar a VPS (APP_BASE_URL e .exe novo) | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar a atualização da VPS | BOTÃO
 - Exemplo do tipo a). Pedido: "quero que seja setup, eu já tinha falado isso, por que não fez?
   verifique o motivo". A resposta explica o motivo, descreve como o setup vai ficar e termina
   com "Faço o setup assim? E, quando estiver pronto e testado, autoriza atualizar a VPS?". O
   setup ainda NÃO foi feito: nada de CONCLUIR no trabalho do setup. Certo:
-  PENDENTE <id do cartão do setup> | esperando o usuário aprovar o formato do setup antes de fazer | VOCÊ: Aprovar o formato do setup
+  PENDENTE <id do cartão do setup> | esperando o usuário aprovar o formato do setup antes de fazer | VOCÊ: Aprovar o formato do setup | BOTÃO
 - Exemplo do tipo c). Cartão em andamento: "Implementar fase 1 do escritório de agentes". A
   resposta diz que o código da fase 1 está pronto, typecheck/testes/build verdes, e termina com
   "Falta ver no app rodando. Nada foi commitado. Subo a instância de dev? Commito agora?". Certo:
   CONCLUIR <id do cartão da fase 1> | código entregue, testes e build verdes
-  NOVA <id do cartão da fase 1> | Verificar a fase 1 do escritório no app rodando | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar subir a instância de dev
-  NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar o commit da fase 1
+  NOVA <id do cartão da fase 1> | Verificar a fase 1 do escritório no app rodando | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar subir a instância de dev | BOTÃO
+  NOVA <id do cartão da fase 1> | Commitar a fase 1 do escritório | ${PO_AWAITING_AUTHORIZATION_REASON} | VOCÊ: Autorizar o commit da fase 1 | BOTÃO
 - Exemplo do tipo c com teste em cenário real. Cartão em andamento: "Corrigir o cálculo de desconto
   na nota". A resposta diz que a correção está feita e os testes unitários passam, mas "falta testar
   com uma nota de filial (cenário real)". O pedido FOI entregue: não é PENDENTE. Certo:

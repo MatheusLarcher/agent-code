@@ -1,5 +1,5 @@
 import { boardItemStatus, boardItemTurnEndKind } from '../../shared/ipc'
-import type { BoardItem, BoardItemStatus } from '../../shared/ipc'
+import type { BoardItem, BoardItemStatus, BoardReplyKind } from '../../shared/ipc'
 import { BOARD_USER_ACTION_MAX_CHARS } from '../board/boardUserAction'
 import { etapaIdFromTitle } from '../handoffTracking/handoffCardMatch'
 import { parseEtapaLine } from './poEtapas'
@@ -25,8 +25,9 @@ export type PoOp =
   | { kind: 'retitle'; id: string; title: string; reason: string }
   /** PENDENTE: o que faltou no cartão que o fim do turno devolve para "a
    *  fazer". Não muda o status — só troca a frase genérica pelo motivo real.
-   *  `userAction`: o campo VOCÊ (ver `splitUserAction`); ausente, o cartão espera o agente. */
-  | { kind: 'justify'; id: string; reason: string; userAction?: string }
+   *  `userAction`: o campo VOCÊ (ver `splitUserAction`); ausente, o cartão espera o agente.
+   *  `replyKind`: o sufixo `| BOTÃO`/`| RESPONDER` da ação, só junto dela. */
+  | { kind: 'justify'; id: string; reason: string; userAction?: string; replyKind?: BoardReplyKind }
   /** ETAPA [id] | PENDENTE: a CONTESTAÇÃO — o agente concluiu o cartão da etapa
    *  e a evidência diz que ela não foi feita. Grava `poStatus` "a fazer" com o
    *  motivo LIVRE (sem a frase do fim de turno): é o que `poContestReason`
@@ -45,6 +46,7 @@ export type PoOp =
       status: BoardItemStatus
       parentId?: string
       userAction?: string
+      replyKind?: BoardReplyKind
       etapaId?: string
     }
 
@@ -73,13 +75,34 @@ const CREATE_LINE = /^(NOVA|FEITA)(?:\s+([^\s|]+))?\s*\|\s*([^|]+)\|\s*(.+)$/i
  * último campo do PENDENTE e da NOVA é `(.+)`, que engoliria a ação no motivo.
  * Marcador VOCÊ:/VOCE: sem diferenciar caixa, e só como campo próprio (depois de
  * um `|`): "esperando você escolher" no meio do motivo não é o marcador. A ação
- * vai até o fim da linha e é cortada no teto que o quadro grava.
+ * vai até o fim da linha e é cortada no teto que o quadro grava — DEPOIS de
+ * separar o controle (`poReplyKindSuffix`).
  */
-function splitUserAction(text: string): { body: string; userAction?: string } {
+export function splitUserAction(text: string): { body: string; userAction?: string; replyKind?: BoardReplyKind } {
   const marker = /\|\s*VOC[EÊ]\s*:/i.exec(text)
   if (!marker) return { body: text }
-  const action = clamp(text.slice(marker.index + marker[0].length), BOARD_USER_ACTION_MAX_CHARS)
-  return { body: text.slice(0, marker.index).trim(), ...(action ? { userAction: action } : {}) }
+  const { action: rest, replyKind } = poReplyKindSuffix(text.slice(marker.index + marker[0].length))
+  const action = clamp(rest, BOARD_USER_ACTION_MAX_CHARS)
+  return {
+    body: text.slice(0, marker.index).trim(),
+    ...(action ? { userAction: action } : {}),
+    ...(action && replyKind ? { replyKind } : {})
+  }
+}
+
+/**
+ * O sufixo opcional `| BOTÃO` (autorização: o cartão mostra "Pode fazer") ou
+ * `| RESPONDER` (o usuário escreve a resposta) no fim da ação. Comparado sem
+ * acento e sem caixa. Só esses dois saem da ação: qualquer outro fim depois de
+ * `|` ("A | B", "| VPS") é texto da ação e fica como estava.
+ */
+export function poReplyKindSuffix(action: string): { action: string; replyKind: BoardReplyKind | null } {
+  const suffix = /\|\s*([^|]*?)\s*$/.exec(action)
+  if (!suffix) return { action, replyKind: null }
+  const word = suffix[1].normalize('NFD').replace(/\p{Diacritic}/gu, '').toUpperCase()
+  const replyKind: BoardReplyKind | null = word === 'BOTAO' ? 'authorize' : word === 'RESPONDER' ? 'answer' : null
+  if (!replyKind) return { action, replyKind: null }
+  return { action: action.slice(0, suffix.index), replyKind }
 }
 
 /**
@@ -133,7 +156,7 @@ export function parsePoVerdict(
     if (!clean || /^OK\b/i.test(clean)) continue
     // O VOCÊ sai de toda linha (num CONCLUIR ele só sujaria o motivo), mas só
     // o PENDENTE e a NOVA que nasce "a fazer" o guardam.
-    const { body: text, userAction } = splitUserAction(clean)
+    const { body: text, userAction, replyKind } = splitUserAction(clean)
 
     // O placar: a linha fala da etapa, a operação é no cartão dela. O CONCLUIR
     // e a contestação do mesmo cartão valem uma vez, venham de onde vierem.
@@ -194,7 +217,13 @@ export function parsePoVerdict(
       const [, id, reason] = justify
       if (!ids.has(id) || seen.has(`p:${id}`) || !reason.trim()) continue
       seen.add(`p:${id}`)
-      ops.push({ kind: 'justify', id, reason: clamp(reason, 160), ...(userAction ? { userAction } : {}) })
+      ops.push({
+        kind: 'justify',
+        id,
+        reason: clamp(reason, 160),
+        ...(userAction ? { userAction } : {}),
+        ...(userAction && replyKind ? { replyKind } : {})
+      })
       continue
     }
 
@@ -229,6 +258,7 @@ export function parsePoVerdict(
         status,
         ...(parentId ? { parentId } : {}),
         ...(userAction && status === 'pending' ? { userAction } : {}),
+        ...(userAction && replyKind && status === 'pending' ? { replyKind } : {}),
         ...(orphan ? { etapaId: orphan } : {})
       })
     }

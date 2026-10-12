@@ -30,7 +30,11 @@ import { hotPathTransaction } from './postgresSessionSetup'
 import { rollbackOrDiscard } from './postgresTimeouts'
 import { writePostgresTelemetryBatch } from './postgresTelemetryBatch'
 import type { TelemetryBatch } from './telemetryBatch'
-import { ensurePostgresBoardParent, ensurePostgresBoardUserAction } from './postgresBoardParent'
+import {
+  ensurePostgresBoardParent,
+  ensurePostgresBoardReplyKind,
+  ensurePostgresBoardUserAction
+} from './postgresBoardParent'
 import { BoardPrintPruner } from './boardPrintPruner'
 import type { BoardItemPrintQuery, BoardItemPrintRecord, BoardItemPrintWrite } from './boardPrintTypes'
 import {
@@ -63,7 +67,12 @@ import {
   type BoardItemEventRow,
   type BoardItemRow
 } from '../board/boardModel'
-import { boardUserActionText, nextBoardUserAction } from '../board/boardUserAction'
+import {
+  boardReplyKindValue,
+  boardUserActionText,
+  nextBoardReplyKind,
+  nextBoardUserAction
+} from '../board/boardUserAction'
 import {
   assertDeliverableKind,
   assertStepFinalStatus,
@@ -436,6 +445,8 @@ export class PostgresRepository implements PersistenceRepository {
   private boardParent = false
   /** A coluna `board_items.po_user_action` existe neste banco (idem). */
   private boardUserAction = false
+  /** A coluna `board_items.po_reply_kind` existe neste banco (idem). */
+  private boardReplyKind = false
   /** A tabela `board_item_prints` existe neste banco (ver postgresBoardPrints.ts). */
   private boardPrints = false
 
@@ -501,6 +512,8 @@ export class PostgresRepository implements PersistenceRepository {
     })
     this.boardParent = await ensurePostgresBoardParent(this.pool)
     this.boardUserAction = await ensurePostgresBoardUserAction(this.pool)
+    // O controle só existe junto da ação: sem a coluna da ação, nem tenta.
+    this.boardReplyKind = this.boardUserAction && (await ensurePostgresBoardReplyKind(this.pool))
     this.boardPrints = await ensurePostgresBoardPrints(this.pool)
     await this.feed.start()
     this.changeLogPruner.start()
@@ -512,7 +525,7 @@ export class PostgresRepository implements PersistenceRepository {
 
   /** As colunas lidas do quadro: cada aditiva só quando ela existe. */
   private boardColumns(): string {
-    return boardSelectColumns(this.boardParent, this.boardUserAction)
+    return boardSelectColumns(this.boardParent, this.boardUserAction, this.boardReplyKind)
   }
 
   async close(): Promise<void> {
@@ -1120,7 +1133,10 @@ export class PostgresRepository implements PersistenceRepository {
         // lido sob o `FOR UPDATE` — ou com `NULL`, quando o agente mudou o
         // status e passou a ser ele quem falou por último sobre o estado. A ação
         // do usuário cai junto (só com a coluna presente).
-        const clearUserAction = plan.clearPoStatus && this.boardUserAction ? ', po_user_action = NULL' : ''
+        const clearUserAction =
+          plan.clearPoStatus && this.boardUserAction
+            ? `, po_user_action = NULL${this.boardReplyKind ? ', po_reply_kind = NULL' : ''}`
+            : ''
         await client.query(
           `UPDATE board_items SET
              project_id = $2, project_cwd = $3, source_title = $4, source_status = $5,
@@ -1211,14 +1227,21 @@ export class PostgresRepository implements PersistenceRepository {
         nextPoStatus,
         nextPoReason
       ]
-      // A ação do usuário só grava com a coluna presente (a regra é a do SQLite).
+      // A ação do usuário (e o controle dela) só grava com a coluna presente; a
+      // regra é a do SQLite. O controle é ASCII do contrato: vai sem escape.
+      const sets: string[] = []
       if (this.boardUserAction) {
         const userAction = nextBoardUserAction(input, decodeNullable(current.po_user_action ?? null))
         params.push(userAction === null ? null : encodePostgresText(userAction))
+        sets.push(`, po_user_action = $${params.length}`)
+        if (this.boardReplyKind) {
+          params.push(nextBoardReplyKind(input, current.po_reply_kind ?? null, userAction))
+          sets.push(`, po_reply_kind = $${params.length}`)
+        }
       }
       await client.query(
         `UPDATE board_items SET
-           po_title = $2, po_note = $3, po_status = $4, po_reason = $5${this.boardUserAction ? ', po_user_action = $6' : ''},
+           po_title = $2, po_note = $3, po_status = $4, po_reason = $5${sets.join('')},
            po_at = clock_timestamp(), revision = revision + 1, updated_at = clock_timestamp()
          WHERE id = $1`,
         params
@@ -1282,6 +1305,11 @@ export class PostgresRepository implements PersistenceRepository {
       if (userAction && this.boardUserAction) {
         values.push(encodePostgresText(userAction))
         extra.push(`po_user_action = $${values.length}`)
+        const replyKind = boardReplyKindValue(input.replyKind)
+        if (replyKind && this.boardReplyKind) {
+          values.push(replyKind)
+          extra.push(`po_reply_kind = $${values.length}`)
+        }
       }
       if (extra.length > 0) await client.query(`UPDATE board_items SET ${extra.join(', ')} WHERE id = $1`, values)
       await this.logBoardEvent(client, { boardItemId: id, kind: 'created', actor: 'po', toStatus: input.status, note: input.reason })

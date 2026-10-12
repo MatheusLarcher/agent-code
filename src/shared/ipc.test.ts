@@ -78,6 +78,14 @@ describe('boardItemAwaitingBadge — selo do cartão rebaixado pelo fim de turno
   it('cartão "a fazer" que nunca começou não mostra selo', () => {
     expect(boardItemAwaitingBadge(item({ sourceStatus: 'pending', poStatus: null, poReason: null, poAt: null }))).toBeNull()
   })
+
+  it('"a fazer" que nunca começou, mas com a ação do usuário do PENDENTE: espera você', () => {
+    const waiting = item({ sourceStatus: 'pending', poStatus: null, poReason: boardTurnEndReason('result', 'esperando o texto'), poUserAction: 'Informar o texto do nome.txt', poReplyKind: 'answer' })
+    expect(boardItemAwaitingBadge(waiting)).toEqual({ kind: 'result', label: 'Aguardando você' })
+    expect(boardItemAwaitingBadge({ ...waiting, poUserAction: '  ' })).toBeNull()
+    expect(boardItemAwaitingBadge({ ...waiting, dismissedAt: '2026-10-11T22:00:00Z' })).toBeNull()
+    expect(boardItemAwaitingBadge({ ...waiting, sourceStatus: 'in_progress' })).toBeNull()
+  })
 })
 
 describe('controle do Windows — contrato compartilhado', () => {
