@@ -39,6 +39,23 @@ describe('o uso das memórias (memoryUsage)', () => {
     expect(relInMemories('D:\\dados\\memories\\..\\fora.md', MEM)).toBeNull()
   })
 
+  it('das mensagens: ferramenta de subagente gravada na conversa não conta como uso', () => {
+    const sub = (m: UIMessage): UIMessage => ({ ...m, parentToolUseId: 'task' }) as UIMessage
+    const c = conv('a', {
+      title: 'Loja',
+      cwd: 'C:\\loja',
+      updatedAt: NOW,
+      messages: [
+        tool('task', 'Task', { description: 'revisar' }),
+        sub(tool('s1', 'mcp__memory__memory_list', {})),
+        sub(tool('s2', 'Read', { file_path: 'D:\\dados\\memories\\2D\\vps.md' })),
+        sub(tool('s3', 'mcp__memory__memory_propose', { op: 'create', rel_path: 'x.md' })),
+        tool('t1', 'Read', { file_path: 'D:\\dados\\memories\\raiz.md' })
+      ]
+    })
+    expect(usageFromMessages(c, MEM).map((e) => [e.relPath, e.how])).toEqual([['raiz.md', 'lida']])
+  })
+
   it('dos turnos do contexto: as memórias que o app escolheu', () => {
     const c = conv('a', { title: 'Loja', cwd: 'C:\\loja' })
     const turns = [{ turnId: 't', startedAt: NOW - 1000, memoriesSent: ['2D/vps.md', 'raiz.md'] }] as unknown as ContextTurnSummary[]

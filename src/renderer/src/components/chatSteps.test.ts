@@ -56,6 +56,9 @@ describe('buildChatRows — cada resposta = texto + o que veio depois dele', () 
       busy: false
     })
     expect(shape(rows)).toEqual(['msg:u1', 'step:a1[a1|t1,t2]'])
+    // A ação do subagente vai para o filho da chamada Task.
+    const step = rows[1] as ChatStep<UIMessage>
+    expect(step.subagents?.map((s) => [(s.call as { id: string }).id, ids(s.tools)])).toEqual([['t1', ['x1']]])
   })
 
   it('em andamento: só a última resposta do turno gira e mostra "agora: …"', () => {
@@ -99,6 +102,61 @@ describe('buildChatRows — cada resposta = texto + o que veio depois dele', () 
     expect(sameStep(a, b)).toBe(true)
     const c = buildChatRows([user('u1'), say('a1', 'Vou.'), { ...t1, result: { isError: false, text: 'ok' } } as UIMessage], { busy: true })[1] as ChatStep<UIMessage>
     expect(sameStep(a, c)).toBe(false)
+  })
+
+  it('subagentes: cada chamada Task/Agent vira um filho com as ações dela, na ordem, sem duplicar na linha principal', () => {
+    const rows = buildChatRows(
+      [
+        user('u1'),
+        say('a1', 'Delegando.'),
+        tool('t1', 'Task', { description: 'achar o reducer' }),
+        tool('t2', 'Agent', { description: 'revisar' }),
+        tool('x1', 'Grep', {}, true, 't1'),
+        tool('y1', 'Read', {}, true, 't2'),
+        tool('x2', 'Task', {}, true, 't1'),
+        tool('z1', 'Edit', {}, true, 'x2'),
+        tool('o1', 'Bash', {}, true, 'sem-pai')
+      ],
+      { busy: false }
+    )
+    expect(shape(rows)).toEqual(['msg:u1', 'step:a1[a1|t1,t2]'])
+    const subs = (rows[1] as ChatStep<UIMessage>).subagents ?? []
+    // O aninhado (x2 → z1) cai no subagente do topo; sem pai à vista, some.
+    expect(subs.map((s) => [(s.call as { id: string }).id, ids(s.tools)])).toEqual([
+      ['t1', ['x1', 'x2', 'z1']],
+      ['t2', ['y1']]
+    ])
+    expect(subs.every((s) => !s.running)).toBe(true)
+    // Resposta sem Task/Agent não ganha filho.
+    expect((buildChatRows([user('u1'), say('a1', 'x'), tool('t1', 'Read')], { busy: false })[1] as ChatStep<UIMessage>).subagents).toBeUndefined()
+  })
+
+  it('subagente trabalhando: só no turno em andamento, com a chamada ou a última ação sem resultado', () => {
+    const live = [user('u1'), say('a1', 'Delegando.'), tool('t1', 'Task', {}, false), tool('x1', 'Read', {}, true, 't1')]
+    const sub = (msgs: UIMessage[], busy: boolean) => (buildChatRows(msgs, { busy })[1] as ChatStep<UIMessage>).subagents?.[0]
+    expect(sub(live, true)?.running).toBe(true)
+    expect(sub(live, false)?.running).toBe(false)
+    // A chamada voltou: o subagente terminou.
+    expect(sub([user('u1'), say('a1', 'Delegando.'), tool('t1', 'Task'), tool('x1', 'Read', {}, true, 't1')], true)?.running).toBe(false)
+    // Turno antigo sem resultado: interrompido, não gira com o pedido novo.
+    expect(sub([...live, user('u2'), say('a2', 'Outra.')], true)?.running).toBe(false)
+  })
+
+  it('subagente trabalhando: o índice da chamada vem do laço, sem indexOf por subagente a cada reconstrução', () => {
+    const msgs = [user('u1'), say('a1', 'Delegando.'), tool('t1', 'Task', {}, false), tool('t2', 'Agent', {}, false), tool('x1', 'Read', {}, true, 't1')]
+    let calls = 0
+    msgs.indexOf = (...args: Parameters<UIMessage[]['indexOf']>) => (calls++, Array.prototype.indexOf.apply(msgs, args))
+    const subs = (buildChatRows(msgs, { busy: true })[1] as ChatStep<UIMessage>).subagents ?? []
+    expect(subs.map((s) => s.running)).toEqual([true, true])
+    expect(calls).toBe(0)
+  })
+
+  it('sameStep: ação nova do subagente redesenha a resposta', () => {
+    const base = [user('u1'), say('a1', 'Delegando.'), tool('t1', 'Task', {}, false), tool('x1', 'Read', {}, true, 't1')]
+    const a = buildChatRows(base, { busy: true })[1] as ChatStep<UIMessage>
+    expect(sameStep(a, buildChatRows([...base], { busy: true })[1] as ChatStep<UIMessage>)).toBe(true)
+    const b = buildChatRows([...base, tool('x2', 'Grep', {}, false, 't1')], { busy: true })[1] as ChatStep<UIMessage>
+    expect(sameStep(a, b)).toBe(false)
   })
 
   it('rowIndexOfUser acha o pedido nas LINHAS (busca/mapa)', () => {

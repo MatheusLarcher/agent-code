@@ -1,3 +1,4 @@
+import { isSubagentMessage } from '@shared/subagentMessages'
 import type { UIMessage } from './types'
 
 /**
@@ -205,9 +206,10 @@ export function describeCall(tool: string, input: unknown): string {
 export const PRE_TURN = '__antes__'
 
 /**
- * Every tool call in a conversation, resolved onto the project tree, oldest
- * first. Subagent calls are included: on the map "who called it" doesn't
- * matter, only which part of the project moved.
+ * Every tool call of the main agent, resolved onto the project tree, oldest
+ * first. As do subagente (`parentToolUseId`, gravadas para o aninhado do chat)
+ * ficam de fora — o mapa e a contagem por turno (turnsOf) seguem como antes de
+ * elas entrarem na conversa.
  *
  * Each call also carries the id of the user message that triggered it
  * (`turnId`), which is what lets the map filter the work by "the message I
@@ -223,7 +225,7 @@ export function fileTouches(messages: UIMessage[], cwd: string): Touch[] {
       turnId = m.id
       continue
     }
-    if (m.kind !== 'tool-use') continue
+    if (m.kind !== 'tool-use' || isSubagentMessage(m)) continue
     const input = (m.input ?? {}) as Record<string, unknown>
     const raw = rawPath(input)
     // Grep/Glob can be scoped to a folder — that folder is a real node too.

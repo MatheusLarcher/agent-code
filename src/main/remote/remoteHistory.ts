@@ -4,7 +4,13 @@
  * mas a entrada e o resultado de cada ferramenta e o pensamento vão cortados e
  * marcados `light: true`; o celular pede o detalhe inteiro (`detailsByIds`) só
  * quando o usuário expande a resposta. Funções puras: nunca alteram a lista.
+ *
+ * Página e janela contam só a trilha principal: as ferramentas de subagente
+ * (gravadas para o aninhado do chat do PC) ficam de fora, senão um subagente
+ * com 40 leituras ocuparia a página inteira do celular.
  */
+// Caminho relativo, não o alias `@shared`: o build do main não resolve o alias.
+import { mainTrack } from '../../shared/subagentMessages'
 
 /** Tamanho de página padrão e o teto que o celular pode pedir num `limit=`. */
 export const HISTORY_PAGE = 50
@@ -34,7 +40,8 @@ export interface HistoryPage {
 }
 
 /** As `limit` últimas mensagens, ou as `limit` anteriores à mensagem `before` (id). `before` desconhecido: página vazia. */
-export function historyPage(all: readonly unknown[], opts: { limit?: number | string | null; before?: string | null }): HistoryPage {
+export function historyPage(conversation: readonly unknown[], opts: { limit?: number | string | null; before?: string | null }): HistoryPage {
+  const all = mainTrack(conversation)
   const limit = clampLimit(opts.limit)
   let end = all.length
   if (opts.before) {
@@ -52,7 +59,8 @@ export interface HistoryWindow extends HistoryPage {
 }
 
 /** A janela em volta da mensagem `targetId`; null = ela não está na conversa. */
-export function historyWindow(all: readonly unknown[], targetId: string): HistoryWindow | null {
+export function historyWindow(conversation: readonly unknown[], targetId: string): HistoryWindow | null {
+  const all = mainTrack(conversation)
   const center = all.findIndex((m) => idOf(m) === targetId)
   if (center < 0) return null
   const start = Math.max(0, center - WINDOW_BEFORE)

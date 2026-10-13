@@ -14,8 +14,6 @@ import { MessageList, type TtsControls } from './MessageList'
 import { Composer, type RefProject } from './Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import { CrewChip } from './CrewChip'
-import { ChatAgentActivity } from './ChatAgentActivity'
-import type { TrackMap } from '../agentTracks'
 import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
@@ -213,8 +211,6 @@ interface Props {
   crewWorking?: CrewMember[]
   /** Abre o painel de agentes (o chip é só o atalho pra ele). */
   onOpenAgents?: () => void
-  /** Trilhas dos subagentes desta conversa (só em memória) — os cartões acima do composer. */
-  agentTracks?: TrackMap
   backgroundTasks?: BackgroundTask[]
   queuedAfterInterrupt?: QueuedAfterInterrupt[]
   /** When the active conversation's task started (ms epoch), or null if idle. */
@@ -481,8 +477,9 @@ export function ChatPanel(props: Props): JSX.Element {
           usuário olha enquanto espera. Um clique abre o elenco, com o detalhe.
           Some sozinho quando ninguém trabalha.
           Substitui a antiga linha "N subagentes trabalhando": mesma informação,
-          com o papel de cada um, e sem duas faixas dizendo o mesmo. */}
-      {!compact && <ChatAgentActivity tracks={props.agentTracks} />}
+          com o papel de cada um, e sem duas faixas dizendo o mesmo.
+          O que cada subagente faz fica na linha do tempo, como filho da
+          chamada Task/Agent (ChatSubagent.tsx). */}
       <CrewChip working={props.crewWorking ?? []} onOpen={() => props.onOpenAgents?.()} />
 
       <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />

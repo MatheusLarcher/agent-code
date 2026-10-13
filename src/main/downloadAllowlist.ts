@@ -3,6 +3,7 @@ import { normalize } from 'node:path'
 // (só o renderer resolve), e o typecheck passa mesmo assim — o erro só aparece
 // no `npm run build`.
 import { isDownloadableFile, parseDownloads, type ChatEvent } from '../shared/ipc'
+import { isSubagentMessage } from '../shared/subagentMessages'
 
 /**
  * What the agent is allowed to hand to the user as a download.
@@ -52,12 +53,14 @@ export function downloadablesFromEvent(event: ChatEvent): string[] {
  * `downloadablesFromEvent`, applied to the stored shape — this is what keeps a
  * download working after the app restarts and the conversation is read back
  * from disk, instead of only during the session that produced the file.
+ * O `Write` de subagente (gravado só para o aninhado do chat) não conta — como
+ * antes de ele ser gravado na conversa.
  */
 export function downloadablesFromMessages(messages: readonly unknown[]): string[] {
   const out: string[] = []
   for (const raw of messages) {
     const m = raw as Record<string, unknown> | null
-    if (!m) continue
+    if (!m || isSubagentMessage(m)) continue
     if (m.kind === 'tool-use' && String(m.name) === 'Write') {
       const input = (m.input ?? {}) as Record<string, unknown>
       const p = input.file_path

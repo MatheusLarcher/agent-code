@@ -65,7 +65,8 @@ import {
   type RestartNotice
 } from './turnInFlight'
 import { queueHeadToDrain, requeueDeferredSend, withoutBubble } from './mirrorRepairQueue'
-import { closeRunningTracks, isSubagentEvent, reduceTracks, type TrackMap } from './agentTracks'
+import { closeRunningTracks, reduceTracks, type TrackMap } from './agentTracks'
+import { isTaskCreateToolUse, isTaskUpdateToolUse, isTodoWriteToolUse, reduceMessages } from './reduceMessages'
 import {
   loadConversations,
   loadConversationsByIds,
@@ -402,24 +403,6 @@ function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
   return n
 }
 
-/** Pure reducer for a conversation's message list (system events handled by the caller). */
-/** True for the tool-use event that carries a TodoWrite call — these are
- *  diverted to `Conversation.todoPlan` (see `extractTodoPlan`) instead of
- *  becoming a generic ToolCard in the message feed. */
-function isTodoWriteToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
-  return e.kind === 'tool-use' && e.name === 'TodoWrite'
-}
-
-/** TaskCreate/TaskUpdate are the tool pair actually used in practice today
- *  (TodoWrite is kept working above but real sessions don't call it) — same
- *  treatment: diverted to `Conversation.todoPlan` instead of the message feed. */
-function isTaskCreateToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
-  return e.kind === 'tool-use' && e.name === 'TaskCreate'
-}
-function isTaskUpdateToolUse(e: ChatEvent): e is Extract<ChatEvent, { kind: 'tool-use' }> {
-  return e.kind === 'tool-use' && e.name === 'TaskUpdate'
-}
-
 /** Shared by both TodoWrite and TaskUpdate validation, so the set of valid
  *  statuses can't silently drift between the two paths. */
 const TODO_STATUSES = ['pending', 'in_progress', 'completed'] as const
@@ -500,61 +483,6 @@ function applyTaskUpdate(plan: TodoPlan | undefined, e: Extract<ChatEvent, { kin
   if (typeof input?.activeForm === 'string') patched.activeForm = input.activeForm
   items[i] = patched
   return { ...plan, items }
-}
-
-function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
-  // Subagent work never joins the chat feed — it would interleave with the main
-  // agent's answer. It goes to the agents panel instead (see agentTracks.ts).
-  if (isSubagentEvent(e)) return prev
-  // TodoWrite/TaskCreate/TaskUpdate calls never join the message feed — they
-  // update Conversation.todoPlan instead (handled in onEvent, alongside this call).
-  if (isTodoWriteToolUse(e) || isTaskCreateToolUse(e) || isTaskUpdateToolUse(e)) return prev
-  // `llm-call` alimenta só a árvore de consumo de tokens (ver TokenUsagePanel);
-  // uma bolha por chamada ao modelo inundaria o chat.
-  if (e.kind === 'background-tasks' || e.kind === 'task-list' || e.kind === 'llm-call') return prev
-  if (e.kind === 'assistant-text') {
-    const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
-    if (i >= 0) {
-      const copy = [...prev]
-      copy[i] = { ...e }
-      return copy
-    }
-  }
-  if (e.kind === 'tool-result') {
-    const i = prev.findIndex((m) => m.kind === 'tool-use' && m.id === e.toolUseId)
-    if (i >= 0) {
-      const copy = [...prev]
-      copy[i] = { ...copy[i], result: { isError: e.isError, text: e.text } }
-      return copy
-    }
-    // Orphaned result — its tool-use was diverted above (TodoWrite/Task*), so
-    // there's nothing in `prev` to attach it to. Drop it rather than letting
-    // it fall through and land as a standalone message with no context.
-    return prev
-  }
-  if (e.kind === 'result') {
-    // The result text duplicates the final answer and the cost is in the header,
-    // so we don't render it — we only mark the last assistant text as the answer.
-    const copy = [...prev]
-    for (let i = copy.length - 1; i >= 0; i--) {
-      if (copy[i].kind === 'assistant-text') {
-        // Stamp the finish time so the chat can show when this answer ran (and,
-        // if today, how long ago).
-        copy[i] = { ...copy[i], answer: true, ts: Date.now() }
-        break
-      }
-    }
-    return copy
-  }
-  if (e.kind === 'system') {
-    // Remove any existing system events with the same model and cwd
-    // since we only want to show the latest status for a given model/cwd combination
-    const filtered = prev.filter(m =>
-      !(m.kind === 'system' && m.model === e.model && m.cwd === e.cwd)
-    );
-    return [...filtered, e as UIMessage];
-  }
-  return [...prev, e as UIMessage]
 }
 
 /**
@@ -4538,7 +4466,6 @@ export function App(): JSX.Element {
       queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
       crewWorking={crewWorking}
       onOpenAgents={openAgentsPanel}
-      agentTracks={activeTracks}
       onBackToCentral={backToCentral && backToCentral === activeId ? selectCentral : undefined}
     />
   )

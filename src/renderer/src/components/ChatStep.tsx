@@ -6,6 +6,10 @@
  * via ChatRow, com o "✓ N" colado ao texto) e o pensamento; outro clique fecha.
  * O aberto/fechado é guardado pelo id da resposta (useStepOpen).
  *
+ * Cada subagente chamado na resposta (Task/Agent) vem depois, como item filho
+ * (ChatSubagent.tsx): a chamada sai da linha de passos e vira o robozinho no
+ * trilho, que abre as ações do subagente.
+ *
  * No trilho do turno (chatLook.css): a 1ª resposta depois do pedido mostra o
  * avatar ✦; as outras, um ponto no trilho. Resposta que chegou ao vivo entra
  * com um "pop" e os contadores sobem (chatAnim); o histórico não anima.
@@ -20,6 +24,7 @@ import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
 import type { UIMessage } from '../types'
 import { ChatRow, rowKey, type ChatRowContext } from './ChatRows'
 import { ChatStepLine } from './ChatStepLine'
+import { ChatSubagentRow } from './ChatSubagent'
 import { sameStep, stepActivity, stepFallback, stepHasLine, type ChatStep } from './chatSteps'
 import { stepIcon, stepPills } from './stepPills'
 import { useStepOpen } from './useStepOpen'
@@ -68,16 +73,25 @@ function StepBody({ step, ctx, animate }: { step: ChatStep<UIMessage>; ctx: Chat
   )
 }
 
+/** A resposta sem as chamadas Task/Agent que viraram filho: elas aparecem como subagente, não na linha de passos. */
+function withoutSubagentCalls(step: ChatStep<UIMessage>): ChatStep<UIMessage> {
+  if (!step.subagents?.length) return step
+  const calls = new Set<UIMessage>(step.subagents.map((s) => s.call))
+  return { ...step, items: step.items.filter((m) => !calls.has(m)), tools: step.tools.filter((m) => !calls.has(m)) }
+}
+
 export const ChatStepRow = memo(
   function ChatStepRow({ step, ctx }: { step: ChatStep<UIMessage>; ctx: ChatRowContext }): JSX.Element {
     const fresh = useFreshOnce(step.id, 'step')
+    const own = useMemo(() => withoutSubagentCalls(step), [step])
     return (
       <div
         className={`chat-step${step.final ? ' final' : ''}${step.running ? ' running' : ''}${fresh ? ' ca-pop' : ''}`}
         data-step-id={step.id}
       >
         {step.text && <ChatRow m={step.text} ctx={ctx} />}
-        {stepHasLine(step) && <StepBody step={step} ctx={ctx} animate={fresh} />}
+        {stepHasLine(own) && <StepBody step={own} ctx={ctx} animate={fresh} />}
+        {step.subagents?.map((s) => <ChatSubagentRow key={rowKey(s.call, 0)} sub={s} ctx={ctx} />)}
       </div>
     )
   },

@@ -54,6 +54,15 @@ describe('regra de download (fonte única da ponte e do desktop)', () => {
     ]
     expect(downloadablesFromMessages(messages)).toEqual([APK, 'C:\\out\\relatorio.pdf'])
   })
+
+  it('Write de subagente gravado na conversa não libera download (como antes de ele ser gravado)', () => {
+    const messages = [
+      { kind: 'tool-use', id: 'task', name: 'Task', input: {}, parentToolUseId: null },
+      { kind: 'tool-use', id: 'w1', name: 'Write', input: { file_path: APK }, parentToolUseId: 'task' }
+    ]
+    expect(downloadablesFromMessages(messages)).toEqual([])
+    expect(downloadablesFromMessages([...messages, { ...messages[1], parentToolUseId: null }])).toEqual([APK])
+  })
 })
 
 describe('DownloadAllowlist', () => {

@@ -13,8 +13,12 @@
  *
  * O lido vem do disco (useDiskText, só dentro do projeto e sem nome sensível)
  * ou, fora do projeto, do próprio resultado do Read quando ele chegou inteiro.
+ *
+ * Só a trilha principal: a ferramenta de subagente (gravada para o aninhado do
+ * chat) não vira aba, nem leitura, nem gasta a varredura do fim da conversa.
  */
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { isSubagentMessage } from '@shared/subagentMessages'
 import { baseName } from '../../components/toolDescribe'
 import type { UIMessage } from '../../types'
 import type { ToolUseMessage } from '../chatPage'
@@ -35,17 +39,25 @@ const LIVE_SCAN = 200
 const WRITERS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 const READERS = new Set(['Read', 'NotebookRead'])
 
+/** Do fim para o começo, só a trilha principal: até `max` mensagens dela (o subagente não gasta a varredura). */
+function* mainFromEnd(messages: readonly UIMessage[], max: number): Generator<UIMessage> {
+  let seen = 0
+  for (let i = messages.length - 1; i >= 0 && seen < max; i--) {
+    const m = messages[i]
+    if (isSubagentMessage(m)) continue
+    seen++
+    yield m
+  }
+}
+
 /**
  * O bloco ao vivo que a tela mostra: o mais novo ainda sem o tool-use final (fechado, só por um
  * tempo) e com o caminho já inteiro — o cortado dos primeiros pedaços não vira aba nem leitura.
  */
-function pickLive(blocks: readonly LiveBlock[], messages: readonly UIMessage[], busy: boolean): LiveBlock | null {
+export function pickLive(blocks: readonly LiveBlock[], messages: readonly UIMessage[], busy: boolean): LiveBlock | null {
   if (blocks.length === 0) return null
   const arrived = new Set<string>()
-  for (let i = messages.length - 1; i >= Math.max(0, messages.length - LIVE_SCAN); i--) {
-    const m = messages[i]
-    if (m.kind === 'tool-use') arrived.add(m.id)
-  }
+  for (const m of mainFromEnd(messages, LIVE_SCAN)) if (m.kind === 'tool-use') arrived.add(m.id)
   const now = Date.now()
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i]
@@ -58,10 +70,9 @@ function pickLive(blocks: readonly LiveBlock[], messages: readonly UIMessage[], 
 
 /** O último arquivo que o Agent tocou (escreveu sem erro ou leu), do fim para o começo. */
 export function latestTouch(messages: readonly UIMessage[]): { key: string; read: boolean } | null {
-  for (let i = messages.length - 1; i >= Math.max(0, messages.length - SCAN_MAX); i--) {
-    const m = messages[i]
+  for (const m of mainFromEnd(messages, SCAN_MAX)) {
     if (m.kind === 'user') return null
-    if (m.kind !== 'tool-use' || m.parentToolUseId != null) continue
+    if (m.kind !== 'tool-use') continue
     if (WRITERS.has(m.name) && !m.result?.isError) {
       const p = writerPath(m.name, m.input)
       if (p) return { key: normalizePath(p), read: false }
@@ -75,9 +86,8 @@ export function latestTouch(messages: readonly UIMessage[]): { key: string; read
 }
 
 /** A última leitura de um arquivo no turno (o trecho e o texto que o Read devolveu). */
-function lastReadOf(messages: readonly UIMessage[], key: string): ToolUseMessage | null {
-  for (let i = messages.length - 1; i >= Math.max(0, messages.length - SCAN_MAX); i--) {
-    const m = messages[i]
+export function lastReadOf(messages: readonly UIMessage[], key: string): ToolUseMessage | null {
+  for (const m of mainFromEnd(messages, SCAN_MAX)) {
     if (m.kind === 'user') break
     if (m.kind !== 'tool-use' || !READERS.has(m.name)) continue
     const inp = (m.input ?? {}) as Record<string, unknown>

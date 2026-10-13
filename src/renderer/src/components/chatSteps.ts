@@ -14,9 +14,11 @@
  *                     sistema, troca de conta/modelo. Uma linha dessas fecha a
  *                     resposta aberta — a ordem do tempo nunca muda.
  *
- * Só a trilha principal (`parentToolUseId` nulo): ferramenta de subagente não
- * entra (nem no cartão, nem no resumo). O resumo é o da Central
- * (`summarizeActivity`, sem LLM), calculado por resposta em `stepActivity`.
+ * Só a trilha principal (`parentToolUseId` nulo) vira cartão e resumo. A
+ * ferramenta de subagente vai para o filho da chamada Task/Agent que o criou
+ * (`subagents` da resposta onde a chamada está) — nunca para a linha principal.
+ * O resumo é o da Central (`summarizeActivity`, sem LLM), calculado por
+ * resposta em `stepActivity`.
  *
  * Tipos genéricos: o `UIMessage` do PC e o `ChatMsg` do celular têm os mesmos
  * campos (`kind`, `id`, `text`, `answer`, `name`, `input`, `result`,
@@ -55,7 +57,22 @@ export interface ChatStep<M> {
   final: boolean
   /** A conversa está ocupada e esta é a última resposta do turno: gira e mostra "agora: …". */
   running: boolean
+  /** Os subagentes chamados nesta resposta (Task/Agent), na ordem. Ausente = nenhum. */
+  subagents?: ChatSubagent<M>[]
 }
+
+/** Um subagente: a chamada Task/Agent do agente principal e o que ele fez. */
+export interface ChatSubagent<M> {
+  /** O tool-use Task/Agent da trilha principal (o resultado é o relatório do subagente). */
+  call: M
+  /** As ferramentas do subagente (`parentToolUseId` = id da chamada), na ordem. */
+  tools: M[]
+  /** A conversa está ocupada e o subagente ainda trabalha (chamada ou última ação sem resultado). */
+  running: boolean
+}
+
+/** As ferramentas que abrem um subagente. */
+export const SPAWN_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent'])
 
 /** Uma linha que não é resposta: usuário, erro, aviso, troca de conta/modelo… */
 export interface ChatMsgRow<M> {
@@ -123,10 +140,21 @@ export function buildChatRows<M>(messages: readonly M[], opts: BuildOptions): Ch
     rows.push(step)
     return step
   }
+  // Chamada Task/Agent (por id) → o subagente dela. Subagente aninhado cai no do topo.
+  const spawned = new Map<string, ChatSubagent<M>>()
+  // Cada subagente com o índice da chamada (guardado ao criar: nada de indexOf a cada reconstrução).
+  const subs: Array<{ sub: ChatSubagent<M>; at: number }> = []
   messages.forEach((m, idx) => {
     const v = loose(m)
     if (!v || typeof v.kind !== 'string' || SILENT.has(v.kind)) return
-    if (v.kind === 'tool-use' && !isMainTool(v)) return // subagente: fora do chat
+    if (v.kind === 'tool-use' && !isMainTool(v)) {
+      // Subagente: fora da linha principal, no filho da chamada que o criou (sem pai à vista, some).
+      const sub = spawned.get(v.parentToolUseId as string)
+      if (!sub) return
+      sub.tools.push(m)
+      if (v.id && SPAWN_TOOLS.has(v.name ?? '')) spawned.set(v.id, sub)
+      return
+    }
     if (v.kind === 'assistant-text') {
       const cur = open as ChatStep<M> | null
       // Pensamento solto (sem texto nem ferramenta) logo antes: o texto adota a resposta dele.
@@ -143,13 +171,36 @@ export function buildChatRows<M>(messages: readonly M[], opts: BuildOptions): Ch
       const step = open ?? (open = startStep(m, idx, null))
       step.items.push(m)
       if (v.kind === 'tool-use') step.tools.push(m)
+      if (v.kind === 'tool-use' && v.id && SPAWN_TOOLS.has(v.name ?? '')) {
+        const sub: ChatSubagent<M> = { call: m, tools: [], running: false }
+        ;(step.subagents ??= []).push(sub)
+        spawned.set(v.id, sub)
+        subs.push({ sub, at: idx })
+      }
       return
     }
     close()
     rows.push({ type: 'msg', key: msgKey(v, idx), msg: m })
   })
-  if (opts.busy) markRunning(rows)
+  if (opts.busy) {
+    markRunning(rows)
+    // Só o turno em andamento trabalha: chamada sem resultado de um turno antigo foi interrompida.
+    const turnStart = lastUserIndex(messages)
+    for (const { sub: s, at } of subs) {
+      if (at < turnStart) continue
+      s.running = !loose(s.call).result || s.tools.some((t) => !loose(t).result)
+    }
+  }
   return rows
+}
+
+/** Índice do último pedido do usuário (ajuste injetado não conta); -1 = nenhum. */
+function lastUserIndex<M>(messages: readonly M[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = loose(messages[i])
+    if (m?.kind === 'user' && !m.injected) return i
+  }
+  return -1
 }
 
 /** A última resposta do turno em andamento (nada de usuário depois dela) gira. */
@@ -206,5 +257,14 @@ export function sameStep<M>(a: ChatStep<M>, b: ChatStep<M>): boolean {
   if (a.text !== b.text || a.running !== b.running || a.final !== b.final || a.id !== b.id) return false
   if (a.items.length !== b.items.length) return false
   for (let i = 0; i < a.items.length; i++) if (a.items[i] !== b.items[i]) return false
-  return true
+  return sameSubagents(a.subagents ?? [], b.subagents ?? [])
+}
+
+/** Os filhos também: ação nova ou resultado novo do subagente redesenha a resposta. */
+function sameSubagents<M>(a: readonly ChatSubagent<M>[], b: readonly ChatSubagent<M>[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((s, i) => {
+    const o = b[i]
+    return s.call === o.call && s.running === o.running && s.tools.length === o.tools.length && s.tools.every((t, j) => t === o.tools[j])
+  })
 }

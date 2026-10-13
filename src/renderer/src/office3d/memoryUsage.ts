@@ -6,9 +6,11 @@
  *   - lida: memory_list/memory_status (a lista) ou Read na pasta de memórias;
  *   - gravada / atualizada / aposentada: memory_propose (op create/update/retire).
  * O "quando" da ferramenta é o fim do turno dela (a resposta carimba `ts`); sem
- * ele, a última mudança da conversa.
+ * ele, a última mudança da conversa. Só a trilha principal: a ferramenta de
+ * subagente (gravada para o aninhado do chat) não conta como uso.
  */
 import type { ContextTurnSummary } from '@shared/contextSnapshot'
+import { isSubagentMessage } from '@shared/subagentMessages'
 import type { MemoryListItem } from '@shared/memoryPanel'
 import type { Conversation } from '../types'
 
@@ -45,7 +47,7 @@ export function relInMemories(path: string, memoriesDir: string | null): string 
 export function usageFromMessages(c: Pick<Conversation, 'id' | 'title' | 'cwd' | 'messages' | 'updatedAt'>, memoriesDir: string | null): UsageEvent[] {
   const found: Array<Omit<UsageEvent, 'at'> & { i: number }> = []
   c.messages.forEach((m, i) => {
-    if (m.kind !== 'tool-use' || !m.result || m.result.isError) return
+    if (m.kind !== 'tool-use' || !m.result || m.result.isError || isSubagentMessage(m)) return
     const o = m.input && typeof m.input === 'object' ? (m.input as Record<string, unknown>) : {}
     let ev: { relPath: string | null; how: UsageHow } | null = null
     if (m.name === 'mcp__memory__memory_propose') ev = { relPath: str(o.rel_path) || null, how: PROPOSE[str(o.op)] ?? 'gravada' }

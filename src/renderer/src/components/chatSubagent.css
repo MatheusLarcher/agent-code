@@ -1,0 +1,170 @@
+/* O subagente na linha do tempo (ChatSubagent.tsx): filho da resposta que o
+   chamou. Recuado, ligado ao trilho do turno por um galho, com o robozinho no
+   lugar do ponto. Sem caixa, como a linha de passos (chatLook.css); aberto, as
+   ações descem por um trilho próprio, mais fino. */
+.chat-step > .chat-sub {
+  position: relative;
+  min-width: 0;
+  padding-left: 30px;
+}
+/* O galho: do trilho do turno (left 14px da resposta) até o robozinho. */
+.chat-step > .chat-sub::before {
+  content: '';
+  position: absolute;
+  left: calc(15px - var(--chat-rail, 40px));
+  width: calc(var(--chat-rail, 40px) - 15px);
+  top: 13px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  pointer-events: none;
+}
+/* Aberto: o trilho do subagente desce do robozinho até a última ação. */
+.chat-step > .chat-sub:has(> .chat-sub-tools)::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 26px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(var(--line), var(--line) 70%, transparent);
+  pointer-events: none;
+}
+.chat-sub-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px 3px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-sub-line:focus-visible {
+  outline: 1px solid var(--line);
+  outline-offset: 1px;
+}
+/* O robozinho mora no começo do recuo, no lugar do ponto. */
+.chat-sub-ico {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: #7aa7d91f;
+  color: var(--chat-info, #7aa7d9);
+  box-shadow: 0 0 0 3px var(--bg);
+}
+.chat-sub.is-trabalhando .chat-sub-ico {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 4px var(--accent);
+}
+.chat-sub.is-erro .chat-sub-ico {
+  background: color-mix(in srgb, var(--err, #f87171) 12%, transparent);
+  color: var(--err, #f87171);
+}
+.chat-sub-line .central-chev {
+  flex: none;
+  width: 10px;
+  color: var(--chat-faint, #77736d);
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.15s;
+}
+.chat-sub-line[aria-expanded='true'] .central-chev {
+  transform: rotate(90deg);
+}
+.chat-sub-line:hover .central-chev {
+  color: var(--muted);
+}
+.chat-sub-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chat-sub-title strong {
+  flex: none;
+  color: var(--chat-info, #7aa7d9);
+  font-weight: 600;
+}
+.chat-sub-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-sub-count {
+  flex: none;
+  color: var(--chat-faint, #77736d);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.chat-sub-state {
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.chat-sub-state.trabalhando { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.chat-sub-state.concluido { color: var(--ok, #34d399); border-color: color-mix(in srgb, var(--ok, #34d399) 45%, transparent); }
+.chat-sub-state.interrompido { color: var(--chat-faint, #77736d); }
+.chat-sub-state.erro { color: var(--err, #f87171); border-color: color-mix(in srgb, var(--err, #f87171) 45%, transparent); }
+/* As ações abertas: a mesma lista solta do passo (.central-tools do chatLook), sob o título. */
+.chat-step > .chat-sub > .central-tools.chat-sub-tools {
+  margin: 0 0 4px;
+  padding: 2px 0 4px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.chat-sub-tools .tool-line .tool-head,
+.chat-sub-tools .tool-line .tool-head:hover {
+  padding: 3px 0;
+  background: transparent;
+}
+.chat-sub-tools .tool-line .tool-name {
+  flex: none;
+  min-width: 54px;
+  color: var(--chat-info, #7aa7d9);
+  font-size: 12px;
+  font-weight: 400;
+}
+.chat-sub-empty {
+  margin: 2px 0;
+  color: var(--chat-faint, #77736d);
+  font-size: 11.5px;
+}
+.chat-sub-result {
+  margin-top: 4px;
+  min-width: 0;
+}
+.chat-sub-label {
+  color: var(--chat-faint, #77736d);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chat-sub-result p {
+  margin: 2px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

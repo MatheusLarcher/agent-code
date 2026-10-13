@@ -108,3 +108,69 @@ describe('MessageList — resumo por resposta', () => {
     expect([...(container.querySelector('.message-list > .chat-step .chat-pills')?.children ?? [])].map((p) => p.getAttribute('data-tip'))).toEqual(['2 lidos', '1 comando'])
   })
 })
+
+describe('MessageList — subagente como filho da resposta', () => {
+  const child = (id: string, name: string, input: unknown, text = 'ok', done = true): UIMessage =>
+    ({ kind: 'tool-use', id, name, input, parentToolUseId: 'task1', ...(done ? { result: { isError: false, text } } : {}) }) as UIMessage
+  const delegated = (done = true): UIMessage[] => [
+    { kind: 'user', id: 'u1', text: 'Ache o bug' } as UIMessage,
+    say('a1', 'Vou delegar.'),
+    tool('r0', 'Read', { file_path: '/p/App.tsx' }),
+    {
+      kind: 'tool-use',
+      id: 'task1',
+      name: 'Task',
+      input: { subagent_type: 'Explore', description: 'achar o reducer', prompt: 'procure' },
+      parentToolUseId: null,
+      ...(done ? { result: { isError: false, text: 'Achei em App.tsx ⟦senha:db⟧' } } : {})
+    } as UIMessage,
+    child('c1', 'Grep', { pattern: 'reduceMessages' }),
+    child('c2', 'mcp__memory__memory_secret_get', { name: 'db' }, 'sk-live-123'),
+    child('c3', 'Read', { file_path: '/p/reducer.ts' }, 'ok', done)
+  ]
+
+  it('robozinho no trilho com nome, tarefa e estado; a chamada Task não duplica na linha nem as ações do subagente', () => {
+    const { container } = renderList(delegated())
+    const steps = container.querySelectorAll('.chat-step')
+    expect(steps).toHaveLength(1)
+    const subs = container.querySelectorAll('.chat-step > .chat-sub')
+    expect(subs).toHaveLength(1)
+    const sub = subs[0]
+    expect(sub.querySelector('.chat-sub-ico svg')).toBeTruthy()
+    expect(sub.querySelector('.chat-sub-title strong')?.textContent).toBe('Explore')
+    expect(sub.querySelector('.chat-sub-task')?.textContent).toBe('achar o reducer')
+    expect(sub.querySelector('.chat-sub-count')?.textContent).toBe('3 ações')
+    expect(sub.querySelector('.chat-sub-state')?.textContent).toBe('concluído')
+    // A linha de passos da resposta só tem o Read do agente principal.
+    expect(steps[0].querySelector('.central-sum')?.textContent).toBe('Leu App.tsx')
+    fireEvent.click(steps[0].querySelector('.central-act')!)
+    expect([...steps[0].querySelectorAll(':scope > .central-tools .tool-card')]).toHaveLength(1)
+  })
+
+  it('o clique abre as ações do subagente na ordem, mascaradas, com o relatório; outro clique fecha', () => {
+    const { container } = renderList(delegated())
+    const line = container.querySelector<HTMLElement>('.chat-sub-line')!
+    expect(line.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.chat-sub-tools')).toBeNull()
+    fireEvent.click(line)
+    expect(line.getAttribute('aria-expanded')).toBe('true')
+    const region = container.querySelector('.chat-sub-tools')!
+    expect(region.getAttribute('role')).toBe('region')
+    expect(region.querySelectorAll('.tool-card.tool-line')).toHaveLength(3)
+    expect(region.textContent).not.toContain('sk-live-123')
+    expect(region.querySelector('.chat-sub-result p')?.textContent).toBe('Achei em App.tsx [senha: db]')
+    fireEvent.click(line)
+    expect(container.querySelector('.chat-sub-tools')).toBeNull()
+    expect(line.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('ao vivo: trabalhando enquanto a chamada não volta; concluído quando volta, e o aberto segue aberto', () => {
+    const { container, rerender } = renderList(delegated(false), true)
+    expect(container.querySelector('.chat-sub.is-trabalhando .chat-sub-state')?.textContent).toBe('trabalhando')
+    fireEvent.click(container.querySelector('.chat-sub-line')!)
+    expect(container.querySelectorAll('.chat-sub-tools .tool-card')).toHaveLength(3)
+    rerender([...delegated(), say('a2', 'Pronto.', true)], false)
+    expect(container.querySelector('.chat-sub.is-concluido')).toBeTruthy()
+    expect(container.querySelectorAll('.chat-sub-tools .tool-card')).toHaveLength(3)
+  })
+})

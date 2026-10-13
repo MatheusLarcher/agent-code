@@ -191,6 +191,17 @@ describe('turno de cada chamada — filtrar o mapa pela mensagem enviada', () =>
     expect(label.length).toBe(90)
     expect(label.endsWith('…')).toBe(true)
   })
+
+  it('ferramenta de subagente gravada na conversa não vira ponto no mapa nem conta no turno', () => {
+    const sub = (id: string, file: string): UIMessage =>
+      ({ ...toolUse(id, 'Edit', { file_path: `${CWD}\\src\\${file}`, old_string: 'x', new_string: 'y' }), parentToolUseId: 't9' }) as UIMessage
+    const list = [...msgs, toolUse('t9', 'Task', { description: 'revisar' }), sub('x1', 'c.ts'), sub('x2', 'd.ts'), user('u3', 'só sub'), sub('x3', 'e.ts')]
+    expect(fileTouches(list, CWD).map((t) => t.id)).toEqual(['t1', 't2', 't3', 't9'])
+    expect(turnsOf(list, fileTouches(list, CWD))).toEqual([
+      { id: 'u1', index: 1, label: 'arruma o login', calls: 2, files: 1 },
+      { id: 'u2', index: 2, label: 'agora o css', calls: 2, files: 1 }
+    ])
+  })
 })
 
 describe('cor por tipo de ação', () => {

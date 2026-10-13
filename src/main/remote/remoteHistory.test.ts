@@ -64,6 +64,23 @@ describe('historyWindow — a janela do mapa de perguntas', () => {
   })
 })
 
+describe('subagente fora do histórico do celular', () => {
+  // Depois de cada mensagem principal, 3 ferramentas de subagente gravadas (parentToolUseId).
+  const withSubs = (n: number): unknown[] =>
+    msgs(n).flatMap((m, i) => [m, ...[0, 1, 2].map((k) => ({ kind: 'tool-use', id: `s${i}-${k}`, name: 'Read', parentToolUseId: 'task' }))])
+
+  it('historyPage: o subagente não ocupa vaga da página nem entra nela', () => {
+    expect(historyPage(withSubs(120), {})).toEqual(historyPage(msgs(120), {}))
+    expect(historyPage(withSubs(120), { before: 'm70', limit: 10 })).toEqual(historyPage(msgs(120), { before: 'm70', limit: 10 }))
+    expect(historyPage(withSubs(10), {})).toEqual({ messages: msgs(10), hasOlder: false })
+  })
+
+  it('historyWindow: a janela conta só a trilha principal; id de subagente não é alvo', () => {
+    expect(historyWindow(withSubs(100), 'm50')).toEqual(historyWindow(msgs(100), 'm50'))
+    expect(historyWindow(withSubs(100), 's50-1')).toBeNull()
+  })
+})
+
 describe('lightenMessages — a versão leve', () => {
   const big = 'x'.repeat(5000)
 
