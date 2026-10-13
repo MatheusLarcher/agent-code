@@ -25,6 +25,9 @@ files:
   # dentro do setup — o app nunca usa um `claude` instalado na maquina.
   - node_modules/@anthropic-ai/claude-agent-sdk/**
   - node_modules/@anthropic-ai/claude-agent-sdk-*/**
+  # O MCP "rea" (main/reaMcp.ts): o rea.mjs roda pelo Node do próprio Electron
+  # (ELECTRON_RUN_AS_NODE) — viaja no setup, sem npm/Node na maquina do usuário.
+  - node_modules/rea-agents/**
   # Kit de skills empacotado: `app.getAppPath()` no exe é resources/app, e o
   # skillManager sincroniza de <appRoot>/.agents/skills para <cacheDir>/skills.
   - .agents/skills/**

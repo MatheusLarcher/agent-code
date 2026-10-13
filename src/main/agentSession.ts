@@ -25,6 +25,7 @@ import { createAndroidMcpServer } from './android/androidTools'
 import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
 import { windowsControl } from './windowsControl/service'
 import { createChromeMcpServer } from './chromeBridge/tools'
+import { reaMcpConfig } from './reaMcp'
 import { chromeBridge, chromeTabMemory } from './chromeBridge/state'
 import { CHROME_CONTROL_HINT } from './chromeBridge/hint'
 import { CHROME_DISABLED_MESSAGE, chromeGateDecision } from './chromeBridge/gate'
@@ -994,6 +995,9 @@ export class AgentSession {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
     }
     mcpServers.chrome = createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId))
+    // REA embutido (reaMcp.ts); o planejamento o filtra (planningSession.ts).
+    const rea = reaMcpConfig()
+    if (rea) mcpServers.rea = rea
     // Tarefa do MCP de entrada: os servidores do chamador (ex.: o do Forgia), só
     // nesta sessão. Nome reservado já foi recusado na validação; aqui não
     // sobrescreve nada por garantia.
