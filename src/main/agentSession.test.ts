@@ -922,18 +922,18 @@ describe('AgentSession — novos sinais de interrupção e background', () => {
   })
 })
 
-describe('AgentSession — "/compact" (verificado ao vivo: o SDK não intercepta o comando)', () => {
-  // Confirmado contra uma sessão real (LIVE_AGENT=1): mandar o texto literal
-  // "/compact" nunca gera um system/compact_boundary neste modo — o modelo só
-  // responde "não reconheço esse comando". send() por isso intercepta ele
-  // localmente, sem gastar um turno com uma resposta que ninguém quer.
-  it('não envia nada ao SDK e avisa que a compactação manual não está disponível', async () => {
-    const { s, emit } = makeSession()
+describe('AgentSession — "/compact" (comando do CLI, vai cru)', () => {
+  // O CLI só reconhece "/compact" com o texto CRU no início da mensagem
+  // (verificado contra o CLI 0.3.296): send() manda sem carimbo nem catálogos.
+  it('envia "/compact" cru ao SDK, sem carimbo de contexto', async () => {
+    const { s } = makeSession()
     await s.send('/compact')
-    expect(pushedMessages(s)).toEqual([])
-    expect(emit).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'status', text: expect.stringContaining('Compactação manual não está disponível') })
-    )
+    const pushed = pushedMessages(s)
+    expect(pushed).toHaveLength(1)
+    expect(pushed[0]).toEqual(expect.objectContaining({
+      type: 'user',
+      message: { role: 'user', content: '/compact' }
+    }))
   })
 
   it('não intercepta "/compact" como parte de um texto maior', async () => {
