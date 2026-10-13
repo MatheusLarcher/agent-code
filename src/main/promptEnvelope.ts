@@ -4,6 +4,11 @@ export interface PromptContext {
   stamp: string
   /** Change-only catalog updates that are intentionally part of history. */
   memory: string
+  /** As memórias INTEIRAS escolhidas para este turno (Haiku ou busca lexical,
+   *  memorySelectionHaiku.ts), até 50.000 caracteres. Vão na mensagem, e não no
+   *  hook, porque o `additionalContext` do hook é cortado em 10.000 caracteres.
+   *  Só o que ainda não foi injetado igual nesta conversa. Opcional: '' = nada. */
+  relevantMemory?: string
   skills: string
   /** Change-only list of projects known on this machine — same "only when it
    *  changes" rule as memory/skills, so it lands in history once, not every turn. */
@@ -26,7 +31,7 @@ export interface RequestContext {
  * Agent SDK hooks instead (composeRequestContext).
  */
 export function composeUserPrompt(body: string, parts: PromptContext): string {
-  const context = [parts.stamp, parts.memory, parts.skills, parts.projects, parts.others]
+  const context = [parts.stamp, parts.memory, parts.relevantMemory, parts.skills, parts.projects, parts.others]
     .filter(Boolean)
     .join('\n\n')
   return body ? `${context}\n\n${body}` : context

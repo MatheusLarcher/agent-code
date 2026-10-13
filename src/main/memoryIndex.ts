@@ -241,9 +241,13 @@ const MAX_SCANNED_MEMORIES = 250
 /** Guarda de tamanho: uma memória acima disso é PULADA, nunca cortada ao meio.
  * Injetar meio arquivo é pior que não injetar — o modelo age no que faltou. */
 const MAX_MEMORY_BYTES = 64 * 1024
-const MAX_SELECTED_MEMORIES = 3
-const MAX_EXCERPT_CHARS = 1_600
-const MAX_TOTAL_EXCERPT_CHARS = 4_000
+/** Teto de memórias por turno — o mesmo da seleção pelo Haiku (memorySelectionHaiku.ts). */
+export const MAX_SELECTED_MEMORIES = 10
+/** Teto de uma memória sozinha: acima disso ela é pulada, nunca cortada. */
+const MAX_EXCERPT_CHARS = 50_000
+/** Teto do bloco inteiro do turno, em caracteres. Memória que estoura o que
+ * sobra é PULADA (a próxima, menor, ainda pode caber), nunca cortada. */
+export const MAX_TOTAL_EXCERPT_CHARS = 50_000
 const STOP_WORDS = new Set(['a', 'ao', 'as', 'com', 'da', 'de', 'do', 'e', 'em', 'eu', 'me', 'na', 'no', 'o', 'os', 'para', 'por', 'que', 'um', 'uma'])
 
 /** Memory values belong in the encrypted vault, never in automatic context.
@@ -365,20 +369,56 @@ export function memoryContextBlock(relPath: string, text: string): string {
   return `--- Memória relevante: ${relPath} ---\n${text}`
 }
 
-/** Fresh optional index plus bounded excerpts relevant to this user turn. Never throws. */
+/** Uma memória escolhida para o turno: o caminho e o texto já redigido. */
+export interface MemoryEntry {
+  relPath: string
+  body: string
+}
+
+/** A escolha de memórias de um turno: o bloco, os caminhos e o texto de cada uma. */
+export interface ChosenMemories {
+  block: string
+  relPaths: string[]
+  entries: MemoryEntry[]
+}
+
+/**
+ * Junta memórias em blocos até `maxCount` memórias e `maxChars` caracteres no
+ * total (cabeçalhos e separadores inclusos). Cada `relPath` é relido do disco
+ * (`readMemoryBody` redige e recusa o que escapa da pasta); a que não cabe no
+ * que sobra é PULADA inteira e a seguinte ainda é tentada. Nunca lança.
+ */
+export function assembleMemories(dir: string, relPaths: readonly string[], maxCount = MAX_SELECTED_MEMORIES, maxChars = MAX_TOTAL_EXCERPT_CHARS): ChosenMemories {
+  const entries: MemoryEntry[] = []
+  const blocks: string[] = []
+  const seen = new Set<string>()
+  let used = 0
+  for (const relPath of relPaths) {
+    if (entries.length >= maxCount) break
+    if (seen.has(relPath)) continue
+    seen.add(relPath)
+    const body = readMemoryBody(dir, relPath)
+    if (!body || body.length > MAX_EXCERPT_CHARS) continue
+    const block = memoryContextBlock(relPath, body)
+    const cost = block.length + (blocks.length > 0 ? 2 : 0)
+    if (used + cost > maxChars) continue
+    used += cost
+    blocks.push(block)
+    entries.push({ relPath, body })
+  }
+  return { block: blocks.join('\n\n'), relPaths: entries.map((entry) => entry.relPath), entries }
+}
+
+/** As memórias do turno pela busca lexical: até 10, até 50.000 caracteres, inteiras. Nunca lança. */
+export function selectMemoriesLexically(dir: string, query: string): ChosenMemories {
+  const ranked = rankMemoriesByQuery(dir, query).filter((match) => match.score >= MIN_LEXICAL_SCORE)
+  return assembleMemories(dir, ranked.map((match) => match.file.relPath))
+}
+
+/** Fresh optional index plus bounded relevant memories for this user turn. Never throws. */
 export function buildDynamicMemoryContext(dir: string, query: string, includeIndex = true): string {
   const index = includeIndex ? buildMemoryIndexContext(dir) : ''
-  const ranked = rankMemoriesByQuery(dir, query).filter((match) => match.score >= MIN_LEXICAL_SCORE)
-
-  let remaining = MAX_TOTAL_EXCERPT_CHARS
-  const excerpts: string[] = []
-  for (const match of ranked.slice(0, MAX_SELECTED_MEMORIES)) {
-    if (remaining <= 0) break
-    const excerpt = redactMemorySecrets(match.body).trim().slice(0, Math.min(MAX_EXCERPT_CHARS, remaining))
-    if (!excerpt) continue
-    remaining -= excerpt.length
-    excerpts.push(memoryContextBlock(match.file.relPath, excerpt))
-  }
-  if (excerpts.length === 0) return index
-  return index ? `${index}\n\n${excerpts.join('\n\n')}` : excerpts.join('\n\n')
+  const { block } = selectMemoriesLexically(dir, query)
+  if (!block) return index
+  return index ? `${index}\n\n${block}` : block
 }

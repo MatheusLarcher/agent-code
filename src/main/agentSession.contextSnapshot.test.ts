@@ -27,6 +27,16 @@ vi.mock('./memoryIndex', async () => {
   const actual = await vi.importActual<typeof import('./memoryIndex')>('./memoryIndex')
   return { ...actual, buildDynamicMemoryContext: (...args: Parameters<typeof actual.buildDynamicMemoryContext>) => context.lexicalDir ? actual.buildDynamicMemoryContext(...args) : context.memory }
 })
+// Sem Haiku de verdade: com a pasta temporária ele "não decide" (cai na busca
+// lexical real); sem ela, escolhe o trecho fixo de `context.memory`.
+vi.mock('./memorySelectionHaiku', async () => ({
+  ...await vi.importActual<typeof import('./memorySelectionHaiku')>('./memorySelectionHaiku'),
+  selectMemoriesWithHaiku: async () => context.lexicalDir ? null : {
+    block: context.memory,
+    relPaths: ['lexical.md'],
+    entries: [{ relPath: 'lexical.md', body: 'conteúdo' }]
+  }
+}))
 vi.mock('./memory/memoryRuntime', () => ({ memoryService: () => null, readSecret: async () => null, readSecretsForPrompt: async () => [{ name: 'vault', value: 'TEST-PASSWORD' }], secretSink: () => null, secretVaultEnabled: () => false }))
 vi.mock('./persistence/lifecycle', () => ({ storageLifecycle: { repository: () => ({ countConversationsByProject: async () => [], loadConversations: async () => [] }) } }))
 vi.mock('./tasks/taskRuntime', () => ({ taskLedger: () => null }))
@@ -50,7 +60,10 @@ describe('AgentSession context origin', () => {
       await writeFile(join(context.lexicalDir, 'postgres.md'), '# PostgreSQL\n\nPostgreSQL conexão banco diagnóstico timeout precisa consultar o pool de conexões.')
       const { s } = session()
       await s.start(); await s.send('PostgreSQL conexão banco diagnóstico timeout', undefined, 'lexical-uuid')
-      await sdk.options.hooks.UserPromptSubmit[0].hooks[0]({})
+      // A memória vai na mensagem; o hook leva só a documentação.
+      expect((s as any).input.values.at(-1).message.content).toContain('--- Memória relevante: postgres.md ---')
+      const hook = await sdk.options.hooks.UserPromptSubmit[0].hooks[0]({})
+      expect(JSON.stringify(hook)).not.toContain('Memória relevante')
       expect(readLiveContext('capture-integration', 'lexical-uuid')!.memoriesSent).toEqual(['postgres.md'])
     } finally { await rm(context.lexicalDir, { recursive: true, force: true }); context.lexicalDir = '' }
   })
@@ -93,6 +106,7 @@ describe('AgentSession context origin', () => {
     expect(composeFromPromptBlocks(detail.blocks.filter((b) => b.source === 'prompt'))).toBe(sent.message.content.replaceAll('TEST-PASSWORD', '⟦senha:vault⟧'))
     expect(detail.blocks.filter((b) => b.source === 'hook-start').map((b) => b.text).join('\n\n')).toBe(first.hookSpecificOutput.additionalContext)
     expect(detail.memoriesSent).toEqual(['lexical.md'])
+    expect(detail.blocks.find((b) => b.kind === 'memory-excerpts')).toMatchObject({ source: 'prompt', text: context.memory })
     expect(await sdk.options.hooks.PostToolBatch[0].hooks[0]({})).toEqual({})
     context.docs += '\neditado'
     const mid = await sdk.options.hooks.PostToolBatch[0].hooks[0]({})

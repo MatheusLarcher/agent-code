@@ -4,8 +4,8 @@ import { OPENAI_MODELS, OLLAMA_MODELS, CONTEXT_LIMITS } from '../shared/ipc'
 import { toCodexRequest, toCodexWireRequest } from './codexProtocol'
 
 const capture = vi.hoisted(() => ({ queries: [] as Array<{ options: Record<string, unknown>; prompt: { values: Array<{ message: { content: string } }> } }> }))
-// `typesafe` desligado: o contrato de prompt verificado aqui é o de sempre —
-// catálogo no system prompt e excertos lexicais no contexto vivo.
+// `typesafe` desligado: catálogo no system prompt, docs no contexto vivo e as
+// memórias escolhidas para o turno (Haiku/lexical) na própria mensagem.
 vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.2 } }) }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => true }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: async () => ({ baseUrl: 'http://127.0.0.1:1', secret: 'test' }), FAST_MODE_TOKEN_SUFFIX: '+fast' }))
@@ -18,6 +18,15 @@ vi.mock('./memoryIndex', async (original) => ({
   createMemoryCatalogSnapshot: () => ({ version: 'memory-v1', filesystemVersion: 'memory-v1', catalog: 'MEMORY_SENTINEL' }),
   renderMemoryCatalogUpdate: () => 'MEMORY_SENTINEL',
   buildDynamicMemoryContext: () => 'MEMORY_EXCERPT_SENTINEL'
+}))
+// A escolha do Haiku é fixa aqui: o contrato testado é onde ela vai, não quem escolhe.
+vi.mock('./memorySelectionHaiku', async (original) => ({
+  ...await original<typeof import('./memorySelectionHaiku')>(),
+  selectMemoriesWithHaiku: async () => ({
+    block: '--- Memória relevante: excerpt.md ---\nMEMORY_EXCERPT_SENTINEL',
+    relPaths: ['excerpt.md'],
+    entries: [{ relPath: 'excerpt.md', body: 'MEMORY_EXCERPT_SENTINEL' }]
+  })
 }))
 vi.mock('./skillDiscovery', async (original) => ({
   ...await original<typeof import('./skillDiscovery')>(),
@@ -73,7 +82,8 @@ describe('provider-neutral prompt contract', () => {
         expect(contract, model).toEqual(expected)
         expect(JSON.stringify(contract)).toContain('MEMORY_SENTINEL')
         expect(JSON.stringify(live)).toContain('DOC_SENTINEL')
-        expect(JSON.stringify(live)).toContain('MEMORY_EXCERPT_SENTINEL')
+        expect(JSON.stringify(live)).not.toContain('MEMORY_EXCERPT_SENTINEL')
+        expect(content).toContain('--- Memória relevante: excerpt.md ---\nMEMORY_EXCERPT_SENTINEL')
         expect(content).not.toContain('DOC_SENTINEL')
         expect(content).toContain('SKILL_SENTINEL')
         expect(content).toContain('USER_SENTINEL')

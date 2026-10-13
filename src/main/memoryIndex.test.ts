@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  assembleMemories,
   buildDynamicMemoryContext,
+  MAX_SELECTED_MEMORIES,
+  MAX_TOTAL_EXCERPT_CHARS,
+  selectMemoriesLexically,
   buildMemoryIndexContext,
   createMemoryCatalogSnapshot,
   listMemoryFiles,
@@ -218,5 +222,52 @@ describe('memoryIndex', () => {
     expect(readMemoryBody(dir, '../segredo.md')).toBeNull()
     expect(readMemoryBody(dir, 'nao-existe.md')).toBeNull()
     expect(readMemoryBody(dir, 'grande.md')).toBeNull()
+  })
+})
+
+describe('assembleMemories / selectMemoriesLexically', () => {
+  async function many(count: number, size: number): Promise<{ dir: string; paths: string[] }> {
+    const dir = await mkdtemp(join(tmpdir(), 'mem-asm-'))
+    const paths: string[] = []
+    for (let i = 0; i < count; i++) {
+      const name = `m${String(i).padStart(2, '0')}.md`
+      await writeFile(join(dir, name), `# Deploy ${i}\n${'d'.repeat(size)}`, 'utf8')
+      paths.push(name)
+    }
+    return { dir, paths }
+  }
+
+  it('para em 10 memórias, inteiras', async () => {
+    const { dir, paths } = await many(14, 100)
+    const chosen = assembleMemories(dir, paths)
+    expect(MAX_SELECTED_MEMORIES).toBe(10)
+    expect(chosen.relPaths).toEqual(paths.slice(0, 10))
+    expect(chosen.entries.every((entry) => entry.body.endsWith('d'.repeat(100)))).toBe(true)
+  })
+
+  it('não passa de 50.000 caracteres: a que estoura é PULADA e a menor seguinte ainda entra', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mem-asm-'))
+    await writeFile(join(dir, 'a.md'), `# A\n${'a'.repeat(30_000)}`, 'utf8')
+    await writeFile(join(dir, 'b.md'), `# B\n${'b'.repeat(30_000)}`, 'utf8')
+    await writeFile(join(dir, 'c.md'), `# C\n${'c'.repeat(5_000)}`, 'utf8')
+    const chosen = assembleMemories(dir, ['a.md', 'b.md', 'c.md'])
+    expect(MAX_TOTAL_EXCERPT_CHARS).toBe(50_000)
+    expect(chosen.relPaths).toEqual(['a.md', 'c.md'])
+    expect(chosen.block.length).toBeLessThanOrEqual(50_000)
+    // Nada cortado ao meio: cada memória entra com o texto completo.
+    expect(chosen.block).toContain('a'.repeat(30_000))
+    expect(chosen.block).not.toContain('Memória relevante: b.md')
+  })
+
+  it('ignora caminho repetido, fora da pasta e inexistente', async () => {
+    const { dir } = await many(2, 10)
+    expect(assembleMemories(dir, ['m00.md', 'm00.md', '../fora.md', 'nada.md', 'm01.md']).relPaths).toEqual(['m00.md', 'm01.md'])
+  })
+
+  it('a busca lexical usa os mesmos tetos de 10 memórias', async () => {
+    const { dir } = await many(14, 50)
+    const chosen = selectMemoriesLexically(dir, 'deploy')
+    expect(chosen.relPaths).toHaveLength(10)
+    expect(buildDynamicMemoryContext(dir, 'deploy', false)).toBe(chosen.block)
   })
 })

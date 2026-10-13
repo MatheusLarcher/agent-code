@@ -107,6 +107,14 @@ vi.mock('./typesafe/client', () => ({
     typeSafeService.probabilities === null ? null : { memoria: { probabilities: typeSafeService.probabilities } }
 }))
 
+// O Haiku que escolhe as memórias fora do TypeSafe não chama o SDK aqui: por
+// padrão "não decide" (null) e o turno cai na busca lexical real.
+const haikuState = vi.hoisted(() => ({ choose: null as null | ((dir: string, query: string) => unknown) }))
+vi.mock('./memorySelectionHaiku', async () => ({
+  ...await vi.importActual<typeof import('./memorySelectionHaiku')>('./memorySelectionHaiku'),
+  selectMemoriesWithHaiku: async (dir: string, query: string) => haikuState.choose?.(dir, query) ?? null
+}))
+
 // Captures the Options object start() hands to the SDK, and ends the stream at
 // once so start() returns instead of waiting on a real agent.
 const queryMock = vi.hoisted(() => vi.fn())
@@ -203,6 +211,7 @@ const handle = (s: AgentSession, message: unknown): void =>
   (s as unknown as { handleMessage(m: unknown): void }).handleMessage(message)
 
 beforeEach(() => {
+  haikuState.choose = null
   configState.windowsControlEnabled = false
   configState.chromeControlEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
@@ -2538,21 +2547,47 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
     expect(live).toContain('[PROJECT_DOCS_CONTEXT]')
   })
 
-  it('desligado ou sem chave: catálogo e excertos lexicais voltam intactos', async () => {
+  it('desligado ou sem chave: catálogo volta e os excertos lexicais vão na MENSAGEM', async () => {
     await memoriesFixture()
     typeSafeState.active = false
     typeSafeState.selection = null
     const { s } = makeSession()
     await s.start()
+    const append = appendedSystemPrompt()
     await s.send('me lembra do ERP')
 
-    const append = appendedSystemPrompt()
     expect(append).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
     expect(append).toContain('- [ERP](erp.md) — o ERP da 2D')
 
+    const sent = String(pushedMessages(s).at(-1)!.message.content)
+    expect(sent).toContain('--- Memória relevante: erp.md ---')
+    expect(sent).toContain('FALCAO')
+    // O hook leva só a documentação: a memória não vai duas vezes.
     const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
-    expect(live).toContain('--- Memória relevante: erp.md ---')
-    expect(live).toContain('FALCAO')
+    expect(live).not.toContain('Memória relevante')
+    expect(live).toContain('[PROJECT_DOCS_CONTEXT]')
+    expect(usedMemories('c1')).toEqual(['erp.md'])
+  })
+
+  it('fora do TypeSafe a escolha do Haiku vale e a mesma memória não volta no turno seguinte', async () => {
+    await memoriesFixture()
+    typeSafeState.active = false
+    typeSafeState.selection = null
+    const queries: string[] = []
+    haikuState.choose = (_dir, query) => {
+      queries.push(query)
+      return { block: '', relPaths: ['erp.md'], entries: [{ relPath: 'erp.md', body: 'O banco chama FALCAO (Haiku).' }] }
+    }
+    const { s } = makeSession()
+    await s.start()
+    await s.send('e o ERP?')
+    expect(String(pushedMessages(s).at(-1)!.message.content)).toContain('--- Memória relevante: erp.md ---\nO banco chama FALCAO (Haiku).')
+
+    await s.send('e de novo o ERP?')
+    expect(String(pushedMessages(s).at(-1)!.message.content)).not.toContain('Memória relevante')
+    // O gate do memorista continua vendo a memória que está na conversa.
+    expect(usedMemories('c1')).toEqual(['erp.md'])
+    expect(queries).toEqual(['e o ERP?', 'e de novo o ERP?'])
   })
 
   it('timeout ou erro na decisão mantém o fallback lexical vivo', async () => {

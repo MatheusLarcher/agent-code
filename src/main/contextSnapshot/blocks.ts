@@ -30,6 +30,7 @@ export interface SecretValue {
 const PROMPT_LABELS: Partial<Record<ContextBlockKind, string>> = {
   stamp: 'Carimbo (data, origem)',
   'memory-catalog': 'Catálogo de memórias',
+  'memory-excerpts': 'Trechos de memória',
   'skills-catalog': 'Catálogo de skills',
   projects: 'Projetos desta máquina',
   others: 'Outras conversas',
@@ -49,6 +50,9 @@ export function promptBlocks(body: string, parts: PromptContext, cancelNote?: st
   const context: Array<[ContextBlockKind, string | undefined]> = [
     ['stamp', parts.stamp],
     ['memory-catalog', parts.memory],
+    // As memórias do turno, quando vão na mensagem (fora do TypeSafe): mesmo
+    // tipo de bloco dos trechos do hook, distinguidos pela origem 'prompt'.
+    ['memory-excerpts', parts.relevantMemory],
     ['skills-catalog', parts.skills],
     ['projects', parts.projects],
     ['others', parts.others]
@@ -68,7 +72,7 @@ export function promptBlocks(body: string, parts: PromptContext, cancelNote?: st
 }
 
 const PROMPT_KINDS = new Set<ContextBlockKind>([
-  'stamp', 'memory-catalog', 'skills-catalog', 'projects', 'others', 'reminder', 'cancel-note', 'loop', 'user-request'
+  'stamp', 'memory-catalog', 'memory-excerpts', 'skills-catalog', 'projects', 'others', 'reminder', 'cancel-note', 'loop', 'user-request'
 ])
 
 /** O texto da mensagem a partir dos blocos (inverso de `promptBlocks`). */

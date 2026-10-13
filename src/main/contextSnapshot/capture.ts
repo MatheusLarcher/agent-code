@@ -80,7 +80,10 @@ export class ContextCapture {
     if (kind === 'recovery' && this.adopt(uuid, raw, at)) return
     const turn: ContextTurnWrite = {
       ...this.identity, model: realModel(this.identity.model), models: [], turnId: uuid, startedAt: at,
-      request: summarizeRequest(request, this.secrets), memoriesSent: [], complete: false,
+      request: summarizeRequest(request, this.secrets),
+      // Fora do TypeSafe as memórias do turno vão na própria mensagem.
+      memoriesSent: memoryNamesFromBlock(parts.relevantMemory ?? '').map((name) => maskText(name, 'memory-excerpts', this.secrets)),
+      complete: false,
       blocks: [...(this.system ? [this.system] : []), ...raw.map((b) => finalizeBlock(b, 'prompt', at, this.secrets))],
       usage: null, secrets: this.secrets.map((s) => ({ name: s.name, length: s.value.length }))
     }
