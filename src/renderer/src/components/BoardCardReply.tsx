@@ -1,10 +1,10 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
-import { BOARD_AUTHORIZE_MESSAGE, boardItemAwaitingBadge, type BoardItem } from '@shared/ipc'
+import { BOARD_AUTHORIZE_MESSAGE, boardItemReplyKind, type BoardItem } from '@shared/ipc'
 
 /**
  * A resposta do usuário direto no cartão "Aguardando você", no controle que o PO
- * escolheu (`BoardItem.poReplyKind`): 'authorize' = botão "Pode fazer"; 'answer' =
- * campo de texto. A mensagem vai para a conversa DONA do cartão (`conversationId`)
+ * escolheu (`BoardItem.poReplyKind`, ou o inferido por `boardItemReplyKind`):
+ * 'authorize' = botão "Pode fazer"; 'answer' = campo de texto. A mensagem vai para a conversa DONA do cartão (`conversationId`)
  * pelo mesmo despachante do composer — o App decide como (fila, sessão parada).
  *
  * Mora FORA do <button> do cartão (nada de botão dentro de botão), como irmão
@@ -48,7 +48,9 @@ export function BoardCardReply({
   // O estado só chega no próximo render: dois cliques no mesmo tique passariam.
   const inFlight = useRef(false)
 
-  const kind = boardItemAwaitingBadge(item) ? item.poReplyKind : null
+  // Só no cartão que espera o usuário — e nele sempre há controle (o tipo do PO
+  // ou o inferido): o fim de turno sem ação não tem o que responder aqui.
+  const kind = boardItemReplyKind(item)
   if (!kind || !onReply) return null
 
   const version = `${item.revision}|${item.updatedAt}`

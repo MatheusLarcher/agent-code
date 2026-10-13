@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BOARD_TURN_END_REASON, type BoardItem } from '../../shared/ipc'
 import type { BoardPoCreate, BoardPoWrite } from '../persistence/types'
-import { applyPoVerdict, poCreateReplyKind, type PoApplyDeps, type PoApplyTarget } from './poApply'
+import { applyPoVerdict, poCreateReplyKind, poJustifyReplyKind, type PoApplyDeps, type PoApplyTarget } from './poApply'
 import { PO_ROUTINE_REASON } from './poAuthorization'
 import { PO_AWAITING_AUTHORIZATION_REASON, PO_SYSTEM_PROMPT_CLOSE } from './poPrompt'
 import { parsePoVerdict, poReplyKindSuffix, splitUserAction, type PoOp } from './poVerdict'
@@ -148,13 +148,33 @@ describe('poCreateReplyKind — o padrão da NOVA', () => {
   })
 })
 
+describe('poJustifyReplyKind — o padrão do PENDENTE', () => {
+  const justify = (over: Partial<Extract<PoOp, { kind: 'justify' }>> = {}): Extract<PoOp, { kind: 'justify' }> => ({
+    kind: 'justify',
+    id: 'bi-1',
+    reason: 'falta',
+    ...over
+  })
+
+  it('o sufixo vale; sem ele, autorizar/aprovar vira botão e o resto vira campo; sem ação, nada', () => {
+    expect(poJustifyReplyKind(justify({ userAction: 'Autorizar o deploy', replyKind: 'answer' }))).toBe('answer')
+    expect(poJustifyReplyKind(justify({ userAction: 'Autorizar o deploy' }))).toBe('authorize')
+    expect(poJustifyReplyKind(justify({ userAction: 'aprovar o formato' }))).toBe('authorize')
+    expect(poJustifyReplyKind(justify({ userAction: 'Testar no celular' }))).toBe('answer')
+    expect(poJustifyReplyKind(justify())).toBeNull()
+    expect(poJustifyReplyKind(justify({ userAction: '  ', replyKind: 'authorize' }))).toBeNull()
+  })
+})
+
 describe('applyPoVerdict — grava o kind junto da ação', () => {
-  it('PENDENTE com sufixo grava replyKind; sem sufixo, a escrita é a de antes', async () => {
-    const cards = [card('bi-1', 'in_progress'), card('bi-2', 'in_progress')]
+  it('PENDENTE com sufixo grava replyKind; sem sufixo, o padrão do justify; sem VOCÊ, nada', async () => {
+    const cards = [card('bi-1', 'in_progress'), card('bi-2', 'in_progress'), card('bi-3', 'in_progress')]
     const d = deps(cards)
-    const verdict = ['PENDENTE bi-1 | esperando o layout | VOCÊ: Escolher o layout | RESPONDER', 'PENDENTE bi-2 | falta | VOCÊ: Testar no celular'].join(
-      '\n'
-    )
+    const verdict = [
+      'PENDENTE bi-1 | esperando o layout | VOCÊ: Escolher o layout | RESPONDER',
+      'PENDENTE bi-2 | falta | VOCÊ: Testar no celular',
+      'PENDENTE bi-3 | falta rodar os testes'
+    ].join('\n')
     await applyPoVerdict(d, target, verdict, cards, { applied: 0, touched: [] })
     expect(d.board.applyPo).toHaveBeenCalledWith({
       id: 'bi-1',
@@ -164,8 +184,12 @@ describe('applyPoVerdict — grava o kind junto da ação', () => {
       eventNote: 'esperando o layout'
     })
     const second = d.board.applyPo.mock.calls.map(([input]) => input).find((input) => input.id === 'bi-2')
-    expect(second).toMatchObject({ userAction: 'Testar no celular' })
-    expect(second).not.toHaveProperty('replyKind')
+    // O selo "Aguardando você" acende com a ação: sem sufixo, o controle é o campo.
+    expect(second).toMatchObject({ userAction: 'Testar no celular', replyKind: 'answer' })
+    const third = d.board.applyPo.mock.calls.map(([input]) => input).find((input) => input.id === 'bi-3')
+    // Sem VOCÊ a ação é limpa (null) e não há controle: o selo será o neutro.
+    expect(third).toMatchObject({ userAction: null })
+    expect(third).not.toHaveProperty('replyKind')
   })
 
   it('NOVA: o sufixo, o padrão authorize e nada na NOVA comum', async () => {

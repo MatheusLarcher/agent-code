@@ -236,7 +236,8 @@ describe('Po + BoardService — veredito do fechamento que chega depois do teto 
       poStatus: 'pending',
       poReason: `${BOARD_TURN_END_REASON.result} — parou no meio: falta assinar e publicar o EXE`
     })
-    expect(boardItemAwaitingBadge(exe)?.label).toBe('Aguardando você')
+    // PENDENTE sem VOCÊ: o cartão espera o agente, não você — selo neutro.
+    expect(boardItemAwaitingBadge(exe)?.label).toBe('Parado')
   })
 
   it('o OK atrasado não conclui o cartão que a mensagem seguinte já retomou (a guarda da escrita)', async () => {

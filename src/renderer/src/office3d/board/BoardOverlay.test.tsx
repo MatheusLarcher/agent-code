@@ -104,7 +104,7 @@ describe('janela do kanban (BoardOverlay)', () => {
     expect(screen.getByRole('dialog', { name: 'Coluna A fazer' })).toBeTruthy()
     const rows = screen.getAllByRole('button').filter((b) => b.classList.contains('board-row'))
     expect(rows.map((r) => r.querySelector('.board-row-title')?.textContent)).toEqual(items.map((i) => i.sourceTitle))
-    expect(screen.getByText('Aguardando você')).toBeTruthy()
+    expect(screen.getByText('Parado')).toBeTruthy()
     fireEvent.click(rows[3])
     expect(onOpen).toHaveBeenCalledWith({ kind: 'card', id: 'p3', x: null, y: null })
   })

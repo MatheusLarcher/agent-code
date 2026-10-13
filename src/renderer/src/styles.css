@@ -7006,8 +7006,13 @@ img.inline-att[data-caret] {
   border-color: rgba(127, 174, 111, 0.5);
   color: var(--ok);
 }
-/* "Aguardando você"/"Interrompido": cartão "a fazer" que o fim de turno rebaixou. */
+/* "Parado"/"Interrompido": cartão "a fazer" que o fim de turno rebaixou, sem nada
+   para o usuário fazer — neutro. "Aguardando você" (.user) é o que pede atenção. */
 .board-tag.awaiting {
+  border-color: var(--line);
+  color: var(--muted);
+}
+.board-tag.awaiting.user {
   border-color: color-mix(in srgb, var(--warn) 55%, transparent);
   color: var(--warn);
 }

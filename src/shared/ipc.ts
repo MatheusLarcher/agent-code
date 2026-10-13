@@ -262,8 +262,8 @@ export interface BoardItem {
   poUserAction?: string | null
   /** Como o usuário responde PELO cartão, decidido pelo PO junto do `poUserAction`:
    *  'authorize' = botão "Pode fazer"; 'answer' = campo de texto embaixo do cartão;
-   *  null/ausente = nenhum controle (o usuário age fora do app ou na conversa).
-   *  Some junto do `poUserAction`. */
+   *  null/ausente = o PO não disse — a tela infere (`boardItemReplyKind`), porque o
+   *  cartão que espera você sempre mostra um controle. Some junto do `poUserAction`. */
   poReplyKind?: BoardReplyKind | null
 }
 
@@ -309,7 +309,7 @@ export const BOARD_TURN_END_JUSTIFICATION_SEP = ' — '
 
 /**
  * O motivo do fim de turno, com ou sem a justificativa do PO. A frase fixa fica
- * sempre na frente de propósito: é ela que o selo "Aguardando você" e a
+ * sempre na frente de propósito: é ela que o selo do fim de turno e a
  * promoção da próxima mensagem reconhecem, e uma justificativa não pode apagar
  * esse reconhecimento.
  */
@@ -349,33 +349,56 @@ export function boardItemTurnEndKind(item: BoardItem): BoardTurnEndKind | null {
   return parseBoardTurnEndReason(item.poReason)?.kind ?? null
 }
 
+/** O fim de turno sozinho não diz que o cartão espera o USUÁRIO — só que parou.
+ *  "Aguardando você" é de `boardItemAwaitsUser`. */
 const BOARD_TURN_END_BADGE: Record<BoardTurnEndKind, string> = {
-  result: 'Aguardando você',
+  result: 'Parado',
   error: 'Interrompido'
 }
 
+const BOARD_AWAITING_USER_LABEL = 'Aguardando você'
+
 /**
- * O selo do cartão "a fazer" que o fim de turno rebaixou: tira a ambiguidade
- * de "a fazer" (nunca começou × começou e parou esperando alguém) sem estágio
- * novo nem migration. Some sozinho quando qualquer um volta a mexer no estado
- * (promoção, conclusão, arrasto, o agente mudando o status), porque aí o
- * `poStatus`/`poReason` deixa de ser o do fim de turno.
+ * `true` só quando há algo para o USUÁRIO fazer no cartão "a fazer": o PO
+ * escreveu a ação (VOCÊ) ou a pendência espera a autorização dele. O fim de
+ * turno sozinho não conta — o cartão reprovado sem VOCÊ espera o agente, e
+ * dizer "Aguardando você" ali era o selo sem nada para fazer (nem controle).
+ */
+export function boardItemAwaitsUser(item: BoardItem): boolean {
+  if (item.dismissedAt !== null || boardItemStatus(item) !== 'pending') return false
+  if ((item.poReason ?? '').startsWith(BOARD_PO_AWAITING_REASON)) return true
+  return (item.poUserAction ?? '').trim() !== ''
+}
+
+/**
+ * O controle de resposta do cartão que espera você — `null` quando não espera.
+ * O tipo do PO vale; sem ele (linha antiga, VOCÊ sem sufixo), a autorização ganha
+ * "Pode fazer" e o resto o campo de resposta: selo "Aguardando você" sem
+ * controle é o usuário sem como responder.
+ */
+export function boardItemReplyKind(item: BoardItem): BoardReplyKind | null {
+  if (!boardItemAwaitsUser(item)) return null
+  if (item.poReplyKind) return item.poReplyKind
+  const action = (item.poUserAction ?? '').trim()
+  if (!action) return 'authorize' // só a autorização pendente chega aqui sem ação
+  return /^(autorizar|aprovar)\b/i.test(action) ? 'authorize' : 'answer'
+}
+
+/**
+ * O selo do cartão "a fazer": tira a ambiguidade de "a fazer" (nunca começou ×
+ * começou e parou) sem estágio novo nem migration. "Aguardando você" só quando
+ * há ação do usuário (`boardItemAwaitsUser`); o fim de turno sem ela ganha o
+ * rótulo neutro ("Parado"/"Interrompido"). Some sozinho quando qualquer um volta
+ * a mexer no estado (promoção, conclusão, arrasto, o agente mudando o status),
+ * porque aí o `poStatus`/`poReason` deixa de ser o do fim de turno.
  */
 export function boardItemAwaitingBadge(item: BoardItem): { kind: BoardTurnEndKind; label: string } | null {
   if (boardItemStatus(item) !== 'pending') return null
   const kind = boardItemTurnEndKind(item)
+  // A ação do usuário (VOCÊ do PO, autorização pendente) vence o fato do fim
+  // de turno: é ela que mostra o controle de resposta (BoardCardReply).
+  if (boardItemAwaitsUser(item)) return { kind: 'result', label: BOARD_AWAITING_USER_LABEL }
   if (kind) return { kind, label: BOARD_TURN_END_BADGE[kind] }
-  // A pendência que o PO criou esperando a autorização do usuário (commit,
-  // deploy, verificar no app): também espera você — o mesmo selo.
-  if (item.dismissedAt === null && (item.poReason ?? '').startsWith(BOARD_PO_AWAITING_REASON)) {
-    return { kind: 'result', label: BOARD_TURN_END_BADGE.result }
-  }
-  // O PENDENTE com VOCÊ num cartão que nunca saiu de "a fazer" (o agente o criou
-  // já esperando a resposta): o PO escreveu o que o usuário precisa fazer, então
-  // ele espera você — e é esse selo que mostra o controle de resposta.
-  if (item.dismissedAt === null && (item.poUserAction ?? '').trim() !== '') {
-    return { kind: 'result', label: BOARD_TURN_END_BADGE.result }
-  }
   return null
 }
 

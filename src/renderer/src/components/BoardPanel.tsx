@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   boardItemAwaitingBadge,
+  boardItemAwaitsUser,
   boardItemStatus as effectiveStatus,
   boardItemTitle as effectiveTitle,
   isBoardItemPoCorrected as isPoCorrected,
@@ -418,7 +419,7 @@ function ColumnCrewDots({
   )
 }
 
-/** O selo "Aguardando você"/"Interrompido" — o mesmo no Quadro e na Lista. A dica
+/** O selo "Aguardando você"/"Parado"/"Interrompido" — o mesmo no Quadro e na Lista. A dica
  *  mostra primeiro o que o usuário precisa fazer (quando o PO disse), depois o motivo. */
 function AwaitingTag({
   item,
@@ -430,7 +431,7 @@ function AwaitingTag({
   const action = item.poUserAction ? `O que você precisa fazer: ${item.poUserAction}` : null
   const hint = [action, item.poReason].filter(Boolean).join('\n')
   return (
-    <span className={`board-tag awaiting ${badge.kind}`} title={hint || undefined}>
+    <span className={`board-tag awaiting ${badge.kind}${boardItemAwaitsUser(item) ? ' user' : ''}`} title={hint || undefined}>
       {badge.label}
     </span>
   )
@@ -1049,5 +1050,7 @@ export interface BoardProgress extends Pick<TaskCounts, 'done' | 'total'> {
 /** A contagem do Quadro pelo status efetivo (o do PO por cima do da fonte). */
 export function boardProgress(items: BoardItem[]): BoardProgress {
   const { done, total } = taskCounts(items, effectiveStatus)
-  return { done, total, awaiting: items.filter((item) => boardItemAwaitingBadge(item) !== null).length }
+  // "Esperam você" conta só o cartão com ação do usuário — o "Parado"/"Interrompido"
+  // do fim de turno sem ação espera o agente.
+  return { done, total, awaiting: items.filter(boardItemAwaitsUser).length }
 }

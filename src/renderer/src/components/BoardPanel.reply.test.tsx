@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
-import { BOARD_AUTHORIZE_MESSAGE, BOARD_TURN_END_REASON, type BoardItem, type ProjectBoard } from '@shared/ipc'
+import { BOARD_AUTHORIZE_MESSAGE, BOARD_PO_AWAITING_REASON, BOARD_TURN_END_REASON, type BoardItem, type ProjectBoard } from '@shared/ipc'
 import { BoardPanel } from './BoardPanel'
 import type { BoardCardReplyHandler } from './BoardCardReply'
 
@@ -114,7 +114,11 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
   })
 
   it('o botão Enviar também envia; placeholder padrão sem a ação do PO', async () => {
-    mockApi({ available: true, items: [card({ poReplyKind: 'answer', poUserAction: null })] })
+    // Sem a ação, quem acende o selo é a autorização pendente.
+    mockApi({
+      available: true,
+      items: [card({ poReplyKind: 'answer', poUserAction: null, poReason: BOARD_PO_AWAITING_REASON })]
+    })
     const reply = vi.fn<BoardCardReplyHandler>().mockResolvedValue('sent')
     render(panel(reply))
 
@@ -124,18 +128,34 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
     await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', 'sim'))
   })
 
-  it('sem controle: poReplyKind ausente, ou cartão que não espera você', async () => {
+  it('sem controle: fim de turno sem ação ("Parado"), ou cartão que não espera você', async () => {
     mockApi({
       available: true,
       items: [
-        card({ id: 'a', sourceTitle: 'sem tipo', poReplyKind: null }),
+        card({ id: 'a', sourceTitle: 'sem ação', poUserAction: null, poReplyKind: null }),
         card({ id: 'b', sourceTitle: 'andando', poStatus: null, poReason: null })
       ]
     })
     render(panel(vi.fn<BoardCardReplyHandler>()))
     await screen.findByText('andando')
+    expect(screen.getByText('Parado')).toBeTruthy()
+    expect(screen.queryByText('Aguardando você')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Pode fazer' })).toBeNull()
     expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('o selo aceso sempre tem controle: sem poReplyKind, o tipo vem da ação', async () => {
+    mockApi({
+      available: true,
+      items: [
+        card({ id: 'a', sourceTitle: 'autorizar', poReplyKind: null }),
+        card({ id: 'b', sourceTitle: 'testar', poReplyKind: null, poUserAction: 'Testar no celular' })
+      ]
+    })
+    render(panel(vi.fn<BoardCardReplyHandler>()))
+    expect(await screen.findByRole('button', { name: 'Pode fazer' })).toBeTruthy()
+    expect(screen.getByPlaceholderText('Testar no celular')).toBeTruthy()
+    expect(screen.getAllByText('Aguardando você')).toHaveLength(2)
   })
 
   it('duplo clique manda uma vez só; "Enviado" some quando o cartão muda', async () => {

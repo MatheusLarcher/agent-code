@@ -10,7 +10,7 @@
  *         Quadro; clicar num abre o cartão grande.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { boardItemAwaitingBadge, type BoardItem } from '@shared/ipc'
+import { boardItemAwaitingBadge, boardItemAwaitsUser, type BoardItem } from '@shared/ipc'
 import { BoardCardDetail } from '../../components/BoardCardDetail'
 import type { BoardOpen } from '../engineTypes'
 import { columnLabel } from './boardModel'
@@ -109,7 +109,7 @@ export function BoardOverlay({ open, board, onClose, onOpen, onOpenConversation 
 /** O selo "Aguardando você"/"Interrompido" — o mesmo texto da aba Quadro (`boardItemAwaitingBadge`). */
 function AwaitingTag({ item }: { item: BoardItem | undefined }): JSX.Element | null {
   const badge = item ? boardItemAwaitingBadge(item) : null
-  return badge ? <span className={`board-tag awaiting ${badge.kind}`}>{badge.label}</span> : null
+  return badge ? <span className={`board-tag awaiting ${badge.kind}${item && boardItemAwaitsUser(item) ? ' user' : ''}`}>{badge.label}</span> : null
 }
 
 function PileList({ open, board, onClose, onOpen }: { open: Extract<BoardOpen, { kind: 'pile' }>; board: EngineBoard; onClose: () => void; onOpen: (o: BoardOpen) => void }): JSX.Element {

@@ -13,6 +13,9 @@ import {
   currentModelId,
   isOpenAIModel,
   boardItemAwaitingBadge,
+  boardItemAwaitsUser,
+  boardItemReplyKind,
+  BOARD_PO_AWAITING_REASON,
   BOARD_TURN_END_REASON,
   boardTurnEndReason,
   parseBoardTurnEndReason,
@@ -43,18 +46,43 @@ describe('boardItemAwaitingBadge — selo do cartão rebaixado pelo fim de turno
     ...over
   })
 
-  it('mostra "Aguardando você" (fim normal) e "Interrompido" (erro)', () => {
-    expect(boardItemAwaitingBadge(item())).toEqual({ kind: 'result', label: 'Aguardando você' })
+  it('fim de turno sem ação do usuário: rótulo neutro "Parado" (fim normal) e "Interrompido" (erro)', () => {
+    expect(boardItemAwaitingBadge(item())).toEqual({ kind: 'result', label: 'Parado' })
     expect(boardItemAwaitingBadge(item({ poReason: BOARD_TURN_END_REASON.error }))).toEqual({
       kind: 'error',
       label: 'Interrompido'
     })
+    expect(boardItemAwaitsUser(item())).toBe(false)
+    expect(boardItemReplyKind(item())).toBeNull()
+  })
+
+  it('"Aguardando você" só com ação real: poUserAction ou autorização pendente', () => {
+    const withAction = item({ poUserAction: 'Informar a porta' })
+    expect(boardItemAwaitingBadge(withAction)).toEqual({ kind: 'result', label: 'Aguardando você' })
+    // A ação do usuário vale mais que o "interrompido": há o que fazer.
+    expect(boardItemAwaitingBadge({ ...withAction, poReason: BOARD_TURN_END_REASON.error })?.label).toBe('Aguardando você')
+    expect(boardItemAwaitingBadge(item({ poUserAction: '   ' }))?.label).toBe('Parado')
+    const authorize = item({ poReason: `${BOARD_PO_AWAITING_REASON} — deploy na VPS` })
+    expect(boardItemAwaitsUser(authorize)).toBe(true)
+    expect(boardItemAwaitingBadge(authorize)).toEqual({ kind: 'result', label: 'Aguardando você' })
+    expect(boardItemAwaitsUser({ ...withAction, dismissedAt: '2026-10-11T22:00:00Z' })).toBe(false)
+    expect(boardItemAwaitsUser({ ...withAction, poStatus: 'completed' })).toBe(false)
+  })
+
+  it('o selo aceso sempre tem controle: o tipo do PO, ou o inferido da ação', () => {
+    expect(boardItemReplyKind(item({ poUserAction: 'Qual porta?', poReplyKind: 'authorize' }))).toBe('authorize')
+    expect(boardItemReplyKind(item({ poUserAction: 'Autorizar o deploy' }))).toBe('authorize')
+    expect(boardItemReplyKind(item({ poUserAction: 'aprovar o PR' }))).toBe('authorize')
+    expect(boardItemReplyKind(item({ poUserAction: 'Testar no celular' }))).toBe('answer')
+    expect(boardItemReplyKind(item({ poReason: BOARD_PO_AWAITING_REASON }))).toBe('authorize')
+    expect(boardItemReplyKind(item({ poUserAction: 'Testar', poStatus: 'completed' }))).toBeNull()
   })
 
   it('a justificativa do PO (PENDENTE) mantém o selo — a frase fixa continua na frente', () => {
     const justified = boardTurnEndReason('result', 'falta commitar')
     expect(justified).toBe(`${BOARD_TURN_END_REASON.result} — falta commitar`)
-    expect(boardItemAwaitingBadge(item({ poReason: justified }))?.label).toBe('Aguardando você')
+    expect(boardItemAwaitingBadge(item({ poReason: justified }))?.label).toBe('Parado')
+    expect(boardItemAwaitingBadge(item({ poReason: justified, poUserAction: 'Commitar' }))?.label).toBe('Aguardando você')
     expect(parseBoardTurnEndReason(justified)).toEqual({ kind: 'result', justification: 'falta commitar' })
     expect(parseBoardTurnEndReason(BOARD_TURN_END_REASON.error)).toEqual({ kind: 'error', justification: null })
     expect(parseBoardTurnEndReason('o usuário retomou a conversa')).toBeNull()

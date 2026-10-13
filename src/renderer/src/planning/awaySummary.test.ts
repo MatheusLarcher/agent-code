@@ -20,8 +20,9 @@ function build(items: BoardItem[], envios: HandoffEnvio[] = [], now = SINCE + 2 
   return buildAwaySummary({ projectKey: 'c:/proj', projectCwd: 'C:/proj', items, envios, since: SINCE, now })
 }
 
+// Espera o USUÁRIO: o PO escreveu o que ele precisa fazer.
 const awaiting = (id: string, updatedAt: string): BoardItem =>
-  item(id, { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.result, updatedAt })
+  item(id, { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.result, poUserAction: 'Autorizar o deploy', updatedAt })
 
 describe('buildAwaySummary', () => {
   it('mais de 30 min fora com mudanças: concluídas, espera você e falhou, na faixa e no balão', () => {
@@ -73,13 +74,15 @@ describe('buildAwaySummary', () => {
     expect(awayHeadline(summary!)).toBe('Desde que você saiu (há 2 h): 1 falhou')
   })
 
-  it('cartão arquivado não conta; "Interrompido" espera você também', () => {
+  it('cartão arquivado não conta; parado/interrompido sem ação do usuário não espera você', () => {
     const summary = build([
       item('arquivado', { sourceStatus: 'completed', updatedAt: after, dismissedAt: after }),
-      item('int', { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.error, updatedAt: after })
+      item('int', { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.error, updatedAt: after }),
+      item('parado', { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.result, updatedAt: after }),
+      item('pede', { poStatus: 'pending', poReason: BOARD_TURN_END_REASON.error, poUserAction: 'Responder a dúvida', updatedAt: after })
     ])
     expect(summary?.counts).toEqual({ concluida: 0, espera: 1, falhou: 0 })
-    expect(summary?.entries[0].detail).toBe('Interrompido')
+    expect(summary?.entries[0]).toMatchObject({ cardId: 'pede', detail: 'Aguardando você' })
   })
 
   it('awayDuration: minutos, horas e dias', () => {

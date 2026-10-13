@@ -103,7 +103,8 @@ describe('replay no SQLite real — quadro + PO', () => {
 
       let [card] = await w.cards()
       expect(card.poStatus).toBe('pending')
-      expect(boardItemAwaitingBadge(card)?.label).toBe('Aguardando você')
+      // Sem VOCÊ do PO não há ação do usuário registrada: o selo é o neutro.
+      expect(boardItemAwaitingBadge(card)?.label).toBe('Parado')
 
       await w.userSays('pode fazer')
       ;[card] = await w.cards()
@@ -199,7 +200,7 @@ describe('replay no SQLite real — quadro + PO', () => {
     let list = await w.cards()
     expect(list).toHaveLength(1)
     expect(list[0]).toMatchObject({ poStatus: 'pending', poReason: `${BOARD_TURN_END_REASON.result} — ${why}` })
-    expect(boardItemAwaitingBadge(list[0])?.label).toBe('Aguardando você')
+    expect(boardItemAwaitingBadge(list[0])?.label).toBe('Parado')
 
     await w.userSays('continua')
     list = await w.cards()
@@ -235,7 +236,7 @@ describe('replay no SQLite real — quadro + PO', () => {
     list = await w.cards()
     const a = list.find((c) => c.sourceTitle === 'Tarefa A')
     expect(a?.poStatus).toBe('pending')
-    expect(boardItemAwaitingBadge(a as BoardItem)?.label).toBe('Aguardando você')
+    expect(boardItemAwaitingBadge(a as BoardItem)?.label).toBe('Parado')
     const exportCard = list.find((c) => c.sourceTitle === 'Corrigir a exportação de XML') as BoardItem
     expect(boardItemStatus(exportCard)).toBe('completed')
   })

@@ -98,6 +98,17 @@ export function poCreateReplyKind(op: Extract<PoOp, { kind: 'create' }>): BoardR
   return /^(autorizar|aprovar)\b/i.test(op.userAction.trim()) ? 'authorize' : null
 }
 
+/** O controle do PENDENTE com VOCÊ: o sufixo vale; sem ele, o padrão da NOVA
+ *  (Autorizar/Aprovar = "Pode fazer") e, no resto, o campo de resposta — o
+ *  cartão reprovado que acende "Aguardando você" sempre mostra como responder.
+ *  Sem ação, nenhum: o cartão espera o agente. */
+export function poJustifyReplyKind(op: Extract<PoOp, { kind: 'justify' }>): BoardReplyKind | null {
+  const action = op.userAction?.trim()
+  if (!action) return null
+  if (op.replyKind) return op.replyKind
+  return /^(autorizar|aprovar)\b/i.test(action) ? 'authorize' : 'answer'
+}
+
 /** As operações que só podem ser escritas depois de conferidas contra o quadro
  *  de AGORA — ver `confirmCreates`. */
 function needsFreshList(op: PoOp): boolean {
@@ -239,11 +250,12 @@ export async function applyPoVerdict(
       // A ação do usuário é a DESTE PENDENTE: sem VOCÊ o cartão espera o agente,
       // e a ação de um PENDENTE anterior não pode ficar no cartão.
       const kind = parseBoardTurnEndReason(byId.get(op.id)?.poReason)?.kind ?? 'result'
+      const replyKind = poJustifyReplyKind(op)
       await deps.board.applyPo({
         id: op.id,
         poReason: boardTurnEndReason(kind, op.reason),
         userAction: op.userAction ?? null,
-        ...(op.userAction && op.replyKind ? { replyKind: op.replyKind } : {}),
+        ...(replyKind ? { replyKind } : {}),
         eventNote: op.reason
       })
       progress.touched.push(op.id)

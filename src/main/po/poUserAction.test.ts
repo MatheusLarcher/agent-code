@@ -165,6 +165,8 @@ describe('applyPoVerdict — grava a ação', () => {
       id: 'bi-1',
       poReason: `${BOARD_TURN_END_REASON.result} — esperando o layout`,
       userAction: 'Escolher o layout',
+      // Sem sufixo, o controle vem do padrão do justify (poJustifyReplyKind).
+      replyKind: 'answer',
       eventNote: 'esperando o layout'
     })
   })

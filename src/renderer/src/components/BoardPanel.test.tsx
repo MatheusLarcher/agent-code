@@ -202,11 +202,18 @@ describe('BoardPanel', () => {
     expect(await screen.findByLabelText(/^PO revisou/)).toBeTruthy()
   })
 
-  it('cartão rebaixado pelo fim de turno mostra "Aguardando você" no Quadro e na Lista, no lugar de "PO revisou/corrigiu"', async () => {
+  it('cartão rebaixado pelo fim de turno: "Aguardando você" só com ação do usuário; sem ela, "Parado"/"Interrompido" — no Quadro e na Lista', async () => {
     mockApi({
       available: true,
       items: [
-        card({ id: 'a', sourceTitle: 'parado', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' }),
+        card({ id: 'a', sourceTitle: 'sem ação', poStatus: 'pending', poReason: 'o turno terminou sem concluir esta tarefa' }),
+        card({
+          id: 'd',
+          sourceTitle: 'com ação',
+          poStatus: 'pending',
+          poReason: 'o turno terminou sem concluir esta tarefa — falta a senha',
+          poUserAction: 'Informar a senha'
+        }),
         card({
           id: 'b',
           sourceTitle: 'interrompido',
@@ -218,8 +225,9 @@ describe('BoardPanel', () => {
       ]
     })
     render(panel())
-    await screen.findByText('parado')
+    await screen.findByText('sem ação')
     expect(screen.getAllByText('Aguardando você')).toHaveLength(1)
+    expect(screen.getAllByText('Parado')).toHaveLength(1)
     expect(screen.getAllByText('Interrompido')).toHaveLength(1)
     expect(screen.queryByLabelText(/^PO revisou/)).toBeNull()
     expect(screen.queryByLabelText(/^PO corrigiu/)).toBeNull()
@@ -227,6 +235,7 @@ describe('BoardPanel', () => {
     fireEvent.click(screen.getByText('Lista'))
     await screen.findByText(/Quadro de tarefas/)
     expect(screen.getAllByText('Aguardando você')).toHaveLength(1)
+    expect(screen.getAllByText('Parado')).toHaveLength(1)
     expect(screen.getAllByText('Interrompido')).toHaveLength(1)
   })
 

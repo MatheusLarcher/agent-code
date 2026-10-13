@@ -100,7 +100,8 @@ describe('PENDENTE + fim de turno no SQLite real', () => {
     const [card] = await w.cards()
     expect(card.poStatus).toBe('pending')
     expect(card.poReason).toBe(`${BOARD_TURN_END_REASON.result} — falta commitar a fase 1`)
-    expect(boardItemAwaitingBadge(card)?.label).toBe('Aguardando você')
+    // Sem VOCÊ não há ação do usuário: o selo continua, mas neutro.
+    expect(boardItemAwaitingBadge(card)?.label).toBe('Parado')
 
     const events = await w.repository.listBoardItemEvents(card.id)
     const tail = events.filter((e) => e.kind === 'justified' || e.kind === 'status_changed').slice(-2)

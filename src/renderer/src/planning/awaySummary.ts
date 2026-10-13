@@ -1,4 +1,4 @@
-import { boardItemAwaitingBadge, boardItemStatus, boardItemTitle, type BoardItem } from '@shared/ipc'
+import { boardItemAwaitingBadge, boardItemAwaitsUser, boardItemStatus, boardItemTitle, type BoardItem } from '@shared/ipc'
 import { isEnvioRemoved, isRoutineEnvio, type HandoffEnvio } from '@shared/handoffTracking'
 
 /**
@@ -94,8 +94,9 @@ function itemEntry(item: BoardItem): AwayEntry | null {
   if (item.dismissedAt !== null) return null
   const base = { cardId: item.id, conversationId: item.conversationId, title: boardItemTitle(item), at: stamp(item.updatedAt) }
   if (boardItemStatus(item) === 'completed') return { ...base, kind: 'concluida', detail: null }
+  // Só o que espera o USUÁRIO entra como "espera você" — o cartão só parado, não.
   const badge = boardItemAwaitingBadge(item)
-  return badge ? { ...base, kind: 'espera', detail: badge.label } : null
+  return badge && boardItemAwaitsUser(item) ? { ...base, kind: 'espera', detail: badge.label } : null
 }
 
 export function buildAwaySummary(input: AwayInput): AwaySummary | null {
