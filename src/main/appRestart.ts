@@ -11,6 +11,12 @@ export interface RestartActivity {
   backgroundTasks?: number | null
   /** O histórico do último turno ainda não foi confirmado no banco. */
   persistenceUnverified?: boolean
+  /**
+   * Trabalho vivo fora do turno — subagente ou comando em segundo plano que o
+   * SDK diz estar rodando, ou ferramenta autônoma sem resultado — numa sessão
+   * ainda aberta. É o que o bloqueio de suspensão soma ao `busy`.
+   */
+  workingOutsideTurn?: boolean
 }
 export interface ArmedRestart {
   commit(): Promise<void>
@@ -120,14 +126,16 @@ export class AppRestartCoordinator {
    * "Existe trabalho acontecendo AGORA?" — usado pelo bloqueio de suspensão.
    * Deliberadamente ignora `unsafe`: aquele campo é um latch (loop ativo,
    * trabalho destacado) que sobrevive ao fim do turno, e mantê-lo acordaria a
-   * máquina para sempre. Aqui só conta turno vivo, permissão pendente e
-   * start/send em andamento.
+   * máquina para sempre. Aqui conta turno vivo, permissão pendente, start/send
+   * em andamento e trabalho vivo fora do turno (`workingOutsideTurn`): o turno
+   * principal termina enquanto o subagente ou o comando em segundo plano segue.
    */
   busyNow(): boolean {
     if (this.operations.size) return true
     for (const session of this.sessions.values()) {
       try {
-        if (session.read().busy) return true
+        const state = session.read()
+        if (state.busy || state.workingOutsideTurn) return true
       } catch {
         /* Estado ilegível não vira latch de "acordado": o próximo tique reavalia. */
       }

@@ -136,6 +136,18 @@ describe('AgentSession — aviso de prazo no PostToolUse', () => {
     expect(s.restartActivity().unsafe).not.toBe(OPAQUE)
   })
 
+  it('ferramenta autônoma em voo mantém o PC acordado; fechar a conversa solta', async () => {
+    const { s, pre, post } = await started()
+    expect(s.restartActivity().workingOutsideTurn).toBe(false)
+    await pre({ hook_event_name: 'PreToolUse', ...call('t1') })
+    expect(s.restartActivity().workingOutsideTurn).toBe(true)
+    await post!(done('t1'))
+    expect(s.restartActivity().workingOutsideTurn).toBe(false)
+    await pre({ hook_event_name: 'PreToolUse', ...call('t2') })
+    s.dispose()
+    expect(s.restartActivity().workingOutsideTurn).toBe(false)
+  })
+
   it('Agent Manager (planning, mesmo com handoff): nunca consulta', async () => {
     const { post } = await started({ planning: { slug }, handoff: { slug } })
     if (post) await expect(post(done('t1'))).resolves.toEqual({})

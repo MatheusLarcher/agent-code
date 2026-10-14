@@ -145,4 +145,22 @@ describe('sleepGuard', () => {
     detached.remove()
     stop()
   })
+
+  it('segue acesa com subagente ou comando em segundo plano depois do turno', () => {
+    const blocker = fakeBlocker()
+    const host = { arm: vi.fn(), flush: vi.fn(), quit: vi.fn(), report: vi.fn() }
+    const coordinator = new AppRestartCoordinator(host as never)
+    let outside = true
+    const session = coordinator.register('conv-1', () => ({ busy: false, workingOutsideTurn: outside }))
+    const stop = startSleepGuard({ blocker, isBusy: () => coordinator.busyNow(), isEnabled: () => true, pollMs: 100 })
+
+    expect(blocker.active.size).toBe(2)
+
+    outside = false // o subagente terminou
+    vi.advanceTimersByTime(100)
+    expect(blocker.active.size).toBe(0)
+
+    session.remove()
+    stop()
+  })
 })

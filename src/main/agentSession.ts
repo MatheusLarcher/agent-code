@@ -910,7 +910,11 @@ export class AgentSession {
       autonomousCallOpen: this.restartOpaqueCalls.size > 0,
       // O que a troca de banco olha (appRestart.workStatus): o real, sem o latch de incerteza.
       backgroundTasks: this.restartBackground,
-      persistenceUnverified: this.mirrorFailed
+      persistenceUnverified: this.mirrorFailed,
+      // O que segura o PC acordado depois do turno: só com a sessão aberta e o SDK
+      // vivo. Uma conversa fechada com tarefa em background fica registrada (latch
+      // do reinício) e, sem esse corte, deixaria a máquina acordada para sempre.
+      workingOutsideTurn: !this.disposed && !this.queryDied && this.hasBackgroundWork()
     }
   }
 
