@@ -41,6 +41,11 @@ async function commit(dir: string, file: string, message: string): Promise<void>
   git(dir, ['commit', '-q', '-m', message], { GIT_AUTHOR_DATE: later, GIT_COMMITTER_DATE: later })
 }
 
+/** Arquivo sem commit na pasta: o status deixa de estar limpo. */
+async function dirty(dir: string): Promise<void> {
+  await writeFile(join(dir, 'rascunho.txt'), 'em andamento\n')
+}
+
 async function world(answer: (request: PoObserverRequest) => string | null) {
   const project = await tempDir('agent-code-watch-repo-')
   git(project, ['init', '-q'])
@@ -103,6 +108,7 @@ describe('vigia do git — commit fora do chat conclui a pendência', () => {
     await w.watch.check()
     expect(w.requests).toHaveLength(0) // HEAD igual: nada a fazer
 
+    await dirty(w.project) // sobra arquivo sem commit: quem decide é o modelo
     await commit(w.project, 'fase1.ts', 'feat: fase 1 do escritório')
     await w.watch.check()
     expect(w.requests).toHaveLength(1)
@@ -138,6 +144,7 @@ describe('vigia do git — commit fora do chat conclui a pendência', () => {
     )
     w.watch.arm(w.project)
     await w.watch.check()
+    await dirty(w.project)
     await commit(w.project, 'x.ts', 'chore: outra coisa')
     await w.watch.check()
 
@@ -163,6 +170,31 @@ describe('vigia do git — commit fora do chat conclui a pendência', () => {
     })
     await boot.check()
     expect(boardItemStatus(await w.card(w.pendency.id))).toBe('completed')
+  })
+
+  it('pasta limpa conclui a pendência de commit mesmo com título que não casa com os commits', async () => {
+    // O caso real: "Commitar alterações pendentes (ghidra, …)" ficou "a fazer" porque
+    // os commits que saíram falavam de outra coisa e o modelo respondeu OK.
+    let pushId = ''
+    const w = await world(() => `CONCLUIR ${pushId} | push feito`)
+    const push = await w.repository.createBoardPoItem({
+      ...w.base,
+      title: 'Commitar e dar push da fase 1',
+      status: 'pending',
+      reason: 'aguardando',
+      parentId: w.parent.id
+    })
+    pushId = push.id
+    w.watch.arm(w.project)
+    await w.watch.check()
+    await commit(w.project, 'y.ts', 'fix(suspensão): outra coisa')
+    await w.watch.check()
+
+    expect(await w.card(w.pendency.id)).toMatchObject({ poStatus: 'completed', poReason: expect.stringMatching(/^git sem nada para commitar \(último: [0-9a-f]+ fix\(suspensão\)/) })
+    // Push não se prova pelo git local: o CONCLUIR do modelo nele é descartado.
+    expect(boardItemStatus(await w.card(push.id))).toBe('pending')
+    expect(w.requests).toHaveLength(1)
+    expect(w.requests[0].prompt).not.toContain(w.pendency.id)
   })
 
   it('PO desligado: o vigia não olha nada; o relógio injetado dispara a checagem', async () => {
