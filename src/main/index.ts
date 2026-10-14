@@ -470,6 +470,9 @@ const board = new BoardService({
   sendToSession: async (convId: string, text: string): Promise<boolean> => {
     const s = sessions.get(convId)
     if (!s) return false
+    // O cartão arrastado é um pedido do usuário como o do Composer: sem o marco,
+    // o PO não fecha o turno e o cartão volta para "a fazer" mesmo entregue.
+    if (planningConversations.observed(convId)) noteUserTurn(convId, text)
     await s.send(text)
     return true
   },
@@ -653,6 +656,23 @@ const memorista = new Memorista({
     at: Date.now()
   })
 })
+
+/**
+ * Um pedido do usuário começou um turno (Composer, ou o cartão arrastado para
+ * "fazendo"). Retomada e recuperação de turno não passam por aqui.
+ * - vigia: só julga premissa de pedido do usuário;
+ * - PO: começa a ABERTURA e guarda o pedido que o fechamento vai julgar;
+ * - quadro: o que o fim do turno anterior devolveu volta para "em andamento"
+ *   sem depender do PO (`BoardService.resumeTurn`, nunca rejeita);
+ * - memorista: é a mensagem do usuário que pode ENSINAR algo.
+ */
+function noteUserTurn(convId: string, text: string): void {
+  const cwd = sessionCwds.get(convId) ?? ''
+  vigia.noteUserMessage(convId, cwd, text)
+  po.noteUserMessage(convId, cwd, text)
+  void board.resumeTurn(convId, cwd)
+  memorista.noteUserMessage(convId, cwd, text)
+}
 
 // O Quadro e o SM no celular (shared/remoteIpc.ts): os canais da lista registram
 // pela ponte, que repassa ao ipcMain e guarda o listener para o POST /api/ipc.
@@ -2702,20 +2722,7 @@ export function registerIpc(): void {
         throw new Error(why)
       }
       if (!current) throw new Error(NO_LIVE_SESSION)
-      // O vigia só julga premissa de um pedido do usuário: é aqui que o turno
-      // dele começa (retomada e recuperação de turno não passam por aqui).
-      if (observed) vigia.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
-      // O PO precisa do mesmo marco, e da pasta do projeto para achar o quadro.
-      // Aqui também começa a ABERTURA dele: o pedido tem que virar cartão antes
-      // de o agente trabalhar, senão o que ele nunca declarar não deixa rastro.
-      if (observed) po.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
-      // O que o fim do turno anterior devolveu para "a fazer" volta para "em
-      // andamento" sem depender do PO (gate, cooldown, modelo) — ver
-      // `BoardService.resumeTurn`. Nunca rejeita nem segura o envio.
-      if (observed) void board.resumeTurn(convId, sessionCwds.get(convId) ?? '')
-      // O memorista precisa do mesmo marco: é a mensagem do usuário que pode
-      // ENSINAR algo, e a pasta do projeto entra na memória como contexto.
-      if (observed) memorista.noteUserMessage(convId, sessionCwds.get(convId) ?? '', text)
+      if (observed) noteUserTurn(convId, text)
       // Saiu da fila o item de uma tarefa MCP: ela passa a `rodando`.
       mcpInbound.onAgentSend(convId, mcpSend)
       // Envio de handoff: o texto CRU casa pelo hash com o prompt registrado

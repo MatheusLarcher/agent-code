@@ -35,6 +35,8 @@ export const spy = {
   observe: { vigia: vi.fn(), board: vi.fn(), po: vi.fn(), memorista: vi.fn() },
   note: { vigia: vi.fn(), po: vi.fn(), memorista: vi.fn(), board: vi.fn(async () => undefined) },
   sessions: [] as CreatedSession[],
+  /** As dependências que o index passou ao BoardService (o envio pelo cartão). */
+  boardDeps: null as { sendToSession?(convId: string, text: string): Promise<boolean> } | null,
   planningConfig: { model: 'claude-opus-5-5', effort: 'high' },
   /** Resultado dos próximos `start()` (vazio = sobe; promessa = subida que o teste solta). */
   startResults: [] as Array<boolean | Promise<boolean>>,
@@ -236,6 +238,9 @@ vi.mock('../board/boardService', () => ({
   BoardService: class {
     observe = spy.observe.board
     resumeTurn = spy.note.board
+    constructor(deps: typeof spy.boardDeps) {
+      spy.boardDeps = deps
+    }
     dispose(): void {}
   }
 }))
@@ -264,6 +269,8 @@ vi.mock('../persistence/kvFacade', () => ({
   readPersistedKv: vi.fn(),
   writePersistedKv: vi.fn()
 }))
+// O SQLite local (node:sqlite) não carrega no ambiente jsdom dos testes do index.
+vi.mock('../persistence/localKvStore', () => ({ LocalKvStore: class {} }))
 vi.mock('../persistence/hashes', () => ({ hashJson: vi.fn(), normalizeJson: vi.fn() }))
 // Backups do banco (pg_dump): nada de processo nem de pasta nos testes do index.
 vi.mock('../persistence/backup/databaseBackups', () => ({

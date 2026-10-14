@@ -96,6 +96,18 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
     expect(spy.note.board).toHaveBeenCalledWith('comum', cwd)
   })
 
+  it('cartão arrastado para "fazendo" abre o turno no PO como mensagem do usuário', async () => {
+    await call(Channels.agentStart, { convId: 'cartao', cwd, model: 'claude-sonnet-5-5' })
+    for (const fn of observers()) fn.mockClear()
+    const text = 'Comece a trabalhar nesta tarefa: "Testar no app"'
+    await expect(spy.boardDeps!.sendToSession!('cartao', text)).resolves.toBe(true)
+    expect(spy.note.po).toHaveBeenCalledWith('cartao', cwd, text)
+    expect(spy.note.vigia).toHaveBeenCalledWith('cartao', cwd, text)
+    expect(spy.note.memorista).toHaveBeenCalledWith('cartao', cwd, text)
+    expect(spy.note.board).toHaveBeenCalledWith('cartao', cwd)
+    expect(sessionOf('cartao').send).toHaveBeenCalledWith(text)
+  })
+
   it('agent:dispose limpa a conversa do registro de planejamento', async () => {
     await call(Channels.agentStart, { convId: 'plan-3', cwd, model: 'claude-sonnet-5-5', planning: { slug: 'checkout' } })
     await call(Channels.agentDispose, 'plan-3')
