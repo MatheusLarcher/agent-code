@@ -26,6 +26,7 @@ import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsCo
 import { windowsControl } from './windowsControl/service'
 import { createChromeMcpServer } from './chromeBridge/tools'
 import { reaMcpConfig } from './reaMcp'
+import { ghidraPreparer } from './ghidra/ghidraEnv'
 import { chromeBridge, chromeTabMemory } from './chromeBridge/state'
 import { CHROME_CONTROL_HINT } from './chromeBridge/hint'
 import { CHROME_DISABLED_MESSAGE, chromeGateDecision } from './chromeBridge/gate'
@@ -992,7 +993,11 @@ export class AgentSession {
             return { ok: !blocked, message: blocked ?? '' }
           })
           return deps ? runCloudTool(input, deps) : Promise.resolve({ ok: false, text: 'A troca de banco não está disponível nesta execução.' })
-        }
+        },
+        // Ghidra sob demanda para o rea; o Agent Manager não tem o rea. O rea guarda
+        // "Ghidra ausente" enquanto vive: reconectar faz esta conversa já enxergá-lo.
+        ghidra: this.opts.planning ? undefined : ghidraPreparer,
+        reconnectRea: this.opts.planning ? undefined : async () => { await this.q?.reconnectMcpServer('rea') }
       })
     }
     if (process.platform === 'win32') {

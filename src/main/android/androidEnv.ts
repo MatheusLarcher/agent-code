@@ -106,7 +106,7 @@ async function exists(p: string): Promise<boolean> {
 }
 
 /** First child dir of `base` that contains bin/java — Temurin extracts to jdk-17.x.y+z. */
-async function findJavaHome(base: string): Promise<string | null> {
+export async function findJavaHome(base: string): Promise<string | null> {
   if (await exists(join(base, 'bin', `java${EXE}`))) return base
   let entries: string[]
   try {
@@ -289,7 +289,7 @@ export function spawnTool(
 }
 
 /** Download a URL to a file, reporting rough percentage progress. */
-async function download(url: string, dest: string, onProgress: Progress, label: string): Promise<void> {
+export async function download(url: string, dest: string, onProgress: Progress, label: string): Promise<void> {
   const res = await fetch(url, { redirect: 'follow' })
   if (!res.ok || !res.body) throw new Error(`Falha ao baixar ${label}: HTTP ${res.status}`)
   const total = Number(res.headers.get('content-length') || 0)
@@ -316,7 +316,7 @@ async function download(url: string, dest: string, onProgress: Progress, label: 
 }
 
 /** Extract a .zip into destDir (created if needed). */
-async function unzip(zip: string, destDir: string): Promise<void> {
+export async function unzip(zip: string, destDir: string): Promise<void> {
   await mkdir(destDir, { recursive: true })
   if (WIN) {
     const ps = `Expand-Archive -LiteralPath '${zip}' -DestinationPath '${destDir}' -Force`
@@ -420,7 +420,7 @@ async function runInstall(onProgress: Progress): Promise<DetectResult> {
 }
 
 /** Download a Temurin JDK and extract it into jdkBase; returns its JAVA_HOME. */
-async function installJdk(major: number, jdkBase: string, work: string, onProgress: Progress): Promise<string> {
+export async function installJdk(major: number, jdkBase: string, work: string, onProgress: Progress): Promise<string> {
   onProgress(`Baixando JDK ${major} (Temurin)…`)
   const zip = join(work, `jdk-${major}.zip`)
   await download(jdkUrl(major), zip, onProgress, `JDK ${major}`)
@@ -454,7 +454,7 @@ export function parseJavaMajor(release: string): number | null {
   return major === 1 && m[2] ? Number(m[2]) : major
 }
 
-async function javaMajor(home: string): Promise<number | null> {
+export async function javaMajor(home: string): Promise<number | null> {
   return parseJavaMajor(await readFile(join(home, 'release'), 'utf8').catch(() => ''))
 }
 

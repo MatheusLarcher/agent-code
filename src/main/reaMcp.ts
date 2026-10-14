@@ -5,6 +5,7 @@
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
+import { reaCachePaths } from './ghidra/ghidraEnv'
 
 export interface ReaStdioConfig {
   type: 'stdio'
@@ -19,10 +20,22 @@ export interface ReaMcpDeps {
   exists?: (path: string) => boolean
   execPath?: string
   env?: NodeJS.ProcessEnv
+  /** Caminhos fixos do Ghidra/JDK no cache local (ghidraEnv), ou null sem cache. */
+  cachePaths?: () => Partial<Record<(typeof PASS_THROUGH_ENV)[number], string>> | null
 }
 
-/** Variáveis do ambiente que o rea usa (Ghidra/Java), repassadas só quando definidas. */
+/** Variáveis que o rea usa (Ghidra/Java): as do ambiente têm prioridade; sem elas, vão
+ *  os caminhos fixos do cache local MESMO antes de existirem — o rea guarda a ausência
+ *  pelo processo inteiro, então o Ghidra baixado depois vale na próxima conversa. */
 const PASS_THROUGH_ENV = ['GHIDRA_INSTALL_DIR', 'JAVA_HOME'] as const
+
+function defaultCachePaths(): ReturnType<NonNullable<ReaMcpDeps['cachePaths']>> {
+  try {
+    return reaCachePaths()
+  } catch {
+    return null
+  }
+}
 
 function defaultResolvePackageJson(): string {
   // Mesmo caminho do claudeCli.ts: o main é externalizado, então o require acha
@@ -49,8 +62,9 @@ export function reaMcpConfig(deps: ReaMcpDeps = {}): ReaStdioConfig | null {
   if (!script) return null
   const source = deps.env ?? process.env
   const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1' }
+  const cache = PASS_THROUGH_ENV.every((name) => source[name]) ? null : (deps.cachePaths ?? defaultCachePaths)()
   for (const name of PASS_THROUGH_ENV) {
-    const value = source[name]
+    const value = source[name] || cache?.[name]
     if (value) env[name] = value
   }
   return { type: 'stdio', command: deps.execPath ?? process.execPath, args: [script, 'mcp'], env }

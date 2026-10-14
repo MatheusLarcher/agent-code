@@ -6,6 +6,7 @@ import { OFFICE_CALL_MESSAGE_MAX } from '../shared/officeCall'
 import { checkMockupFile } from './officeMockup/mockupFiles'
 import { PRINT_CAPTION_MAX } from './board/boardPrints'
 import { CLOUD_TOOL_DESCRIPTION, CLOUD_TOOL_NAME, cloudToolSchema, type CloudToolReply } from './cloudTool'
+import { GHIDRA_VERSION, type GhidraDetect, type GhidraPreparer } from './ghidra/ghidraEnv'
 
 export const APP_RESTART_HINT = 'When Agent Code itself genuinely needs a restart, use app_restart (checkOnly for a read-only guard query). You may request it without asking again, but only this protected tool authorizes restart. A refusal NEVER authorizes kill, Bash, or direct relaunch scripts to bypass the guard. Finish your turn after preparation. History is preserved; automatic continuation of unfinished reasoning is not promised.'
 
@@ -39,14 +40,43 @@ export interface AppMcpOptions {
   attachPrint?: (input: { arquivo: string; tarefa?: string; legenda?: string }) => Promise<AppPrintReply>
   /** A nuvem opcional por comando direto (cloudTool.ts), fora do Agent Manager. */
   postgresCloud?: (input: unknown) => Promise<CloudToolReply>
+  /** Ghidra sob demanda para o rea (o `ghidraPreparer` do ghidraEnv): o `app_preparar_ghidra`
+   *  só existe com ele — onde o rea não roda (Agent Manager, chat do PO) a ferramenta não aparece. */
+  ghidra?: GhidraPreparer
+  /** Reinicia o MCP "rea" desta sessão com o Ghidra pronto; sem ele, vale na próxima conversa. */
+  reconnectRea?: () => Promise<void>
 }
 
 const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] })
+
+const GHIDRA_TOOL_DESCRIPTION = `Download the Ghidra ${GHIDRA_VERSION} native-analysis engine (plus a JDK 21 when missing; about 800 MB in total) into Agent Code's local cache, for the rea MCP. Call it when rea reports the Ghidra engine missing (missing_analysis_engine, executable_missing, or "Point GHIDRA_INSTALL_DIR..."). It returns immediately and the download runs in the background: call it again for progress, ready or error. Set retry=true only to try again after an error.`
+
+/** A resposta da ferramenta do Ghidra para o estado atual (sem esperar o download). */
+async function prepareGhidra(g: GhidraPreparer, retry: boolean, reconnect?: () => Promise<void>): Promise<ReturnType<typeof text>> {
+  const ready = async (d: GhidraDetect): Promise<ReturnType<typeof text>> => {
+    const where = `Ghidra ${d.version ?? GHIDRA_VERSION} at ${d.installDir}; JDK ${d.javaMajor ?? '21+'} at ${d.javaHome ?? '?'}.`
+    const env = d.envGhidraDir ? ` Note: GHIDRA_INSTALL_DIR is set in the environment (${d.envGhidraDir}) and takes priority over this install.` : ''
+    if (reconnect) {
+      const err = await reconnect().then(() => null, (e: unknown) => String(e))
+      if (!err) return text(`Ready: ${where} The rea MCP was restarted; call binary_session again.${env}`)
+    }
+    return text(`Ready: ${where} The rea MCP of THIS conversation keeps the "engine missing" answer it cached at startup: Ghidra takes effect in a new conversation (or when this conversation's session restarts). Tell the user.${env}`)
+  }
+  const s = g.status()
+  if (s.state === 'running') return text(`Still downloading/installing Ghidra in the background: ${s.progress ?? '…'} Call again later.`)
+  if (s.state === 'ready' && s.result) return ready(s.result)
+  if (s.state === 'error' && !retry) return text(`Ghidra install failed: ${s.error}. Call again with retry=true to try once more.`, true)
+  const now = await g.detect().catch(() => null)
+  if (now?.ghidraReady && now.javaReady) return ready(now)
+  g.start()
+  return text(`Started the Ghidra ${GHIDRA_VERSION} download in the background (~800 MB with the JDK; several minutes). Keep working and call app_preparar_ghidra again for progress.`)
+}
 
 export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof createSdkMcpServer> {
   const restart = opts.restart
   const attach = opts.attachPrint
   const cloud = opts.postgresCloud
+  const ghidra = opts.ghidra
   return createSdkMcpServer({
     name: 'app', version: '1.0.0', tools: [
       ...(cloud ? [tool(CLOUD_TOOL_NAME, CLOUD_TOOL_DESCRIPTION, cloudToolSchema, async (input) => {
@@ -95,7 +125,13 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
           }
           return text('ok')
         }
-      )
+      ),
+      ...(ghidra ? [tool(
+        'app_preparar_ghidra',
+        GHIDRA_TOOL_DESCRIPTION,
+        { retry: z.boolean().optional().describe('Try again after a failed install.') },
+        async ({ retry }) => prepareGhidra(ghidra, retry === true, opts.reconnectRea)
+      )] : [])
     ]
   })
 }
