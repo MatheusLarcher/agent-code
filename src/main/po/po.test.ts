@@ -957,7 +957,10 @@ describe('Po — failover Claude → Luna', () => {
       runLuna: async (request, started) => {
         started()
         seen.push(request)
-        configValue.po.model = 'claude-other'
+        // Troca o modelo DURANTE a última rodada: o pedido dela já está montado e
+        // congelado. (Trocar na abertura valeria, de propósito, para o fechamento —
+        // cada fase é uma rodada nova e lê a configuração na largada.)
+        if (request.phase === 'close') configValue.po.model = 'claude-other'
         return { provider: 'gpt-luna', state: 'completed', text: 'OK' }
       }
     })
@@ -966,7 +969,7 @@ describe('Po — failover Claude → Luna', () => {
     await flush()
 
     // Uma análise por fase, e nenhuma delas muda de modelo no meio do caminho:
-    // a configuração é lida uma vez, na largada.
+    // a configuração é lida uma vez, na largada de cada rodada.
     expect(seen.map(({ phase }) => phase)).toEqual(['open', 'close'])
     for (const request of seen) {
       expect(request).toEqual(expect.objectContaining({
