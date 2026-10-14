@@ -35,6 +35,7 @@ import { QuoteLinkContext, useComposerQuotes, type ComposerQuoteLink } from './q
 import { useComposerElements } from './elementPick/useComposerElements'
 
 import { boxMetrics, composerBoxHeight } from './composerHeight'
+import { enterSendsTyped, matchSlashEntries } from './slashMenu'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
 
 const NO_CARDS: readonly RefCard[] = []
@@ -171,11 +172,6 @@ export function stopRecording(
 function baseName(p: string): string {
   const parts = p.split(/[\\/]+/).filter(Boolean)
   return parts[parts.length - 1] || p
-}
-
-/** lowercase + strip accents (project filter rule), for local skill matching. */
-function foldText(s: string): string {
-  return s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
 }
 
 /** One row in the autocomplete: a project file/folder ('@') or a skill ('/'). */
@@ -827,7 +823,14 @@ export function Composer(props: Props): JSX.Element {
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        choosePicker(pickerItems[pickerIndex])
+        const hit = pickerItems[pickerIndex]
+        // "/compact" digitado por inteiro: Enter envia (escolher só repetiria o nome).
+        if (e.key === 'Enter' && !e.shiftKey && hit?.kind === '/' && picker && enterSendsTyped(hit.id, picker.query)) {
+          setPicker(null)
+          submit()
+          return
+        }
+        choosePicker(hit)
         return
       }
       if (e.key === 'Escape') {
@@ -980,16 +983,8 @@ export function Composer(props: Props): JSX.Element {
             skillsCache.current = { root, items: await window.api.listSkills(root) }
           }
           if (id !== pickerReq.current) return
-          // Accent- and case-insensitive match on name AND description; skills
-          // whose name starts with the query come first (project filter rule).
-          const q = foldText(picker.query.trim())
-          const matched = skillsCache.current.items
-            .filter((s) => !q || foldText(s.name).includes(q) || foldText(s.description).includes(q))
-            .sort((a, b) => {
-              const as = q && foldText(a.name).startsWith(q) ? 0 : 1
-              const bs = q && foldText(b.name).startsWith(q) ? 0 : 1
-              return as - bs || a.name.localeCompare(b.name)
-            })
+          // Comandos do CLI (/compact) + skills, nome igual ao digitado primeiro (slashMenu.ts).
+          const matched = matchSlashEntries(skillsCache.current.items, picker.query)
             .map((s): PickerItem => ({
               id: s.name,
               title: s.name,
