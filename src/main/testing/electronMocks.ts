@@ -37,6 +37,8 @@ export const spy = {
   sessions: [] as CreatedSession[],
   /** As dependências que o index passou ao BoardService (o envio pelo cartão). */
   boardDeps: null as { sendToSession?(convId: string, text: string): Promise<boolean> } | null,
+  /** Turno em andamento: `waitForIdle` só resolve quando esta promessa resolver (null = ocioso). */
+  idleGate: null as Promise<void> | null,
   planningConfig: { model: 'claude-opus-5-5', effort: 'high' },
   /** Resultado dos próximos `start()` (vazio = sobe; promessa = subida que o teste solta). */
   startResults: [] as Array<boolean | Promise<boolean>>,
@@ -125,6 +127,9 @@ vi.mock('../providerFailover', () => ({
     }
     hasBackgroundWork(): boolean {
       return spy.background.has(this.opts.convId)
+    }
+    waitForIdle(): Promise<void> {
+      return spy.idleGate ?? Promise.resolve()
     }
   }
 }))

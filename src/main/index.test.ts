@@ -101,11 +101,31 @@ describe('registerIpc — conversa do Agent Manager (opts.planning)', () => {
     for (const fn of observers()) fn.mockClear()
     const text = 'Comece a trabalhar nesta tarefa: "Testar no app"'
     await expect(spy.boardDeps!.sendToSession!('cartao', text)).resolves.toBe(true)
+    await vi.waitFor(() => expect(sessionOf('cartao').send).toHaveBeenCalledWith(text))
     expect(spy.note.po).toHaveBeenCalledWith('cartao', cwd, text)
     expect(spy.note.vigia).toHaveBeenCalledWith('cartao', cwd, text)
     expect(spy.note.memorista).toHaveBeenCalledWith('cartao', cwd, text)
     expect(spy.note.board).toHaveBeenCalledWith('cartao', cwd)
-    expect(sessionOf('cartao').send).toHaveBeenCalledWith(text)
+  })
+
+  it('cartão arrastado com o agente ocupado: o marco do PO e o envio esperam o turno acabar', async () => {
+    await call(Channels.agentStart, { convId: 'cartao-ocupado', cwd, model: 'claude-sonnet-5-5' })
+    for (const fn of observers()) fn.mockClear()
+    let finishTurn!: () => void
+    spy.idleGate = new Promise<void>((resolve) => (finishTurn = resolve))
+    try {
+      const text = 'Comece a trabalhar nesta tarefa: "Outro cartão"'
+      await expect(spy.boardDeps!.sendToSession!('cartao-ocupado', text)).resolves.toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      // Turno ainda rodando: nada de marco (trocaria o pedido que o PO julga) nem envio.
+      expect(spy.note.po).not.toHaveBeenCalled()
+      expect(sessionOf('cartao-ocupado').send).not.toHaveBeenCalled()
+      finishTurn()
+      await vi.waitFor(() => expect(sessionOf('cartao-ocupado').send).toHaveBeenCalledWith(text))
+      expect(spy.note.po).toHaveBeenCalledWith('cartao-ocupado', cwd, text)
+    } finally {
+      spy.idleGate = null
+    }
   })
 
   it('agent:dispose limpa a conversa do registro de planejamento', async () => {

@@ -471,9 +471,17 @@ const board = new BoardService({
     const s = sessions.get(convId)
     if (!s) return false
     // O cartão arrastado é um pedido do usuário como o do Composer: sem o marco,
-    // o PO não fecha o turno e o cartão volta para "a fazer" mesmo entregue.
-    if (planningConversations.observed(convId)) noteUserTurn(convId, text)
-    await s.send(text)
+    // o PO não fecha o turno e o cartão volta para "a fazer" mesmo entregue. E,
+    // como a fila do Composer, espera o turno em andamento acabar: o marco dado
+    // no meio dele trocaria o pedido que o PO julga no fechamento desse turno.
+    void (async () => {
+      await s.waitForIdle().catch(() => undefined)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await turnLeaseReleases.get(convId)?.catch(() => undefined)
+      if (sessions.get(convId) !== s) return
+      if (planningConversations.observed(convId)) noteUserTurn(convId, text)
+      await s.send(text)
+    })().catch((error: unknown) => console.warn(`[quadro] envio do cartão para ${convId} falhou:`, error))
     return true
   },
   interruptSession: async (convId: string): Promise<boolean> => {
