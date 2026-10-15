@@ -4,7 +4,7 @@ import type { PoGitEvidence } from './poGit'
 import { formatPoNextPrompt, type PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import { formatPoAuthorizationClose, formatPoAuthorizationOpen } from './poAuthorization'
-import { buildPoPrompt, type PoCall, type PoEnvioEtapa, type PoLedgerTask, type PoOrphanEtapa, type PoPhase } from './poPrompt'
+import { buildPoPrompt, type PoCall, type PoEnvioEtapa, type PoLedgerTask, type PoOrphanEtapa, type PoPhase, type PoTurnLog } from './poPrompt'
 import type { PoObserverRequest } from './poProviders'
 
 /**
@@ -39,6 +39,9 @@ export interface PoRequestInput {
   userText: string
   calls: readonly PoCall[]
   reply?: string | null
+  /** Só no fechamento: as mensagens do agente antes da resposta final e os turnos adiados. */
+  messages?: readonly string[]
+  earlier?: readonly PoTurnLog[]
   ledgerTasks: PoLedgerTask[]
   background: readonly string[]
   /** Os cartões que este fechamento julga (`poReturnedCards`). */
@@ -74,6 +77,8 @@ export function buildPoRequest(input: PoRequestInput): PoObserverRequest {
     phase: input.phase,
     ledgerTasks: input.ledgerTasks,
     agentReply: input.reply,
+    agentMessages: input.messages,
+    earlierTurns: input.earlier,
     background: input.background,
     returned: input.returned.map((card) => card.id),
     resumed: input.returned.filter(isResumedCard).map((card) => card.id),

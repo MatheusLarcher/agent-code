@@ -65,8 +65,9 @@ export interface BoardGateInput {
  * 32k. Os tetos de quantidade acompanham os do digest do PO (30 cartões, 60
  * ações, 15 tarefas) de propósito — o gate não pode decidir "não" olhando MENOS
  * evidência do que o modelo que ele está dispensando veria. Pelo mesmo motivo
- * cada ponta da resposta aqui (400 do início, 799 do fim) é pelo menos a que o
- * digest leva (400 + 599, `PO_REPLY_HEAD_CHARS`/`PO_REPLY_TAIL_CHARS`): é no fim
+ * cada ponta da resposta aqui (400 do início, 799 do fim) fica com as partes que
+ * decidem — o digest do PO agora leva a resposta inteira (poTurnText.ts), mas o
+ * gate só decide turnos sem cartão a fechar: é no fim
  * que ficam a conclusão e a pergunta. O início
  * vem junto porque é onde o agente costuma dizer o que entregou — a prova de
  * que a pergunta do fim propõe um passo NOVO em vez de bloquear o pedido. Quem

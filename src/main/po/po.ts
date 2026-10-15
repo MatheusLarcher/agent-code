@@ -25,6 +25,7 @@ import type { PoLogEntry, PoLogOutcome, PoLogWriter } from './poLog'
 import { askBoardGate, consultWithFailover, diagnostic, type PoProviderDeps } from './poProviders'
 import { defer, mergeDeferred, requeueTurn, restoreTaken, type PoDeferred, type PoTurnSnapshot } from './poQueue'
 import { buildPoRequest, poDigestCards } from './poRequest'
+import { splitTurnText } from './poTurnText'
 
 // A API pública do PO continua saindo daqui, mesmo com as partes em módulos
 // próprios: quem importa de './po' não precisa saber como ele foi dividido.
@@ -84,11 +85,12 @@ interface ConvState {
   cwd: string
   calls: PoCall[]
   fired: boolean
-  /** O último texto final do agente. Durante o turno é a resposta DELE (vai
-   *  para o fechamento); quando a próxima mensagem chega, é a do turno anterior
-   *  (vai para a abertura) e zera. Mesma regra do memorista: vale o último
-   *  bloco fechado, e o texto do `result` tem preferência quando vem. */
+  /** A resposta final do turno (o texto do `result` ou o último bloco): vai
+   *  inteira para o fechamento e, quando a próxima mensagem chega, para a
+   *  abertura como a do turno ANTERIOR — e zera. */
   reply: string | null
+  /** Os blocos de texto final do agente principal neste turno, em ordem. */
+  texts: string[]
   /** Uma janela de cooldown por FASE: a abertura não pode gastar a do
    *  fechamento, senão o turno que acabou de ser aberto nunca seria auditado. */
   lastRunAt: Record<PoPhase, number>
@@ -98,14 +100,10 @@ interface ConvState {
    *  audita a evidência da SUA fila, nunca a da outra. Um pedido que nunca
    *  passou pelo PO é exatamente o buraco que este recurso existe para fechar. */
   deferred: Record<PoPhase, PoDeferred | null>
-  /** Cancelador do flush agendado para quando o cooldown desta fase terminar
-   *  — null quando não há nada agendado. Existe para o acumulado não ficar
-   *  preso para sempre esperando um próximo turno que pode nunca chegar (o
-   *  turno que terminou a conversa, por exemplo). Um só por fase: o turno que
-   *  chega ENQUANTO o flush está agendado só se soma à mesma fila, não precisa
-   *  de outro temporizador. A retentativa de uma análise que falhou usa este
-   *  MESMO lugar: as duas coisas são "julgar a fila desta fase mais tarde", e
-   *  dois temporizadores para isso só disputariam a mesma fila. */
+  /** Cancelador do flush agendado para o fim do cooldown desta fase (null: nada
+   *  agendado), para o acumulado não esperar um próximo turno que pode nunca
+   *  chegar. Um só por fase, e a retentativa usa o MESMO lugar: as duas coisas
+   *  são "julgar a fila desta fase mais tarde". */
   flushCancel: Record<PoPhase, (() => void) | null>
   /** Retentativas SEGUIDAS já agendadas nesta fase (teto: PO_MAX_RETRIES).
    *  Zera numa auditoria que chega ao fim — inclusive o "não" do gate — e
@@ -144,11 +142,10 @@ export class Po {
     conv.calls = []
     conv.fired = false
     conv.reply = null
-    // A ABERTURA: o pedido tem que virar cartão antes de o trabalho começar.
-    // Deixar só a auditoria do fim significa que o pedido que o agente nunca
-    // declarou não deixa rastro nenhum no quadro — quando o PO olha, já não há
-    // o que reconhecer. Em `void`, como todo o resto do observador: ele nunca
-    // segura nem derruba o turno do usuário.
+    conv.texts = []
+    // A ABERTURA: o pedido vira cartão antes de o trabalho começar (só a
+    // auditoria do fim não deixaria rastro do pedido que o agente nunca
+    // declarou). Em `void`: o observador nunca segura nem derruba o turno.
     this.start(
       convId,
       'open',
@@ -171,21 +168,25 @@ export class Po {
       return
     }
     if (event.kind === 'assistant-text') {
-      if (event.final && event.text) conv.reply = event.text
+      // Só o texto FINAL do agente principal chega aqui como `final` (o ao vivo
+      // e o de subagente não): pensamento e ferramenta nunca entram.
+      if (event.final && event.text) conv.texts.push(event.text)
       return
     }
     // Turno interrompido (o Stop do usuário e a cota que acaba no meio chegam
     // como `result` com erro) não tem fechamento: o quadro devolve o cartão para
     // "a fazer", e o padrão "entregue = concluído" não vale para ele.
     if (event.kind === 'result' && !event.isError) {
-      if (event.text) conv.reply = event.text
+      const log = splitTurnText(conv.texts, event.text)
+      conv.reply = log.reply
       // A later user message resets the mutable conversation accumulator while
       // this audit awaits board ingestion. Preserve this turn's evidence now.
       const turn: PoTurnSnapshot = Object.freeze({
         userText: conv.userText,
         cwd: conv.cwd,
         calls: Object.freeze([...conv.calls]),
-        reply: conv.reply,
+        reply: log.reply,
+        messages: Object.freeze([...log.messages]),
         background: conv.background
       })
       conv.fired = true
@@ -214,12 +215,9 @@ export class Po {
       for (const phase of ['open', 'close'] as const) {
         conv.flushCancel[phase]?.()
         conv.flushCancel[phase] = null
-        // Última chance: a conversa está indo embora, e não existe "próximo
-        // turno" nenhum depois disto para carregar o que ficou na fila — ou
-        // esta evidência é julgada agora, ou some para sempre. `force`: o
-        // cooldown pode nem ter terminado ainda (dispose pode acontecer a
-        // qualquer momento), e reavaliá-lo aqui só adiaria de novo o que já
-        // não tem mais para onde ser adiado.
+        // Última chance: sem "próximo turno" depois disto, a fila é julgada
+        // agora ou some. `force`: reavaliar o cooldown aqui só adiaria de novo
+        // o que já não tem para onde ser adiado.
         if (conv.deferred[phase]) this.start(convId, phase, this.emptyTurn(conv), true)
       }
     }
@@ -227,9 +225,7 @@ export class Po {
     this.inFlight.delete(convId)
   }
 
-  /** Um turno "vazio": só carrega o acumulado da fila, sem pedido novo nenhum
-   *  próprio. Usado pelo flush automático e pelo flush de última chance do
-   *  `dispose`, onde não existe um turno real disparando a análise. */
+  /** Um turno "vazio" (flush, retentativa, `dispose`): só carrega a fila. */
   private emptyTurn(conv: ConvState): PoTurnSnapshot {
     return Object.freeze({ userText: '', cwd: conv.cwd, calls: Object.freeze([] as PoCall[]) })
   }
@@ -285,6 +281,7 @@ export class Po {
         calls: [],
         fired: false,
         reply: null,
+        texts: [],
         lastRunAt: { open: 0, close: 0 },
         deferred: { open: null, close: null },
         flushCancel: { open: null, close: null },
@@ -444,7 +441,7 @@ export class Po {
       const authorization = await this.deps.authorization?.(convId).catch(() => null)
       const request = buildPoRequest({
         config: cfg, convId, cwd: turn.cwd, projectId, phase, cards, userText: merged.userText, calls: merged.calls,
-        reply: merged.reply, ledgerTasks, background, returned, git, next, authorization, orphans, envioEtapas, correlationId: this.nextCorrelationId()
+        reply: merged.reply, messages: merged.messages, earlier: merged.earlier, ledgerTasks, background, returned, git, next, authorization, orphans, envioEtapas, correlationId: this.nextCorrelationId()
       })
 
       diagnostic(this.deps, request, 'claude-started', 'claude')

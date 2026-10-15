@@ -11,26 +11,36 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 import {
   PO_ETAPA_RULES,
   PO_ETAPA_SECTION,
+  PO_MESSAGES_SECTION,
   PO_ORPHAN_RULES,
   PO_ORPHAN_SECTION,
+  PO_PREVIOUS_REPLY_SECTION,
+  PO_REPLY_SECTION,
   PO_RESUMED_MARK,
   PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
-  PO_SYSTEM_PROMPT_OPEN
+  PO_SYSTEM_PROMPT_OPEN,
+  PO_USER_SECTION
 } from './poPromptText'
 import { formatPoGitEvidence, type PoGitEvidence } from './poGit'
+import { cutMiddle, formatTurnMessages, PO_MAX_SECTION_CHARS, type PoTurnLog } from './poTurnText'
 export {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_ETAPA_RULES,
   PO_ETAPA_SECTION,
   PO_MAX_OPS,
+  PO_MESSAGES_SECTION,
   PO_ORPHAN_RULES,
   PO_ORPHAN_SECTION,
+  PO_PREVIOUS_REPLY_SECTION,
+  PO_REPLY_SECTION,
   PO_RESUMED_MARK,
   PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
-  PO_SYSTEM_PROMPT_OPEN
+  PO_SYSTEM_PROMPT_OPEN,
+  PO_USER_SECTION
 } from './poPromptText'
+export { PO_MAX_SECTION_CHARS, type PoTurnLog } from './poTurnText'
 // Só o TIPO (apagado na compilação): poPrompt.ts continua sem importar código do acompanhamento.
 import type { PoEnvioEtapa } from '../handoffTracking/handoffOrphans'
 export type { PoEnvioEtapa } from '../handoffTracking/handoffOrphans'
@@ -85,8 +95,10 @@ export const PO_RETRY_DELAY_MS = 60_000
  *  para sempre; esgotado, a evidência continua na fila para o próximo turno ou
  *  para o `dispose`, como antes da retentativa existir. */
 export const PO_MAX_RETRIES = 2
-/** Tetos do digest: o custo não pode crescer com o tamanho da conversa. */
-export const PO_MAX_USER_CHARS = 1200
+/** Tetos do digest: o custo não pode crescer com o tamanho da conversa. O da
+ *  mensagem do usuário é o teto de SEGURANÇA de seção (poTurnText.ts): o texto
+ *  vai inteiro, e só um pedido patológico é cortado — pelo meio, com aviso. */
+export const PO_MAX_USER_CHARS = PO_MAX_SECTION_CHARS
 /**
  * Numa sessão longa e cheia de delegação (dezenas de turnos por hora, cada
  * um com um subagente), o cooldown de 60s pula quase todo fechamento e
@@ -132,31 +144,21 @@ export const PO_MAX_BACKGROUND_LINE_CHARS = 110
  *  caber no espaço da de segundo plano, com quem ela nunca aparece junto. */
 export const PO_MAX_RETURNED_CARDS = 8
 export const PO_MAX_RETURNED_LINE_CHARS = 60
-/**
- * Teto da última resposta do agente, com o "…" do corte (~250 tokens). A que
- * cabe vai inteira; a longa leva as DUAS pontas: PO_REPLY_HEAD_CHARS do início,
- * "…" no meio e o resto do fim — o mesmo fim de antes (599), onde ficam a
- * conclusão e a pergunta. Só o fim não bastava: no fechamento das 14:54 (UTC)
- * de "Cadastro no sistema" a prova de que o EXE com o e-mail embutido foi
- * testado estava no INÍCIO, e o PO concluiu o cartão ERRADO (o do login Google).
- *
- * Mesmo corte nas DUAS fases: na abertura pesa a pergunta do fim ("pode fazer"
- * responde a ela), que fica igual, e o início diz o que já foi entregue — o que
- * separa o cartão concluído do "a fazer" do passo proposto. O gate (`clampEnds`
- * em boardGate.ts) leva no mínimo isto de cada ponta.
+/*
+ * A resposta final do agente NÃO tem teto: é por ela que o PO decide se o
+ * cartão do pedido conclui ou fica pendente, e um recorte dela (o antigo corte
+ * de 1.000 caracteres, as duas pontas com "…") escondia justamente o "falta X"
+ * do meio. As mensagens intermediárias têm o teto de segurança de seção.
  */
-export const PO_MAX_REPLY_CHARS = 1_000
-/** Quanto do INÍCIO da resposta entra quando ela passa do teto. */
-export const PO_REPLY_HEAD_CHARS = 400
-/** O que sobra para o FIM: o teto menos o início e o "…". */
-export const PO_REPLY_TAIL_CHARS = PO_MAX_REPLY_CHARS - PO_REPLY_HEAD_CHARS - 1
 
-/** Os rótulos das seções do digest — contados no teto total. */
-const LABEL_USER = 'PEDIDO DO USUÁRIO:'
+/** Os rótulos das seções do digest — contados no teto total. Os de texto do
+ *  turno moram em poPromptText.ts, que os cita pelo nome nas regras. */
+const LABEL_USER = PO_USER_SECTION
 const LABEL_CARDS = 'QUADRO ATUAL:'
 const LABEL_CALLS = 'AÇÕES DESTE TURNO:'
 const LABEL_BACKGROUND = 'TRABALHO EM SEGUNDO PLANO AINDA RODANDO:'
-const LABEL_REPLY = 'ÚLTIMA RESPOSTA DO AGENTE:'
+const LABEL_MESSAGES = PO_MESSAGES_SECTION
+const LABEL_REPLY = PO_REPLY_SECTION
 const LABEL_TASKS = 'TAREFAS DO REGISTRO NESTA CONVERSA:'
 /** Exportado: o prompt de fechamento cita esta seção pelo nome. */
 export const LABEL_RETURNED = PO_RETURNED_SECTION
@@ -164,37 +166,40 @@ export const LABEL_RETURNED = PO_RETURNED_SECTION
 const LIST_MARK = '- '
 
 /**
- * O teto TOTAL do digest: o custo de uma análise não pode crescer com o tamanho
- * da conversa. A conta do PIOR caso, somando os tetos acima:
+ * O teto TOTAL do digest, FORA o texto da resposta final (que vai inteiro, sem
+ * teto — ver acima): o resto não pode crescer com o tamanho da conversa. A conta
+ * do PIOR caso, somando os tetos acima:
  *
  * ```
- *   1.200  pedido                 (PO_MAX_USER_CHARS)
+ *  60.000  mensagem do usuário    (PO_MAX_USER_CHARS = PO_MAX_SECTION_CHARS)
  *   4.200  quadro                 (30 × 140)
  *  12.120  ações                  (60 × 202: "- " + 200)
  *     560  segundo plano          (5 × 112: "- " + 110)
- *   1.000  resposta               (400 do início + "…" + 599 do fim)
+ *  60.000  mensagens do agente    (PO_MAX_SECTION_CHARS)
  *   1.680  tarefas do registro    (15 × 112: "- " + 110)
- *     150  rótulos das 6 seções
- *     122  quebras de linha       (123 linhas no pior caso)
+ *     232  rótulos das 7 seções
+ *     125  quebras de linha       (126 linhas no pior caso)
  *  ------
- *  21.032  caracteres
+ * 138.917  caracteres + a resposta final
  * ```
  *
- * Em português, ~5k–7k tokens. Quem mexer em qualquer teto daqui tem que refazer
- * esta conta — o teste do pior caso (poDigest.test.ts) monta um digest com
- * TODOS os tetos estourados e exige que ele feche exatamente neste número.
+ * Os 60k por seção são teto de SEGURANÇA, não o tamanho normal: um turno comum
+ * fica na casa dos poucos milhares. Quem mexer em qualquer teto daqui tem que
+ * refazer esta conta — o teste do pior caso (poDigest.test.ts) monta um digest
+ * com TODOS os tetos estourados e exige que ele feche exatamente neste número
+ * mais o tamanho da resposta final.
  */
 export const PO_MAX_DIGEST_CHARS =
   PO_MAX_USER_CHARS +
   PO_MAX_CARDS * PO_MAX_CARD_LINE_CHARS +
   PO_MAX_CALLS * (LIST_MARK.length + PO_MAX_CALL_CHARS) +
   PO_MAX_BACKGROUND_TASKS * (LIST_MARK.length + PO_MAX_BACKGROUND_LINE_CHARS) +
-  PO_MAX_REPLY_CHARS +
+  PO_MAX_SECTION_CHARS +
   PO_MAX_LEDGER_TASKS * (LIST_MARK.length + PO_MAX_TASK_LINE_CHARS) +
-  [LABEL_USER, LABEL_CARDS, LABEL_CALLS, LABEL_BACKGROUND, LABEL_REPLY, LABEL_TASKS].join('').length +
-  // 6 rótulos + pedido + cartões + ações + segundo plano + resposta + tarefas
-  // + 5 linhas em branco entre as seções: 123 linhas, ligadas por 122 quebras.
-  (6 + 1 + PO_MAX_CARDS + PO_MAX_CALLS + PO_MAX_BACKGROUND_TASKS + 1 + PO_MAX_LEDGER_TASKS + 5) - 1
+  [LABEL_USER, LABEL_CARDS, LABEL_CALLS, LABEL_BACKGROUND, LABEL_MESSAGES, LABEL_REPLY, LABEL_TASKS].join('').length +
+  // 7 rótulos + pedido + cartões + ações + segundo plano + mensagens + resposta
+  // + tarefas + 6 linhas em branco entre as seções: 126 linhas, 125 quebras.
+  (7 + 1 + PO_MAX_CARDS + PO_MAX_CALLS + PO_MAX_BACKGROUND_TASKS + 1 + 1 + PO_MAX_LEDGER_TASKS + 6) - 1
 
 export interface PoCall {
   tool: string
@@ -206,18 +211,6 @@ export interface PoCall {
 export function clamp(text: string, max: number): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean
-}
-
-/**
- * Como `clamp`, mas guardando as DUAS pontas: `head` caracteres do início, um
- * "…" no lugar do meio e o resto do teto com o fim. O meio de uma resposta
- * longa é o relato passo a passo; a entrega costuma abrir o texto e a pergunta
- * ao usuário, fechá-lo. Mesma regra do `clampEnds` do gate.
- */
-function clampEnds(text: string, max: number, head: number): string {
-  const clean = (text ?? '').replace(/\s+/g, ' ').trim()
-  if (clean.length <= max) return clean
-  return `${clean.slice(0, head)}…${clean.slice(clean.length - (max - head - 1))}`
 }
 
 function statusLabel(status: BoardItemStatus): string {
@@ -273,9 +266,15 @@ export function buildPoDigest(input: {
   calls: PoCall[]
   phase?: PoPhase
   ledgerTasks?: PoLedgerTask[]
-  /** O último texto final do agente: a do turno no fechamento, a do turno
-   *  anterior na abertura. */
+  /** A resposta final do agente, INTEIRA: a do turno que acabou no fechamento,
+   *  a do turno anterior na abertura (com rótulo próprio). */
   agentReply?: string | null
+  /** Só no fechamento: o que o agente principal escreveu no turno ANTES da
+   *  resposta final, em ordem. */
+  agentMessages?: readonly string[]
+  /** Só no fechamento: os turnos adiados pelo cooldown que este julga junto,
+   *  do mais antigo para o mais novo — cada um com rótulo próprio. */
+  earlierTurns?: readonly PoTurnLog[]
   /** As descrições do que ainda roda em segundo plano (snapshot
    *  `background-tasks`). Só o fechamento as mostra. */
   background?: readonly string[]
@@ -294,7 +293,8 @@ export function buildPoDigest(input: {
   const calls = input.calls.slice(-PO_MAX_CALLS)
   const lines = [
     LABEL_USER,
-    clamp(input.userText, PO_MAX_USER_CHARS) || '(sem texto)',
+    // Inteira e com as quebras de linha: só o teto de segurança corta (pelo meio).
+    cutMiddle(input.userText ?? '', PO_MAX_USER_CHARS) || '(sem texto)',
     '',
     LABEL_CARDS,
     ...(cards.length === 0
@@ -339,12 +339,16 @@ export function buildPoDigest(input: {
       const line = (id: string): string => (resumed.has(id) ? `${id} ${PO_RESUMED_MARK}` : id)
       lines.push('', LABEL_RETURNED, ...returned.map((id) => `${LIST_MARK}${clamp(line(id), PO_MAX_RETURNED_LINE_CHARS)}`))
     }
+    // O que o agente principal disse ao longo do turno, antes da resposta final.
+    // Sem nada, sem seção.
+    const messages = formatTurnMessages(input.earlierTurns ?? [], input.agentMessages ?? [])
+    if (messages) lines.push('', LABEL_MESSAGES, messages)
   }
-  // O alvo das ferramentas não mostra o resultado de uma pesquisa nem a
-  // pergunta que deixou o trabalho esperando o usuário — a resposta mostra.
-  // Sem texto, sem seção: o digest fica exatamente como era.
-  const reply = clampEnds(input.agentReply ?? '', PO_MAX_REPLY_CHARS, PO_REPLY_HEAD_CHARS)
-  if (reply) lines.push('', LABEL_REPLY, reply)
+  // A resposta final, INTEIRA e sem teto: é por ela que o PO decide o cartão do
+  // pedido (poPromptText.ts). Na abertura é a do turno anterior, com o rótulo
+  // dizendo isso. Sem texto, sem seção.
+  const reply = (input.agentReply ?? '').trim()
+  if (reply) lines.push('', (input.phase ?? 'close') === 'close' ? LABEL_REPLY : PO_PREVIOUS_REPLY_SECTION, reply)
   // Só aparece quando há algo a mostrar: uma seção vazia ensinaria o modelo a
   // esperar por uma fonte de evidência que não existe nesta conversa.
   const ledgerTasks = pickLedgerTasks(input.ledgerTasks ?? [])

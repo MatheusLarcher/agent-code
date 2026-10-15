@@ -1280,7 +1280,9 @@ describe('Po — vínculo automático tarefa↔cartão quando o cartão entra em
 
 describe('Po — a última resposta do agente como evidência', () => {
   const text = (value: string, final = true): ChatEvent => ({ kind: 'assistant-text', id: 'a', text: value, final })
-  const replyOf = (prompt: string): string | null => prompt.split('ÚLTIMA RESPOSTA DO AGENTE:\n')[1] ?? null
+  // O rótulo muda com a fase: a do turno no fechamento, a do turno ANTERIOR na abertura.
+  const replyOf = (prompt: string): string | null =>
+    prompt.split(/RESPOSTA FINAL DO AGENTE (?:NESTE TURNO|NO TURNO ANTERIOR) \(completa\):\n/)[1] ?? null
 
   it('o fechamento leva a resposta final do turno e conclui a pesquisa entregue', async () => {
     const board = fakeBoard([card({ sourceStatus: 'in_progress', sourceTitle: 'Pesquisar cadastro no sistema' })])

@@ -10,9 +10,10 @@ import {
   PO_MAX_CALLS,
   PO_MAX_DIGEST_CHARS,
   PO_MAX_LEDGER_TASKS,
-  PO_MAX_REPLY_CHARS,
-  PO_REPLY_HEAD_CHARS,
-  PO_REPLY_TAIL_CHARS,
+  PO_MAX_SECTION_CHARS,
+  PO_PREVIOUS_REPLY_SECTION,
+  PO_REPLY_SECTION,
+  PO_USER_SECTION,
   type PoCall,
   type PoLedgerTask
 } from './poPrompt'
@@ -125,11 +126,9 @@ describe('digest do fechamento — o caso das 14:54 (turno longo)', () => {
 
   it('o material do teste é o de um turno longo de verdade', () => {
     expect(ACOES.length).toBeGreaterThan(PO_MAX_CALLS)
-    expect(RESPOSTA.length).toBeGreaterThan(PO_MAX_REPLY_CHARS)
+    // Maior que os 1.000 do corte antigo, que perdia o meio (e às vezes o início).
+    expect(RESPOSTA.length).toBeGreaterThan(1_000)
     expect(REGISTRO.length).toBeGreaterThan(PO_MAX_LEDGER_TASKS)
-    // As duas pontas cabem inteiras nos seus tetos.
-    expect(INICIO_RECONSTRUIDO.length).toBeLessThanOrEqual(PO_REPLY_HEAD_CHARS)
-    expect(FIM_REAL.length).toBeLessThanOrEqual(PO_REPLY_TAIL_CHARS)
     // E a consulta antiga (`limit` sobre a ordem crescente = as 15 MAIS
     // ANTIGAS) deixava de fora justamente as tarefas do trabalho de agora.
     const antigo = REGISTRO.slice(0, PO_MAX_LEDGER_TASKS).map((task) => task.title)
@@ -137,13 +136,13 @@ describe('digest do fechamento — o caso das 14:54 (turno longo)', () => {
     expect(antigo).not.toContain("Setup por conta com e-mail embutido + corrigir 'Sem conexão'")
   })
 
-  it('leva o INÍCIO (a prova de que o EXE foi testado) e o FIM real da resposta', () => {
-    const reply = section(digest, 'ÚLTIMA RESPOSTA DO AGENTE:')
-    expect(reply.length).toBe(PO_MAX_REPLY_CHARS)
+  it('leva a resposta final INTEIRA — o início, o meio e o fim', () => {
+    const reply = section(digest, PO_REPLY_SECTION)
+    expect(reply).toBe(RESPOSTA)
     expect(reply.startsWith(INICIO_RECONSTRUIDO)).toBe(true)
     expect(reply.endsWith(FIM_REAL)).toBe(true)
-    // O que sai é o meio.
-    expect(reply).not.toContain('conferi o hash do instalador')
+    // O meio, que o corte antigo tirava, agora fica.
+    expect(reply).toContain('conferi o hash do instalador')
   })
 
   it('leva as ÚLTIMAS ações, não as primeiras', () => {
@@ -179,21 +178,24 @@ describe('digest do fechamento — o caso das 14:54 (turno longo)', () => {
   it('o quadro e o pedido vão inteiros, e o digest fica dentro do teto total', () => {
     expect(digest).toContain(`${EXE_CARD} [em andamento] Corrigir e testar geração automática do EXE`)
     expect(digest).toContain(`${GOOGLE_CARD} [em andamento] Adicionar login com Google`)
-    expect(digest).toContain(PEDIDO)
-    expect(digest.length).toBeLessThanOrEqual(PO_MAX_DIGEST_CHARS)
+    expect(section(digest, PO_USER_SECTION)).toBe(PEDIDO)
+    expect(digest.length).toBeLessThanOrEqual(PO_MAX_DIGEST_CHARS + RESPOSTA.length)
   })
 
-  it('a abertura leva o mesmo corte de duas pontas — o fim fica igual', () => {
+  it('a abertura leva a mesma resposta inteira, rotulada como a do turno ANTERIOR', () => {
     const open = buildPoDigest({ phase: 'open', userText: 'pode apagar', cards: QUADRO, calls: [], agentReply: RESPOSTA })
-    expect(section(open, 'ÚLTIMA RESPOSTA DO AGENTE:')).toBe(section(digest, 'ÚLTIMA RESPOSTA DO AGENTE:'))
+    expect(section(open, PO_PREVIOUS_REPLY_SECTION)).toBe(RESPOSTA)
+    expect(open).not.toContain(PO_REPLY_SECTION)
   })
 })
 
 describe('digest — teto total', () => {
-  it('o pior caso, com TODOS os tetos estourados, fecha exatamente na conta documentada', () => {
+  it('o pior caso, com TODOS os tetos estourados, fecha exatamente na conta documentada + a resposta', () => {
+    const reply = 'r'.repeat(90_000)
     const digest = buildPoDigest({
       phase: 'close',
-      userText: 'p'.repeat(5_000),
+      userText: 'p'.repeat(70_000),
+      agentMessages: ['m'.repeat(40_000), 'n'.repeat(40_000)],
       // Id acima do formato do quadro: o corte da linha come o título, não o id.
       cards: Array.from({ length: 40 }, (_, i) => ({
         id: `bi-${String(i).padStart(40, '0')}`,
@@ -201,13 +203,17 @@ describe('digest — teto total', () => {
         status: 'in_progress' as const
       })),
       calls: Array.from({ length: 100 }, () => ({ tool: 'mcp__servidor__ferramenta', detail: 'd'.repeat(500) })),
-      agentReply: 'r'.repeat(5_000),
+      agentReply: reply,
       ledgerTasks: Array.from({ length: 30 }, () => ({ title: 'x'.repeat(300), status: 's'.repeat(40) })),
       background: Array.from({ length: 12 }, () => 'b'.repeat(400))
     })
-    expect(digest.length).toBe(PO_MAX_DIGEST_CHARS)
-    expect(PO_MAX_DIGEST_CHARS).toBe(21_032)
+    expect(digest.length).toBe(PO_MAX_DIGEST_CHARS + reply.length)
+    expect(PO_MAX_DIGEST_CHARS).toBe(138_917)
     expect(digest).toContain(`bi-${'0'.repeat(40)} [em andamento] ttt`)
+    // A resposta final passa do teto de seção e vai inteira; o resto é cortado pelo meio, com aviso.
+    expect(reply.length).toBeGreaterThan(PO_MAX_SECTION_CHARS)
+    expect(digest).toContain(`${PO_REPLY_SECTION}\n${reply}\n`)
+    expect(digest.match(/\[… \d+ caracteres omitidos\]/g)).toHaveLength(2)
   })
 
   it('uma linha de ação enorme é cortada no teto da linha, não estoura o digest', () => {

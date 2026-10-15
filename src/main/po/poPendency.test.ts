@@ -145,7 +145,7 @@ describe('pendência de ponta a ponta no SQLite real: entregue → pendência �
         if (!close) {
           if (prompt.includes('QUADRO ATUAL:\n(vazio)')) return 'NOVA | Implementar a fase 1 do escritório | pedido do usuário'
           const pendencia = await byTitle('Commitar')
-          return prompt.includes('PEDIDO DO USUÁRIO:\ncommita') && pendencia ? `ANDAMENTO ${pendencia.id} | o usuário autorizou o commit` : 'OK'
+          return prompt.includes('MENSAGEM DO USUÁRIO (completa):\ncommita') && pendencia ? `ANDAMENTO ${pendencia.id} | o usuário autorizou o commit` : 'OK'
         }
         const pedido = await byTitle('Implementar')
         // Turno 1 (tipo c): entregue + pendência. Turno 2: OK (o padrão conclui).

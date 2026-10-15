@@ -32,6 +32,16 @@ export const PO_RETURNED_SECTION = 'EM ANDAMENTO NO FIM DESTE TURNO (VIRAM CONCL
  *  usuário respondeu (a retomada automática) — curta para caber no teto da linha. */
 export const PO_RESUMED_MARK = '(retomado)'
 
+/** Os rótulos das seções com o TEXTO do turno (poTurnText.ts): moram aqui porque
+ *  as regras abaixo os citam pelo nome. A mensagem do usuário e a resposta final
+ *  vão inteiras; as mensagens intermediárias são as que o agente principal
+ *  escreveu no turno antes da resposta final, em ordem. */
+export const PO_USER_SECTION = 'MENSAGEM DO USUÁRIO (completa):'
+export const PO_MESSAGES_SECTION = 'MENSAGENS DO AGENTE DURANTE O TURNO (em ordem):'
+export const PO_REPLY_SECTION = 'RESPOSTA FINAL DO AGENTE NESTE TURNO (completa):'
+/** Na abertura, a resposta final é a do turno que acabou ANTES deste pedido. */
+export const PO_PREVIOUS_REPLY_SECTION = 'RESPOSTA FINAL DO AGENTE NO TURNO ANTERIOR (completa):'
+
 /** O rótulo da seção do fechamento com as etapas do prompt deste turno que
  *  nenhum cartão registra (handoffOrphans.ts) — o prefixo `[id]` do cartão
  *  criado é o que as liga à etapa. */
@@ -42,7 +52,7 @@ export const PO_ORPHAN_SECTION = 'ETAPAS DO PROMPT SEM CARTÃO:'
 export const PO_ORPHAN_RULES = `Cada etapa acima foi pedida no prompt deste turno e nenhum cartão do quadro a registra.
 Resolva TODAS, uma linha por etapa, com o "[id] título" copiado EXATAMENTE como listado — o
 prefixo [id] é o que liga o cartão à etapa:
-- As AÇÕES DESTE TURNO ou a ÚLTIMA RESPOSTA DO AGENTE mostram que a etapa foi feita:
+- As AÇÕES DESTE TURNO ou a RESPOSTA FINAL DO AGENTE mostram que a etapa foi feita:
   FEITA | [id] Título | <motivo com a evidência>
 - Sem essa evidência, ou ela não foi feita: NOVA | [id] Título | <motivo>
 Estas linhas não contam no limite de operações.`
@@ -56,7 +66,7 @@ export const PO_ETAPA_SECTION = 'ETAPAS DO PROMPT DESTE TURNO (O PLACAR DO PLANO
  *  prompt de fechamento fica exatamente como era. */
 export const PO_ETAPA_RULES = `Cada linha acima é uma etapa do prompt deste turno. O "placar" é o status REAL da etapa — o
 que o usuário acompanha; o "cartão [id]" é só o que o agente declarou. Confira CADA etapa contra
-o aceite dela usando as AÇÕES DESTE TURNO, a ÚLTIMA RESPOSTA DO AGENTE, o GIT DA PASTA e as
+o aceite dela usando as AÇÕES DESTE TURNO, a RESPOSTA FINAL DO AGENTE, o GIT DA PASTA e as
 TAREFAS DO REGISTRO, e responda uma linha por etapa que precise de correção:
 - ETAPA [id] | CONCLUÍDA | <evidência> — só quando o aceite foi atendido COM evidência (a resposta
   relata o resultado, ou as ações mostram o "verificar com" rodando e passando) e o cartão ainda
@@ -96,7 +106,7 @@ Regras inegociáveis:
   mesmo assunto) não é diferente de um pedido novo quando já existe um cartão "a fazer" cobrindo
   aquele trabalho: use ANDAMENTO nele. Não responda OK só porque a mensagem, isolada, não parece
   um pedido "novo" — o trabalho está retomando, e o cartão tem que acompanhar.
-- Quando a ÚLTIMA RESPOSTA DO AGENTE propôs um PASSO NOVO ("posso atualizar a VPS?") e o usuário
+- Quando a RESPOSTA FINAL DO AGENTE NO TURNO ANTERIOR propôs um PASSO NOVO ("posso atualizar a VPS?") e o usuário
   autoriza ("pode fazer", "sim", "faça isso"), o trabalho que começa agora é ESSE passo: use
   ANDAMENTO no cartão "a fazer" que cobre o passo — tipicamente um que nasceu com o motivo
   "${PO_AWAITING_AUTHORIZATION_REASON}". Nunca use ANDAMENTO no cartão já concluído do pedido
@@ -110,8 +120,9 @@ Regras inegociáveis:
 - O título diz o que o usuário pediu, em uma linha e em português claro.
 - Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA" com uma tarefa do MESMO assunto,
   trate como cartão já existente — não crie outro.
-- Se houver uma seção "ÚLTIMA RESPOSTA DO AGENTE", ela é a resposta do turno ANTERIOR — o que o
-  usuário está respondendo agora. Use-a para reconhecer continuação (um "pode fazer" responde ao
+- A seção "${PO_USER_SECTION.replace(/:$/, '')}" traz o que o usuário escreveu agora, inteiro.
+- Se houver uma seção "${PO_PREVIOUS_REPLY_SECTION.replace(/:$/, '')}", ela é a resposta do turno
+  ANTERIOR — o que o usuário está respondendo agora. Use-a para reconhecer continuação (um "pode fazer" responde ao
   que o agente perguntou ali) e para dar ao título o assunto real, nunca um título genérico como
   "Pesquisar direito". Ela não é pedido: só vira cartão o que o USUÁRIO pediu.
 - A seção "GIT DA PASTA", quando houver, é só contexto do estado do projeto: ela não vira cartão.
@@ -161,15 +172,27 @@ No fim da ação vai um sufixo opcional que decide o controle do cartão:
 
 Se não houver nada a corrigir nem cartão a justificar, responda exatamente OK.
 
+O QUE DECIDE O CARTÃO DO PEDIDO — leia primeiro:
+- O cartão do pedido é o que cobre a "${PO_USER_SECTION.replace(/:$/, '')}". CONCLUIR ou PENDENTE
+  nele se decide pela "${PO_REPLY_SECTION.replace(/:$/, '')}": se ela diz que entregou o que foi
+  pedido, CONCLUIR; se ela diz que falta parte do pedido, PENDENTE com o que falta — ou, quando o
+  que falta é um passo à parte depois da entrega, CONCLUIR e NOVA (tipos b e c abaixo).
+- As AÇÕES DESTE TURNO e as "${PO_MESSAGES_SECTION.replace(/:$/, '')}" são APOIO: confirmam,
+  dão o contexto e o assunto, mas não contrariam a resposta final. Um "vou fazer X" ou "falta X"
+  numa mensagem do meio do turno não é pendência se a resposta final diz que X foi feito; e uma
+  ação que rodou não conclui o pedido se a resposta final diz que ele não foi entregue.
+- Com turnos adiados (rótulo "turno anterior" nas mensagens), cada um traz a resposta final
+  DAQUELE turno; a da seção "${PO_REPLY_SECTION.replace(/:$/, '')}" é a do turno mais recente.
+
 O PADRÃO DO FIM DO TURNO — leia antes das regras:
 - Este turno terminou normalmente: sem erro e sem o usuário parar. Cada cartão da seção
   "${PO_RETURNED_SECTION}" vira CONCLUÍDO sozinho, a menos que você escreva PENDENTE para ele.
   PENDENTE é o ÚNICO jeito de um cartão continuar "a fazer" num turno normal: um OK, ou um
   cartão daquela seção que você não citar, vira concluído.
-- Use PENDENTE só quando a ÚLTIMA RESPOSTA DO AGENTE disser que o TRABALHO PRINCIPAL do cartão
+- Use PENDENTE só quando a RESPOSTA FINAL DO AGENTE disser que o TRABALHO PRINCIPAL do cartão
   NÃO foi feito: parou no meio, falta parte do pedido, ou está bloqueado por uma escolha (ou um
   dado) sem a qual o pedido não foi entregue. PENDENTE NÃO muda o status: ele diz ao usuário O
-  QUE faltou, com base nas AÇÕES e na ÚLTIMA RESPOSTA DO AGENTE — concreto, como "falta
+  QUE faltou, com base nas AÇÕES e na RESPOSTA FINAL DO AGENTE — concreto, como "falta
   implementar a tela de edição; o agente parou na listagem" ou "esperando o usuário escolher
   entre as duas opções". Motivo genérico ("não terminou", "em andamento") não serve.
   Exemplo (espera o agente, sem VOCÊ): PENDENTE <id> | falta implementar a tela de edição; o agente parou na listagem
@@ -191,7 +214,7 @@ Regras inegociáveis:
 - Toda alteração sua leva um MOTIVO escrito para o usuário ler no cartão. Linha sem motivo é
   descartada — inclusive TITULO: diga por que o título mudou.
 - Fora da seção acima, use CONCLUIR só com EVIDÊNCIA de que o trabalho daquela tarefa terminou:
-  as AÇÕES mostram (o arquivo foi escrito, o teste rodou) ou a ÚLTIMA RESPOSTA DO AGENTE entrega
+  as AÇÕES mostram (o arquivo foi escrito, o teste rodou) ou a RESPOSTA FINAL DO AGENTE entrega
   o resultado pedido — em pesquisa, investigação ou diagnóstico, o resultado É a resposta.
   Suposição não basta para um cartão que o turno nem tocou.
 - Se houver a seção "GIT DA PASTA", ela é evidência do estado real do projeto: um arquivo citado
@@ -199,7 +222,7 @@ Regras inegociáveis:
   ("falta commitar", "Commitar …") com o status limpo e um commit novo em "commits desde o
   cartão" foi feita — CONCLUIR nela. Status limpo sem commit novo NÃO prova que algo foi
   commitado. A seção nunca traz conteúdo de arquivo; não invente o que ela não mostra.
-- Se a ÚLTIMA RESPOSTA DO AGENTE termina com uma pergunta ao usuário, decida de que TIPO ela é.
+- Se a RESPOSTA FINAL DO AGENTE termina com uma pergunta ao usuário, decida de que TIPO ela é.
   O critério é um só: a resposta diz que o pedido do usuário NÃO foi entregue?
   a) A pergunta BLOQUEIA o pedido: o agente parou ANTES de entregar porque falta um dado, uma
      escolha entre opções ou uma confirmação ("qual você prefere?", "faço assim?" antes de

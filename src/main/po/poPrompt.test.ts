@@ -7,8 +7,8 @@ import {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_MAX_CALLS,
   PO_MAX_OPS,
-  PO_MAX_REPLY_CHARS,
-  PO_REPLY_HEAD_CHARS,
+  PO_PREVIOUS_REPLY_SECTION,
+  PO_REPLY_SECTION,
   PO_RESUMED_MARK,
   PO_RETURNED_SECTION,
   PO_SYSTEM_PROMPT_CLOSE,
@@ -42,36 +42,32 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
   }
 }
 
-describe('digest — última resposta do agente', () => {
+describe('digest — resposta final do agente', () => {
   const base = { userText: 'pesquisa direito', cards: [], calls: [] }
 
   it('sem resposta, o digest é exatamente o de antes', () => {
     const without = buildPoDigest(base)
     expect(buildPoDigest({ ...base, agentReply: null })).toBe(without)
     expect(buildPoDigest({ ...base, agentReply: '   ' })).toBe(without)
-    expect(without).not.toContain('ÚLTIMA RESPOSTA DO AGENTE')
+    expect(without).not.toContain('RESPOSTA FINAL DO AGENTE')
   })
 
-  it('mostra a resposta nas duas fases', () => {
-    for (const phase of ['open', 'close'] as const) {
-      const digest = buildPoDigest({ ...base, phase, agentReply: 'Encontrei três opções de cadastro.' })
-      expect(digest).toContain('ÚLTIMA RESPOSTA DO AGENTE:\nEncontrei três opções de cadastro.')
-    }
+  it('mostra a resposta nas duas fases, rotulada pela fase', () => {
+    const close = buildPoDigest({ ...base, phase: 'close', agentReply: 'Encontrei três opções de cadastro.' })
+    expect(close).toContain(`${PO_REPLY_SECTION}\nEncontrei três opções de cadastro.`)
+    const open = buildPoDigest({ ...base, phase: 'open', agentReply: 'Encontrei três opções de cadastro.' })
+    expect(open).toContain(`${PO_PREVIOUS_REPLY_SECTION}\nEncontrei três opções de cadastro.`)
+    expect(open).not.toContain(PO_REPLY_SECTION)
   })
 
-  it('resposta longa leva as DUAS pontas — o que foi entregue e a pergunta do fim — dentro do teto', () => {
-    const reply = `Entreguei a correção do login. ${'contexto '.repeat(200)}Posso aplicar a correção?`
+  it('resposta longa vai INTEIRA — sem corte, sem "…" no meio', () => {
+    const reply = `Entreguei a correção do login. ${'contexto '.repeat(20_000)}Falta só o teste de logout.`
     const digest = buildPoDigest({ ...base, agentReply: reply })
-    const section = digest.split('ÚLTIMA RESPOSTA DO AGENTE:\n')[1]
-    expect(section.length).toBe(PO_MAX_REPLY_CHARS)
-    expect(section.startsWith('Entreguei a correção do login.')).toBe(true)
-    expect(section.endsWith('Posso aplicar a correção?')).toBe(true)
-    // O meio vira um "…" só, entre as pontas.
-    expect(section.charAt(PO_REPLY_HEAD_CHARS)).toBe('…')
+    expect(digest.split(`${PO_REPLY_SECTION}\n`)[1]).toBe(reply)
   })
 
   it('o fechamento aceita a resposta como evidência e proíbe concluir o que espera o usuário', () => {
-    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('ÚLTIMA RESPOSTA DO AGENTE entrega\n  o resultado pedido')
+    expect(PO_SYSTEM_PROMPT_CLOSE).toContain('RESPOSTA FINAL DO AGENTE entrega\n  o resultado pedido')
     expect(PO_SYSTEM_PROMPT_CLOSE).toMatch(/pergunta BLOQUEIA o pedido[\s\S]*NÃO use CONCLUIR[\s\S]*use PENDENTE/)
     expect(PO_SYSTEM_PROMPT_CLOSE).toContain('Suposição não basta para um cartão que o turno nem tocou')
   })
@@ -92,7 +88,8 @@ describe('digest — última resposta do agente', () => {
   })
 
   it('a abertura usa a resposta anterior para continuação e títulos com contexto', () => {
-    expect(PO_SYSTEM_PROMPT_OPEN).toContain('"ÚLTIMA RESPOSTA DO AGENTE"')
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain(`"${PO_PREVIOUS_REPLY_SECTION.replace(/:$/, '')}"`)
+    expect(PO_SYSTEM_PROMPT_OPEN).toContain('RESPOSTA FINAL DO AGENTE NO TURNO ANTERIOR propôs um PASSO NOVO')
     expect(PO_SYSTEM_PROMPT_OPEN).toContain('só vira cartão o que o USUÁRIO pediu')
   })
 })
@@ -190,7 +187,9 @@ describe('pergunta no fim da resposta — bloqueia o pedido ou propõe um passo 
       agentReply: RESPOSTA_1
     })
     expect(prompt).toContain(`${AUDIT_ID} [em andamento] Auditar/remover`)
-    expect(prompt).toMatch(/ÚLTIMA RESPOSTA DO AGENTE:\n.*e eu não vou mexer lá\. Posso atualizar a VPS\?$/)
+    expect(prompt).toMatch(/RESPOSTA FINAL DO AGENTE NESTE TURNO \(completa\):\n[\s\S]*e eu não vou mexer lá\. Posso atualizar a VPS\?$/)
+    // Inteira: a resposta real do caso entra sem corte nenhum.
+    expect(prompt).toContain(`${PO_REPLY_SECTION}\n${RESPOSTA_1.trim()}`)
   })
 
   it('caso 1: CONCLUIR no pedido + NOVA do passo viram [complete, create "a fazer" aguardando autorização]', () => {
@@ -257,12 +256,12 @@ describe('digest', () => {
   it('o prompt carrega as regras e o digest', () => {
     const prompt = buildPoPrompt({ userText: 'x', cards: [], calls: [] })
     expect(prompt).toContain('CONCLUIR')
-    expect(prompt).toContain('PEDIDO DO USUÁRIO')
+    expect(prompt).toContain('MENSAGEM DO USUÁRIO (completa):')
   })
 
   it('a abertura não leva seção de ações — o turno ainda nem começou', () => {
     const open = buildPoDigest({ userText: 'arruma o login', cards: [], calls: [], phase: 'open' })
-    expect(open).toContain('PEDIDO DO USUÁRIO')
+    expect(open).toContain('MENSAGEM DO USUÁRIO (completa):')
     expect(open).toContain('QUADRO ATUAL')
     expect(open).not.toContain('AÇÕES DESTE TURNO')
   })
