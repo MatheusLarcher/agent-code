@@ -70,6 +70,8 @@ describe('subagentMemoryInput', () => {
     const select = vi.fn(async () => ({ block: 'B', relPaths: ['b.md'], entries: [] }))
     await subagentMemoryInput({ prompt: 'Faça.' }, { dir: '/mem', usesTypeSafe: haiku, select })
     expect(select).toHaveBeenCalledWith('/mem', 'Faça.', { subject: 'subagent' })
+    await subagentMemoryInput({ prompt: 'Faça.' }, { dir: '/mem', usesTypeSafe: haiku, select, context: '[carimbo]' })
+    expect(select).toHaveBeenLastCalledWith('/mem', 'Faça.', { subject: 'subagent', context: '[carimbo]' })
   })
 
   it('não mexe no input: TypeSafe, prompt ausente, nada escolhido, null ou falha', async () => {

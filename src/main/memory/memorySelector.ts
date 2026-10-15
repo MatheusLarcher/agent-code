@@ -33,6 +33,8 @@ export interface SubagentMemoryOptions {
   conversation?: (maxChars: number) => string
   /** Env da conta Claude da conversa. */
   env?: NodeJS.ProcessEnv
+  /** Carimbo do envio (máquina, data, hora): vai na pergunta ao Haiku. */
+  context?: string
   /** Injetável para o teste; padrão = TypeSafe-ou-Haiku pela configuração. */
   usesTypeSafe?: () => Promise<boolean>
   /** Injetável para o teste; padrão = selectMemoriesWithHaiku. */
@@ -60,7 +62,8 @@ export async function subagentMemoryInput(toolInput: unknown, opts: SubagentMemo
     const chosen: HaikuMemorySelection | null = await select(opts.dir, task, {
       subject: 'subagent',
       ...(opts.conversation ? { conversation: opts.conversation } : {}),
-      ...(opts.env ? { env: opts.env } : {})
+      ...(opts.env ? { env: opts.env } : {}),
+      ...(opts.context ? { context: opts.context } : {})
     })
     if (!chosen || !chosen.block.trim()) return null
     return { ...input, prompt: `${chosen.block}\n\n${input.prompt}` }

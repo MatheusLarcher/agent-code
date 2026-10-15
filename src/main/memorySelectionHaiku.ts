@@ -94,6 +94,9 @@ export interface HaikuMemoryDeps {
   conversation?: (maxChars: number) => string
   /** De quem é a mensagem: do usuário (turno) ou a tarefa de um subagente. */
   subject?: 'user' | 'subagent'
+  /** Carimbo do envio (buildContextStamp): máquina, data, hora e fuso de
+   *  AGORA — "hoje", "esta máquina" e afins só se resolvem com ele. */
+  context?: string
 }
 
 /** Cabeçalho de uma candidata: o que o Haiku vê, e nada além disso. */
@@ -169,10 +172,12 @@ export function buildHaikuQuestion(
   candidates: readonly MemoryFile[],
   conversation?: (maxChars: number) => string,
   subject: 'user' | 'subagent' = 'user',
-  maxChars: number = HAIKU_QUESTION_MAX_CHARS
+  maxChars: number = HAIKU_QUESTION_MAX_CHARS,
+  context: string = ''
 ): string {
   const label = subject === 'subagent' ? 'Tarefa entregue ao subagente' : 'Mensagem atual do usuário'
-  const message = `${label}, entre as marcas:\n<<<\n${queryText}\n>>>\n\nMemórias candidatas:\n`
+  const stamp = context.trim() ? `${context.trim()}\n\n` : ''
+  const message = `${stamp}${label}, entre as marcas:\n<<<\n${queryText}\n>>>\n\nMemórias candidatas:\n`
   let used = message.length
   const lines: string[] = []
   for (const file of candidates) {
@@ -264,7 +269,7 @@ export async function selectMemoriesWithHaiku(dir: string, queryText: string, de
       }, deps.timeoutMs ?? HAIKU_MEMORY_TIMEOUT_MS)
     })
     const run = deps.query ?? (query as MemoryQuery)
-    const question = buildHaikuQuestion(input, candidates, deps.conversation, deps.subject)
+    const question = buildHaikuQuestion(input, candidates, deps.conversation, deps.subject, HAIKU_QUESTION_MAX_CHARS, deps.context)
     const raw = await Promise.race([askHaiku(question, run, abortController, deps.env), timeout])
     if (raw === null) return null
     const picked = parseHaikuMemoryChoice(raw)

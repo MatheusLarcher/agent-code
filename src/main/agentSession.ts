@@ -632,6 +632,8 @@ export class AgentSession {
   /** Ordinal da decisão de memória. Uma decisão que demora não pode sobrescrever
    *  o registro de uma mensagem posterior que já decidiu. */
   private memorySelectionTurn = 0
+  /** De onde veio a última mensagem: o carimbo da escolha de memória do subagente. */
+  private lastMessageOrigin: MessageOrigin = 'pc'
   /** Memórias já postas na mensagem nesta conversa (relPath → hash): a mesma,
    *  igual, não vai de novo. Zera ao compactar e ao descartar a sessão. */
   private readonly injectedMemories = new InjectedMemoryLedger()
@@ -1422,7 +1424,8 @@ export class AgentSession {
             ? await subagentMemoryInput(input.tool_input, {
               dir: getCacheInfo().memoriesDir,
               conversation: (max) => this.conversationDigest.render(max),
-              env: claudeAccounts.envFor(this.opts.claudeAccountId)
+              env: claudeAccounts.envFor(this.opts.claudeAccountId),
+              context: buildContextStamp(this.lastMessageOrigin)
             })
             : null
           const withInput = updatedInput ? { updatedInput } : {}
@@ -1710,6 +1713,7 @@ export class AgentSession {
     // into history or passed to vision relay. Relevant memories go in the
     // message (Haiku/lexical) or in the hook (TypeSafe) — see below.
     const stamp = buildContextStamp(origin)
+    this.lastMessageOrigin = origin
     this.activeMemoryQuery = outText
     // UMA decisão por mensagem do usuário. Disparada aqui, e não no hook de
     // request, porque o hook roda outra vez a cada volta do loop de ferramentas.
@@ -1723,7 +1727,8 @@ export class AgentSession {
       const chosen =await chooseTurnMemories(getCacheInfo().memoriesDir, outText, this.injectedMemories, (dir, query) =>
         selectMemoriesWithHaiku(dir, query, {
           env: claudeAccounts.envFor(this.opts.claudeAccountId),
-          conversation: (max) => this.conversationDigest.render(max)
+          conversation: (max) => this.conversationDigest.render(max),
+          context: stamp
         })
       )
       relevantMemory = chosen.block

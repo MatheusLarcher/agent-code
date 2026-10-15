@@ -216,6 +216,14 @@ describe('buildHaikuQuestion', () => {
     expect(question).not.toContain('Resumo da conversa')
     expect(question).toContain('Mensagem atual do usuário')
   })
+
+  it('leva o carimbo do envio (máquina, data e hora) logo antes da mensagem', async () => {
+    const dir = await memories(base)
+    const stamp = '[Contexto do sistema: mensagem enviada do PC Matheus-2D em 15/10/2026, 09:08:33 (America/Sao_Paulo).]'
+    const question = buildHaikuQuestion('oi', listMemoryFiles(dir), () => 'conversa', 'user', 50_000, stamp)
+    expect(question).toContain(`${stamp}\n\nMensagem atual do usuário`)
+    expect(buildHaikuQuestion('oi', listMemoryFiles(dir))).not.toContain('Contexto do sistema')
+  })
 })
 
 describe('narrowHaikuCandidates', () => {
