@@ -23,6 +23,8 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.localSpeech.model': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.ollama.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.ollama.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
+  'config.deepseek.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.deepseek.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
   'config.skipPermissions': { scope: 'global', source: 'main-kv', store: 'local' },
   'config.windowsControlEnabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.chromeControlEnabled': { scope: 'device', source: 'main-kv', store: 'local' },

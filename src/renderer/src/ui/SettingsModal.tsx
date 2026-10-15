@@ -23,13 +23,13 @@ import { HandoffSettingsSection } from './HandoffSettingsSection'
 import { ScrumMasterSettingsSection } from './ScrumMasterSettingsSection'
 import { SkillCatalogSection } from './SkillCatalogSection'
 import { AndroidToolchainSection } from './AndroidToolchainSection'
+import { DeepSeekSettingsSection } from './DeepSeekSettingsSection'
+import { RevealButton } from './RevealButton'
 import { ipcErrorMessage } from '../ipcError'
 import {
   IconBoard,
   IconDatabase,
   IconChevronDown,
-  IconEye,
-  IconEyeOff,
   IconKey,
   IconMic,
   IconMonitor,
@@ -66,27 +66,12 @@ type DeepPartial<T> = {
 
 const TABS: { id: Tab; label: string; hint: string; icon: JSX.Element }[] = [
   { id: 'geral', label: 'Geral', hint: 'Permissões do agente', icon: <IconSliders size={16} /> },
-  { id: 'modelos', label: 'Modelos e contas', hint: 'Claude, ChatGPT, Ollama', icon: <IconKey size={16} /> },
+  { id: 'modelos', label: 'Modelos e contas', hint: 'Claude, ChatGPT, Ollama, DeepSeek', icon: <IconKey size={16} /> },
   { id: 'skills', label: 'Skills', hint: 'Catálogo em níveis', icon: <IconSparkStar size={16} /> },
   { id: 'voz', label: 'Voz', hint: 'Ditado e leitura', icon: <IconMic size={16} /> },
   { id: 'android', label: 'Android', hint: 'SDK e emulador', icon: <IconSmartphone size={16} /> },
   { id: 'dados', label: 'Dados', hint: 'Pasta, cofre, banco e backups', icon: <IconDatabase size={16} /> }
 ]
-
-/** Eye toggle for secret fields — replaces the old emoji buttons. */
-function RevealButton({ shown, onToggle }: { shown: boolean; onToggle: () => void }): JSX.Element {
-  return (
-    <button
-      className="btn ghost settings-reveal"
-      type="button"
-      onClick={onToggle}
-      title={shown ? 'Ocultar' : 'Mostrar'}
-      aria-label={shown ? 'Ocultar chave' : 'Mostrar chave'}
-    >
-      {shown ? <IconEyeOff size={15} /> : <IconEye size={15} />}
-    </button>
-  )
-}
 
 /**
  * App settings, organized in tabs: Geral (live permission switches), Modelos e
@@ -180,8 +165,12 @@ export function SettingsModal({
     if (ollama.enabled && !ollama.apiKey) {
       notify('aviso', 'Informe a API key do Ollama para habilitar a integração.')
     }
+    const deepseek = { ...cfg.deepseek, apiKey: cfg.deepseek.apiKey.trim() }
+    if (deepseek.enabled && !deepseek.apiKey) {
+      notify('aviso', 'Informe a API key da DeepSeek para habilitar a integração.')
+    }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({ voice: cfg.voice, ollama })
+    await window.api.setConfig({ voice: cfg.voice, ollama, deepseek })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }
@@ -770,6 +759,7 @@ export function SettingsModal({
                       </span>
                     </label>
                   </section>
+                  <DeepSeekSettingsSection cfg={cfg} setCfg={setCfg} loaded={loaded} />
                 </fieldset>
               </>
             )}
@@ -828,7 +818,7 @@ export function SettingsModal({
 
         <div className="modal-actions settings-actions">
           <span className="settings-actions-note">
-            Interruptores e contas aplicam na hora. <strong>Salvar</strong> grava chaves, voz e Ollama.
+            Interruptores e contas aplicam na hora. <strong>Salvar</strong> grava chaves, voz, Ollama e DeepSeek.
           </span>
           <button className="btn ghost" onClick={onClose}>
             Cancelar

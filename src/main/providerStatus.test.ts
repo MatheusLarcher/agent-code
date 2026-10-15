@@ -8,21 +8,33 @@ const boom = async (): Promise<boolean> => {
 }
 
 describe('providerStatusWith', () => {
-  it('combina os três provedores', async () => {
-    expect(await providerStatusWith({ claude: yes, gpt: no, ollama: () => true })).toEqual({
+  it('combina os quatro provedores', async () => {
+    expect(await providerStatusWith({ claude: yes, gpt: no, ollama: () => true, deepseek: () => false })).toEqual({
       claude: true,
       gpt: false,
-      ollama: true
+      ollama: true,
+      deepseek: false
     })
-    expect(await providerStatusWith({ claude: no, gpt: no, ollama: () => false })).toEqual({
+    expect(await providerStatusWith({ claude: no, gpt: no, ollama: () => false, deepseek: () => false })).toEqual({
       claude: false,
       gpt: false,
-      ollama: false
+      ollama: false,
+      deepseek: false
     })
-    expect(await providerStatusWith({ claude: no, gpt: yes, ollama: () => false })).toEqual({
+    expect(await providerStatusWith({ claude: no, gpt: yes, ollama: () => false, deepseek: () => false })).toEqual({
       claude: false,
       gpt: true,
-      ollama: false
+      ollama: false,
+      deepseek: false
+    })
+  })
+
+  it('DeepSeek ligado + chave conta como conectado sozinho', async () => {
+    expect(await providerStatusWith({ claude: no, gpt: no, ollama: () => false, deepseek: () => true })).toEqual({
+      claude: false,
+      gpt: false,
+      ollama: false,
+      deepseek: true
     })
   })
 
@@ -30,10 +42,11 @@ describe('providerStatusWith', () => {
     const ollamaThrows = (): boolean => {
       throw new Error('config')
     }
-    expect(await providerStatusWith({ claude: boom, gpt: yes, ollama: ollamaThrows })).toEqual({
+    expect(await providerStatusWith({ claude: boom, gpt: yes, ollama: ollamaThrows, deepseek: ollamaThrows })).toEqual({
       claude: false,
       gpt: true,
-      ollama: false
+      ollama: false,
+      deepseek: false
     })
   })
 })

@@ -111,7 +111,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     codexStatus: vi.fn(async () => ({ connected: false })),
     sandboxInfo: vi.fn(async () => ({ root: 'C:\\local\\sandbox' })),
     sandboxCreate: vi.fn(async () => ({ path: 'C:\\local\\sandbox\\2026-09-29_10-00_abcd' })),
-    providersStatus: vi.fn(async () => ({ claude: true, gpt: false, ollama: false })),
+    providersStatus: vi.fn(async () => ({ claude: true, gpt: false, ollama: false, deepseek: false })),
     onProvidersChanged: vi.fn(() => () => {}),
     pathExists: vi.fn(async () => true),
     projectTree: vi.fn(async () => ({ nodes: [], truncated: false, missing: [] })),

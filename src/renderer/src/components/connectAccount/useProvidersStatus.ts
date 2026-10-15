@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ProvidersStatus } from '@shared/ipc'
+import { hasAnyProvider } from './providerModels'
 
 const RECHECK_MS = 20_000
 
-/** Estado dos provedores (Claude, GPT, Ollama): lido no início e atualizado a
+/** Estado dos provedores (Claude, GPT, Ollama, DeepSeek): lido no início e atualizado a
  *  cada `providersChanged` do main. null até a primeira resposta. Enquanto
  *  nenhum aparece conectado, reconsulta de tempos em tempos e ao voltar o foco
  *  — uma checagem que falhou (ex.: CLI lento no 1º uso) não prende o card. */
@@ -16,7 +17,7 @@ export function useProvidersStatus(): { status: ProvidersStatus | null; refresh:
     refresh()
     return window.api.onProvidersChanged(setStatus)
   }, [refresh])
-  const noneConnected = !!status && !status.claude && !status.gpt && !status.ollama
+  const noneConnected = !!status && !hasAnyProvider(status)
   useEffect(() => {
     if (!noneConnected) return
     const timer = window.setInterval(refresh, RECHECK_MS)

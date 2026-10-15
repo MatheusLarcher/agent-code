@@ -4,6 +4,8 @@
  */
 import {
   CLAUDE_MODELS,
+  DEEPSEEK_MODELS,
+  isDeepSeekModel,
   OLLAMA_MODELS,
   OPENAI_MODELS,
   type ProvidersStatus
@@ -11,16 +13,25 @@ import {
 
 export type ProviderId = keyof ProvidersStatus
 
-export const PROVIDER_LABEL: Record<ProviderId, string> = { claude: 'Claude', gpt: 'GPT', ollama: 'Ollama' }
+export const PROVIDER_LABEL: Record<ProviderId, string> = {
+  claude: 'Claude',
+  gpt: 'GPT',
+  ollama: 'Ollama',
+  deepseek: 'DeepSeek'
+}
 
 const FIRST_MODEL: Record<ProviderId, string> = {
   claude: CLAUDE_MODELS[0].id,
   gpt: OPENAI_MODELS[0].id,
-  ollama: OLLAMA_MODELS[0].id
+  ollama: OLLAMA_MODELS[0].id,
+  deepseek: DEEPSEEK_MODELS[0].id
 }
 
+/** Ordem de preferência para a conversa nova sem provedor do modelo herdado. */
+const PROVIDER_ORDER: readonly ProviderId[] = ['claude', 'gpt', 'ollama', 'deepseek']
+
 export function hasAnyProvider(status: ProvidersStatus): boolean {
-  return status.claude || status.gpt || status.ollama
+  return PROVIDER_ORDER.some((p) => status[p] === true)
 }
 
 /** Provedor de um modelo. "Automático" roda em Claude (o fallback dele é Claude);
@@ -28,6 +39,7 @@ export function hasAnyProvider(status: ProvidersStatus): boolean {
 export function providerOfModel(model: string | undefined): ProviderId {
   if (model && OPENAI_MODELS.some((m) => m.id === model)) return 'gpt'
   if (model && OLLAMA_MODELS.some((m) => m.id === model)) return 'ollama'
+  if (isDeepSeekModel(model)) return 'deepseek'
   return 'claude'
 }
 
@@ -45,10 +57,10 @@ export function modelAfterConnect(
 }
 
 /** Modelo de uma conversa NOVA: o herdado, se o provedor dele está conectado;
- *  senão o primeiro de um provedor conectado (Claude, GPT, Ollama nessa ordem).
+ *  senão o primeiro de um provedor conectado (Claude, GPT, Ollama, DeepSeek nessa ordem).
  *  Nenhum conectado → o herdado (o card "Conectar conta" resolve depois). */
 export function modelForNewConversation(model: string, status: ProvidersStatus | null): string {
   if (!status || !hasAnyProvider(status) || status[providerOfModel(model)]) return model
-  const first = (['claude', 'gpt', 'ollama'] as const).find((p) => status[p])
+  const first = PROVIDER_ORDER.find((p) => status[p])
   return first ? FIRST_MODEL[first] : model
 }

@@ -63,6 +63,18 @@ describe('servidor MCP app: app_chamar_usuario', () => {
   })
 })
 
+describe('servidor MCP app: ler_pdf', () => {
+  it('só existe com readPdf (sessão DeepSeek); arquivo inexistente vira isError', async () => {
+    expect(Object.keys(toolsOf(createAppMcpServer({ cwd })))).not.toContain('ler_pdf')
+    const t = toolsOf(createAppMcpServer({ cwd, readPdf: true })).ler_pdf
+    expect(t.inputSchema!.safeParse({ arquivo: 'a.pdf', pages: '1-5' }).success).toBe(true)
+    expect(t.inputSchema!.safeParse({}).success).toBe(false)
+    const r = await run(t, { arquivo: 'sumiu.pdf' })
+    expect(r.isError).toBe(true)
+    expect(r.content[0].text).toMatch(/não encontrado/)
+  })
+})
+
 describe('servidor MCP app: app_postgres_nuvem', () => {
   it('só existe com o handler (fora do Agent Manager); a resposta de recusa vira isError', async () => {
     expect(Object.keys(toolsOf(createAppMcpServer({ cwd })))).not.toContain('app_postgres_nuvem')

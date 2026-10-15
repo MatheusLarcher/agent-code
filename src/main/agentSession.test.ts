@@ -12,6 +12,7 @@ const configState = vi.hoisted(() => ({
   windowsControlEnabled: false as unknown,
   chromeControlEnabled: false as unknown,
   ollama: { enabled: false, apiKey: '' },
+  deepseek: { enabled: false, apiKey: '' },
   skillCatalog: undefined as { tiered: boolean; overrides: Record<string, never> } | undefined,
   // 'typesafe' aqui: os testes do TypeSafe abaixo só ligam `typeSafeState.active`.
   // O padrão do app ('haiku') tem teste próprio.
@@ -35,6 +36,7 @@ vi.mock('./config', () => ({
     // the fast-mode test below does.
     ollama: configState.ollama,
     memorySelector: configState.memorySelector,
+    deepseek: configState.deepseek,
     ...(configState.skillCatalog ? { skillCatalog: configState.skillCatalog } : {})
   })
 }))
@@ -219,6 +221,7 @@ beforeEach(() => {
   configState.windowsControlEnabled = false
   configState.chromeControlEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
+  configState.deepseek = { enabled: false, apiKey: '' }
   configState.skillCatalog = undefined
   configState.memorySelector = 'typesafe'
   codexState.connected = true
@@ -1351,6 +1354,57 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     const env = optionsOfLastQuery().env as Record<string, string>
     expect(env.CLAUDE_CONFIG_DIR).toBeTruthy()
     expect(existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))).toBe(false)
+  })
+
+  it('DeepSeek: env para api.deepseek.com, sem credencial da Anthropic, esforço recortado', async () => {
+    configState.deepseek = { enabled: true, apiKey: 'chave-falsa' }
+    const { s } = makeSession({ model: 'deepseek-flash', effort: 'xhigh' })
+    await s.start()
+    const opts = optionsOfLastQuery()
+    const env = opts.env as Record<string, string>
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic')
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('chave-falsa')
+    expect(env.ANTHROPIC_API_KEY).toBe('')
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('deepseek-flash')
+    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('deepseek-flash')
+    expect(env.CLAUDE_CONFIG_DIR).toBe(join(cache, 'cli-config-sem-login'))
+    expect(existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))).toBe(false)
+    expect(opts.effort).toBe('high')
+  })
+
+  it('DeepSeek: Read de .pdf negado com o caminho para o ler_pdf; o resto segue', async () => {
+    configState.deepseek = { enabled: true, apiKey: 'chave-falsa' }
+    const { s } = makeSession({ model: 'deepseek-flash' })
+    await s.start()
+    const hooks = optionsOfLastQuery().hooks as Record<string, Array<{ hooks: Array<(i: unknown) => Promise<unknown>> }>>
+    const pre = hooks.PreToolUse[0].hooks[0]
+    const call = (tool_name: string, file_path: string) =>
+      pre({ hook_event_name: 'PreToolUse', tool_name, tool_input: { file_path }, tool_use_id: `t-${file_path}` })
+    expect(await call('Read', 'C:\\docs\\nota.pdf')).toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('mcp__app__ler_pdf') }
+    })
+    expect(JSON.stringify(await call('Read', 'C:\\docs\\nota.txt'))).not.toContain('deny')
+  })
+
+  it('DeepSeek sem chave: erro na conversa e nenhuma sessão aberta', async () => {
+    const { s, emit } = makeSession({ model: 'deepseek-flash' })
+    await expect(s.start()).resolves.toBe(false)
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'error',
+      text: 'Modelo DeepSeek selecionado, mas falta a API key. Abra Configurações → DeepSeek e cole sua chave.'
+    }))
+  })
+
+  it('DeepSeek falha fechada sem a raiz isolada: a credencial da Anthropic não sai', async () => {
+    configState.deepseek = { enabled: true, apiKey: 'chave-falsa' }
+    await rm(cache, { recursive: true, force: true })
+    cache = join(home, 'cache-file')
+    await writeFile(cache, 'not a directory', 'utf8')
+    cacheState.localDir = cache
+    const { s } = makeSession({ model: 'deepseek-flash' })
+    await expect(s.start()).resolves.toBe(false)
+    expect(queryMock).not.toHaveBeenCalled()
   })
 
   it('GPT falha fechada se não puder criar a raiz isolada, sem iniciar o proxy', async () => {

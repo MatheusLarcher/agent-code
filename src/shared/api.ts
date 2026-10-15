@@ -25,6 +25,7 @@ import type {
   ClaudeAuthStatus,
   CodexStatus,
   ProvidersStatus,
+  DeepSeekBalance,
   SandboxCreateResult,
   FileAttachment,
   FileBytes,
@@ -591,6 +592,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
   providersStatus(): Promise<ProvidersStatus>
   /** main → renderer: login, logout ou config de provedor mudou. */
   onProvidersChanged(cb: (status: ProvidersStatus) => void): () => void
+  /** Saldo da conta DeepSeek; null sem chave ou com falha (nunca lança). */
+  deepseekBalance(): Promise<DeepSeekBalance | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
   /** Fila de espera gravada no banco: tudo, no boot. */

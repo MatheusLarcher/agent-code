@@ -5,19 +5,20 @@
  * listas aparece como veio. Sem dado, nada — não se chuta.
  *
  *   shortModelName(id)   etiqueta curta: "Opus", "Sonnet", "Sol"…
- *   modelProvider(id)    claude | gpt | ollama | other (a cor da etiqueta)
+ *   modelProvider(id)    claude | gpt | ollama | deepseek | other (a cor da etiqueta)
  *   ModelTags            as etiquetas de um item; só num turno com mais de um modelo
  *   ModelChip            "feito por Opus 5.5 → GPT-6.1 Sol"
  */
-import { isOllamaModel, isOpenAIModel } from '@shared/ipc'
+import { isDeepSeekModel, isOllamaModel, isOpenAIModel } from '@shared/ipc'
 import { modelDisplayName, modelSequenceLabel } from '@shared/modelLabel'
 import { Icon } from './icons'
 
-export type ModelProvider = 'claude' | 'gpt' | 'ollama' | 'other'
+export type ModelProvider = 'claude' | 'gpt' | 'ollama' | 'deepseek' | 'other'
 
 export function modelProvider(id: string): ModelProvider {
   if (isOpenAIModel(id)) return 'gpt'
   if (isOllamaModel(id)) return 'ollama'
+  if (isDeepSeekModel(id)) return 'deepseek'
   if (id.startsWith('claude-')) return 'claude'
   return 'other'
 }

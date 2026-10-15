@@ -141,7 +141,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     providersStatus: vi.fn(async () => {
       const cfg = (await (window as unknown as { api: { getConfig: () => Promise<{ ollama?: { enabled?: boolean; apiKey?: string } }> } }).api.getConfig()) ?? {}
       const codex = await (window as unknown as { api: { codexStatus: () => Promise<{ connected: boolean }> } }).api.codexStatus()
-      return { claude: true, gpt: !!codex?.connected, ollama: !!cfg.ollama?.enabled && !!cfg.ollama?.apiKey?.trim() }
+      return { claude: true, gpt: !!codex?.connected, ollama: !!cfg.ollama?.enabled && !!cfg.ollama?.apiKey?.trim(), deepseek: false }
     }),
     onProvidersChanged: vi.fn(() => () => {}),
     pathExists: vi.fn(async () => true),

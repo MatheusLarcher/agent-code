@@ -1,7 +1,7 @@
 import { query, type FastModeDisabledReason, type FastModeState, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { fastModeNotice } from './fastModeNotice'
 import { AsyncQueue } from './asyncQueue'
-import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT } from './appTools'
+import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT, READ_PDF_DENY_REASON } from './appTools'
 import { cloudToolDeps, runCloudTool } from './cloudTool'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
 import { taskListKey } from './board/boardModel'
@@ -85,11 +85,13 @@ import {
   DEFAULT_CONFIG,
   fastModeTransport,
   isAutoModel,
+  isDeepSeekModel,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsVision,
   OLLAMA_BASE_URL
 } from '../shared/ipc'
+import { DEEPSEEK_MISSING_KEY_ERROR, DEEPSEEK_NO_CONFIG_DIR_ERROR, deepseekCostUsd, deepseekSessionEnv, pdfReadDenied } from './deepseek'
 import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
@@ -972,7 +974,8 @@ export class AgentSession {
   ) {
     this.contextCapture = new ContextCapture({
       convId: opts.convId, pc: hostname(), model: opts.model ?? '',
-      provider: isOpenAIModel(opts.model) ? 'gpt' : isOllamaModel(opts.model) ? 'ollama' : 'claude'
+      provider: isOpenAIModel(opts.model) ? 'gpt' : isOllamaModel(opts.model) ? 'ollama'
+        : isDeepSeekModel(opts.model) ? 'deepseek' : 'claude'
     }, contextHistoryRepository, onContextChanged, () => this.disposed ? null : this.q)
     this.skills = new SessionSkillCatalog(opts.cwd, skillRuntime, () => this.q)
     // Native class fields run before constructor parameter properties are assigned.
@@ -1061,7 +1064,9 @@ export class AgentSession {
         // Ghidra sob demanda para o rea; o Agent Manager não tem o rea. O rea guarda
         // "Ghidra ausente" enquanto vive: reconectar faz esta conversa já enxergá-lo.
         ghidra: this.opts.planning ? undefined : ghidraPreparer,
-        reconnectRea: this.opts.planning ? undefined : async () => { await this.q?.reconnectMcpServer('rea') }
+        reconnectRea: this.opts.planning ? undefined : async () => { await this.q?.reconnectMcpServer('rea') },
+        // A API da DeepSeek não aceita PDF: o Read de .pdf é negado no PreToolUse e cai aqui.
+        readPdf: isDeepSeekModel(this.opts.model)
       })
     }
     if (process.platform === 'win32') {
@@ -1204,10 +1209,22 @@ export class AgentSession {
       })
       return false
     }
+    // DeepSeek: mesmo desvio do Ollama, env montado em deepseek.ts.
+    const deepseekOn = isDeepSeekModel(this.opts.model)
+    const deepseekKey = deepseekOn ? (cfg.deepseek?.apiKey ?? '').trim() : ''
+    if (deepseekOn && !deepseekKey) {
+      this.emit({ kind: 'error', id: nextId(), text: DEEPSEEK_MISSING_KEY_ERROR })
+      return false
+    }
     // A rota Ollama precisa do mesmo isolamento. A rota GPT prepara esse
     // diretório dentro de `prepareGptRuntime`, compartilhada pelo PO Luna.
-    if (ollamaOn) await localLeftoversSettled()
-    const foreignCliConfigDir = ollamaOn ? cliConfigDirWithoutStoredLogin(cacheInfo.localDir) : undefined
+    if (ollamaOn || deepseekOn) await localLeftoversSettled()
+    const foreignCliConfigDir = ollamaOn || deepseekOn ? cliConfigDirWithoutStoredLogin(cacheInfo.localDir) : undefined
+    // Como no GPT: sem a pasta isolada o CLI mandaria o login da Anthropic a um terceiro.
+    if (deepseekOn && !foreignCliConfigDir) {
+      this.emit({ kind: 'error', id: nextId(), text: DEEPSEEK_NO_CONFIG_DIR_ERROR })
+      return false
+    }
 
     let openaiEnv: typeof process.env | undefined
     if (openaiOn) {
@@ -1246,12 +1263,16 @@ export class AgentSession {
           CLAUDE_CODE_SUBAGENT_MODEL: this.opts.model
         }
       : openaiEnv
+    if (deepseekOn && foreignCliConfigDir) {
+      env = deepseekSessionEnv(process.env, this.opts.model ?? '', deepseekKey, foreignCliConfigDir)
+    }
 
     // Conta Claude da conversa: uma conta extra roda com a pasta de login dela
     // (CLAUDE_CONFIG_DIR). A conta padrão devolve `undefined` e a sessão herda o
-    // ambiente, como sempre. GPT e Ollama já têm o próprio desvio acima.
-    if (!ollamaOn && !openaiOn) env = claudeAccounts.envFor(this.opts.claudeAccountId)
-    this.machineClaudeLogin = !ollamaOn && !openaiOn && env === undefined
+    // ambiente, como sempre. GPT, Ollama e DeepSeek já têm o próprio desvio acima.
+    const foreignRoute = ollamaOn || openaiOn || deepseekOn
+    if (!foreignRoute) env = claudeAccounts.envFor(this.opts.claudeAccountId)
+    this.machineClaudeLogin = !foreignRoute && env === undefined
 
     // The bundled CLI receives this environment rather than inheriting our
     // process. Task snapshots must resolve from that same effective root.
@@ -1372,6 +1393,11 @@ export class AgentSession {
             this.markActivity()
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
               permissionDecisionReason: planning.reason } }
+          }
+          if (pdfReadDenied(this.opts.model, name, input.tool_input)) {
+            this.markActivity()
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
+              permissionDecisionReason: READ_PDF_DENY_REASON } }
           }
           // SDK task-level snapshots cover managed tasks, but arbitrary shell,
           // remote agents, custom MCPs and cron may outlive that registry.
@@ -2777,7 +2803,8 @@ ${lines}
           usageExhausted,
           text: r.result ?? (r.subtype === 'success' ? 'Done.' : r.subtype),
           durationMs: r.duration_ms,
-          costUsd: r.total_cost_usd,
+          // DeepSeek: o CLI calcula com a tabela da Anthropic; vale a estimativa nossa.
+          costUsd: isDeepSeekModel(this.opts.model) ? (deepseekCostUsd(reconciledUsage) ?? 0) : r.total_cost_usd,
           // `|| undefined` so the renderer's `?? fallback` kicks in if we never
           // saw a main-thread assistant usage (0 would otherwise stick).
           contextTokens: this.lastContextTokens || undefined,

@@ -24,7 +24,8 @@ import {
   contextLimitFor,
   isAutoEffort,
   isAutoModel,
-  isOllamaModel,
+  isDeepSeekModel,
+  isNonClaudeModel,
   isOpenAIModel,
   modelSupportsFastMode,
   MODEL_EFFORT,
@@ -109,6 +110,7 @@ import { useProjectColors } from './office/useProjectColors'
 import { roomIdFor } from './office/adapter/model'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
+import { DeepSeekUsageBadge, useDeepSeekBalance } from './components/DeepSeekUsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
 import { useClaudeAccounts } from './accounts/useClaudeAccounts'
 import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
@@ -149,7 +151,7 @@ import { planProjectsOf, startOfficePlan } from './planning/officePlanStart'
 import { HandoffButton } from './planning/HandoffDialog'
 import { reportMcpDropped, reportMcpFailed, useMcpInbound } from './useMcpInbound'
 import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/mcpInbound'
-import { selectableModels } from '@shared/selectableModels'
+import { deepseekSelectable, selectableModels } from '@shared/selectableModels'
 import { effortLevelsFor, remoteEffortCatalog, runningEffort, withAutoModelOption } from './effortOptions'
 import { effortForModelChange, isEffortLevel } from '@shared/autoEffort'
 import {
@@ -654,13 +656,18 @@ export function App(): JSX.Element {
   const [typesafeReady, setTypesafeReady] = useState(false)
   // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
   const [ollamaReady, setOllamaReady] = useState(false)
+  // Whether DeepSeek is enabled with a key — adds DEEPSEEK_MODELS to the selector.
+  const [deepseekReady, setDeepSeekReady] = useState(false)
   // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
   const [codexReady, setCodexReady] = useState(false)
   // Models offered in the selector: Claude always, Ollama Cloud / GPT when
   // configured. "Automático" is added where the list is used, by
   // `withAutoModelOption` — only with TypeSafe ready or when it's the saved value.
   // A regra mora em @shared/selectableModels: o MCP de entrada aceita a mesma lista.
-  const models = useMemo(() => selectableModels({ ollama: ollamaReady, codex: codexReady }), [ollamaReady, codexReady])
+  const models = useMemo(
+    () => selectableModels({ ollama: ollamaReady, codex: codexReady, deepseek: deepseekReady }),
+    [ollamaReady, codexReady, deepseekReady]
+  )
   // Read-aloud (TTS): id of the message currently playing, and the player (one
   // audio output kept open across the parts — see ui/clipPlayer.ts).
   const [speakingId, setSpeakingId] = useState<string | null>(null)
@@ -1326,7 +1333,8 @@ export function App(): JSX.Element {
           // Only this conversation's subscription windows can say when its
           // limit resets — a GPT window must not schedule a Claude retry.
           const failedModel = convsRef.current.find((c) => c.id === cid)?.model
-          const failedProvider = isOpenAIModel(failedModel) ? 'gpt' : 'claude'
+          // DeepSeek é cobrado por token: nenhuma janela de assinatura se aplica.
+          const failedProvider = isOpenAIModel(failedModel) ? 'gpt' : isDeepSeekModel(failedModel) ? null : 'claude'
           const relevantLimits = Object.fromEntries(
             Object.entries(usageLimitsRef.current).filter(
               ([, l]) => usageProviderOf(l.rateLimitType) === failedProvider
@@ -1806,6 +1814,7 @@ export function App(): JSX.Element {
           setSkipPerms(config.skipPermissions)
           setWindowsControlEnabled(config.windowsControlEnabled === true)
           setOllamaReady(config.ollama.enabled && Boolean(config.ollama.apiKey.trim()))
+          setDeepSeekReady(deepseekSelectable(config.deepseek))
           void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
         }).catch(() => undefined)
       }
@@ -1854,6 +1863,7 @@ export function App(): JSX.Element {
           setSkipPerms(c.skipPermissions)
           setWindowsControlEnabled(c.windowsControlEnabled === true)
           setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
+          setDeepSeekReady(deepseekSelectable(c.deepseek))
         })
         .catch(() => undefined)
       if (cancelled) return
@@ -2477,11 +2487,11 @@ export function App(): JSX.Element {
       const p = (async () => {
         // First run: if there's no Claude login yet, do /login for the user (opens
         // the system browser) instead of letting the chat tell them to type it.
-        // Ollama models authenticate with the Ollama API key, and GPT models with
-        // the Codex OAuth login done in Settings (both handled in main), so they
-        // skip the Anthropic login entirely.
+        // Ollama and DeepSeek models authenticate with their API key, and GPT
+        // models with the Codex OAuth login done in Settings (all handled in
+        // main), so they skip the Anthropic login entirely.
         const { authenticated } =
-          isOllamaModel(conv.model) || isOpenAIModel(conv.model)
+          isNonClaudeModel(conv.model)
             ? { authenticated: true }
             : await window.api.authStatus()
         if (!authenticated) {
@@ -2635,7 +2645,7 @@ export function App(): JSX.Element {
   )
 
   // "Conectar conta" no chat (lógica em components/connectAccount/).
-  const connectAccount = useConnectAccount({ getActive, changeModel, setCodexReady, setOllamaReady })
+  const connectAccount = useConnectAccount({ getActive, changeModel, setCodexReady, setOllamaReady, setDeepSeekReady })
 
   // Effort selector — same deferred-while-busy logic as the model picker.
   const changeEffort = useCallback(
@@ -3575,6 +3585,7 @@ export function App(): JSX.Element {
     void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
     void window.api.getConfig().then((c) => {
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
+      setDeepSeekReady(deepseekSelectable(c.deepseek))
       setObserversOn({
         po: c.board?.po?.enabled !== false,
         vigia: c.vigia?.enabled !== false,
@@ -3841,6 +3852,13 @@ export function App(): JSX.Element {
   const activeCentral = active && isCentralConversation(active) ? active : null
   const activeConnected = activeId !== null && connectedIds.has(activeId)
   const showBusy = activeId !== null && busyIds.has(activeId)
+  // DeepSeek: saldo ao abrir a conversa e a cada fim de turno (a saída da conversa cresce).
+  const activeDeepSeek = !!active && !activeCentral && isDeepSeekModel(active.model)
+  const deepseekBalance = useDeepSeekBalance(
+    activeDeepSeek,
+    active ? `${active.id}:${active.tokens.output}:${active.tokens.cost}` : '',
+    notify
+  )
   // Estáveis entre renders: as linhas do chat são memo, e um callback novo a cada
   // evento (de qualquer conversa) redesenharia a conversa inteira. Antes do
   // retorno antecipado da recuperação do banco (hooks em ordem fixa).
@@ -4668,7 +4686,7 @@ export function App(): JSX.Element {
             <AccountsUsageBadge
               accounts={claudeAccountList}
               activeAccountId={active ? (active.claudeAccountId ?? 'default') : null}
-              canUseInConversation={!!active && !activeCentral && !isOpenAIModel(active.model) && !isOllamaModel(active.model)}
+              canUseInConversation={!!active && !activeCentral && !isNonClaudeModel(active.model)}
               gptLimits={Object.values(usageLimits).filter((l) => usageProviderOf(l.rateLimitType) === 'gpt')}
               shownInBar={usageAccounts}
               onShownInBarChange={setUsageAccounts}
@@ -4682,6 +4700,7 @@ export function App(): JSX.Element {
           ) : (
             <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           )}
+          {activeDeepSeek && active && <DeepSeekUsageBadge balance={deepseekBalance} convCostUsd={active.tokens.cost} />}
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}

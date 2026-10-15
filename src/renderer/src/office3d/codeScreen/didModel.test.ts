@@ -43,6 +43,7 @@ describe('modelTags', () => {
   it('etiqueta curta e provedor; id desconhecido como veio; vazio e Automático fora', () => {
     expect([shortModelName('claude-opus-5-5'), shortModelName('gpt-6.1-sol'), shortModelName('claude-haiku-4-5')]).toEqual(['Opus', 'Sol', 'claude-haiku-4-5'])
     expect([modelProvider('claude-opus-5-5'), modelProvider('gpt-6-luna'), modelProvider('kimi-k3:cloud'), modelProvider('x')]).toEqual(['claude', 'gpt', 'ollama', 'other'])
+    expect(modelProvider('deepseek-flash')).toBe('deepseek')
     expect(distinctModels(['a', '', 'auto', 'a', undefined, 'b'])).toEqual(['a', 'b'])
   })
 })

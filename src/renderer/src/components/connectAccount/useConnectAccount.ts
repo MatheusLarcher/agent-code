@@ -1,7 +1,7 @@
 /**
  * Fiação do "Conectar conta" no App: estado dos provedores, espelho nos
- * sinalizadores que o seletor de modelos já usa (Codex/Ollama) e a troca de
- * modelo da conversa ativa depois de conectar.
+ * sinalizadores que o seletor de modelos já usa (Codex/Ollama/DeepSeek) e a
+ * troca de modelo da conversa ativa depois de conectar.
  */
 import { useCallback, useEffect, useRef } from 'react'
 import type { ProvidersStatus } from '@shared/ipc'
@@ -14,6 +14,7 @@ interface Deps {
   changeModel: (convId: string, model: string) => void
   setCodexReady: (ready: boolean) => void
   setOllamaReady: (ready: boolean) => void
+  setDeepSeekReady: (ready: boolean) => void
 }
 
 export function useConnectAccount(deps: Deps): {
@@ -32,15 +33,17 @@ export function useConnectAccount(deps: Deps): {
     if (!status) return
     depsRef.current.setCodexReady(status.gpt)
     depsRef.current.setOllamaReady(status.ollama)
+    depsRef.current.setDeepSeekReady(status.deepseek)
   }, [status])
 
   const onConnected = useCallback((provider: ProviderId): void => {
-    const { getActive, changeModel, setCodexReady, setOllamaReady } = depsRef.current
+    const { getActive, changeModel, setCodexReady, setOllamaReady, setDeepSeekReady } = depsRef.current
     if (provider === 'gpt') setCodexReady(true)
     if (provider === 'ollama') setOllamaReady(true)
+    if (provider === 'deepseek') setDeepSeekReady(true)
     const active = getActive()
     if (!active) return
-    const base = statusRef.current ?? { claude: false, gpt: false, ollama: false }
+    const base = statusRef.current ?? { claude: false, gpt: false, ollama: false, deepseek: false }
     const next = modelAfterConnect(active.model, { ...base, [provider]: true }, provider)
     if (next && next !== active.model) changeModel(active.id, next)
   }, [])

@@ -69,7 +69,7 @@ export function installApi(route: (req: CentralRouteRequest) => CentralRouteResu
   const fn = <T,>(v: T) => vi.fn(async (..._args: unknown[]) => v)
   const off = () => vi.fn(() => () => {})
   const api = {
-    getConfig: fn({ voice: { voice: 'pf_dora', speed: 1 }, ollama: { enabled: false, apiKey: '' }, skipPermissions: false, windowsControlEnabled: false, remoteToken: '', remoteEnabled: false }),
+    getConfig: fn({ voice: { voice: 'pf_dora', speed: 1 }, ollama: { enabled: false, apiKey: '' }, deepseek: { enabled: false, apiKey: '' }, skipPermissions: false, windowsControlEnabled: false, remoteToken: '', remoteEnabled: false }),
     setConfig: fn(undefined), isTypeSafeConfigured: fn(true), onAppCloseRequested: off(), appCloseReady: fn(undefined), onAppReloadRequested: off(), appReloadReady: fn(undefined),
     getStorageStatus: fn({ backend: 'sqlite', state: 'sqlite-ready', writable: true, installationId: 'pc-teste', targetDatabase: 'agent-code', hasPassword: false }),
     onStorageStatusChanged: off(), onStorageFlushRequested: off(), storageFlushReady: fn(undefined), onStorageChanged: off(),
@@ -88,7 +88,8 @@ export function installApi(route: (req: CentralRouteRequest) => CentralRouteResu
     getChromeBridgeStatus: fn({ listening: false, port: null, connected: false, extensionVersion: null, userAgent: null }), onChromeBridgeStatusChanged: off(),
     authStatus: fn({ authenticated: true }), codexStatus: fn({ connected: false }),
     sandboxInfo: fn({ root: 'C:\\local\\sandbox' }), sandboxCreate: fn({ path: 'C:\\local\\sandbox\\x' }),
-    providersStatus: fn({ claude: true, gpt: false, ollama: false }), onProvidersChanged: off(),
+    providersStatus: fn({ claude: true, gpt: false, ollama: false, deepseek: false }), onProvidersChanged: off(),
+    deepseekBalance: fn(null),
     pathExists: fn(true), projectTree: fn({ nodes: [], truncated: false, missing: [] }),
     kvGet: vi.fn(async (key: string) => localStorage.getItem(key)), kvSet: vi.fn(async (key: string, value: string) => localStorage.setItem(key, value)),
     getCacheInfo: fn({ dir: '', dbPath: '', memoriesDir: '', skillsDir: '' }), getAppVersion: fn('test'),

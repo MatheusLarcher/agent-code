@@ -38,8 +38,9 @@ import { isRemoteIpcEventChannel } from '../shared/remoteIpc'
 import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mcpInbound'
 import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
-import { ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
+import { deepseekSelectable, ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
 import { registerProviderStatusIpc } from './providerStatus'
+import { fetchDeepSeekBalance } from './deepseek'
 import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { watchRendererGone } from './mcpInbound/rendererLifecycle'
@@ -1274,10 +1275,16 @@ export const mcpInbound = new McpInbound({
   answerInRenderer: (convId, res) => send(Channels.remotePermissionResponse, { convId, res }),
   // A mesma lista do seletor da conversa (shared/selectableModels).
   models: {
-    now: () => selectableModelIds({ ollama: ollamaSelectable(loadConfig().ollama), codex: isCodexConnected() }),
+    now: () => selectableModelIds({
+      ollama: ollamaSelectable(loadConfig().ollama), codex: isCodexConnected(), deepseek: deepseekSelectable(loadConfig().deepseek)
+    }),
     fresh: async () => {
       await ensureConfigLoaded()
-      return selectableModelIds({ ollama: ollamaSelectable(loadConfig().ollama), codex: (await codexStatus()).connected })
+      return selectableModelIds({
+        ollama: ollamaSelectable(loadConfig().ollama),
+        codex: (await codexStatus()).connected,
+        deepseek: deepseekSelectable(loadConfig().deepseek)
+      })
     }
   },
   log: (line) => console.log(line)
@@ -1625,15 +1632,22 @@ export function registerIpc(): void {
       // Só desconexão comprovada (ou sessão expirada) desliga o Claude no card.
       claude: () => claudeConnectedForCard({ probe: () => claudeAuthProbe(), extraConnected: extraClaudeAccountConnected }),
       gpt: async () => (await codexStatus()).connected,
-      ollama: () => ollamaSelectable(loadConfig().ollama)
+      ollama: () => ollamaSelectable(loadConfig().ollama),
+      deepseek: () => deepseekSelectable(loadConfig().deepseek)
     }
+  })
+  // Saldo DeepSeek para o badge: a chave fica no main, o renderer só vê o número.
+  ipcMain.handle(Channels.deepseekBalance, async () => {
+    await ensureConfigLoaded()
+    const cfg = loadConfig().deepseek
+    return cfg?.enabled ? fetchDeepSeekBalance(cfg.apiKey ?? '') : null
   })
   // Turno com erro de autenticação (ou o login/turno que o desfaz) reavalia o card.
   claudeAuthExpiry.onChange(providersChanged)
   // Config, Windows e Chrome: só o SQLite local — salvam com o banco fora do ar.
   ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
     const result = await updateAppConfig(patch)
-    if (patch && 'ollama' in patch) providersChanged()
+    if (patch && ('ollama' in patch || 'deepseek' in patch)) providersChanged()
     return result
   })
   ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())

@@ -7,6 +7,7 @@ import { checkMockupFile } from './officeMockup/mockupFiles'
 import { PRINT_CAPTION_MAX } from './board/boardPrints'
 import { CLOUD_TOOL_DESCRIPTION, CLOUD_TOOL_NAME, cloudToolSchema, type CloudToolReply } from './cloudTool'
 import { GHIDRA_VERSION, type GhidraDetect, type GhidraPreparer } from './ghidra/ghidraEnv'
+import { PDF_MAX_PAGES_PER_CALL, readPdfText } from './pdfText'
 
 export const APP_RESTART_HINT = 'When Agent Code itself genuinely needs a restart, use app_restart (checkOnly for a read-only guard query). You may request it without asking again, but only this protected tool authorizes restart. A refusal NEVER authorizes kill, Bash, or direct relaunch scripts to bypass the guard. Finish your turn after preparation. History is preserved; automatic continuation of unfinished reasoning is not promised.'
 
@@ -45,7 +46,12 @@ export interface AppMcpOptions {
   ghidra?: GhidraPreparer
   /** Reinicia o MCP "rea" desta sessão com o Ghidra pronto; sem ele, vale na próxima conversa. */
   reconnectRea?: () => Promise<void>
+  /** `ler_pdf` (pdfText.ts): só para o modelo que não lê PDF direto (DeepSeek). */
+  readPdf?: boolean
 }
+
+export const READ_PDF_TOOL = 'ler_pdf'
+export const READ_PDF_DENY_REASON = 'Este modelo não lê PDF direto: use mcp__app__ler_pdf com o caminho (e pages, opcional)'
 
 const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] })
 
@@ -131,6 +137,19 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
         GHIDRA_TOOL_DESCRIPTION,
         { retry: z.boolean().optional().describe('Try again after a failed install.') },
         async ({ retry }) => prepareGhidra(ghidra, retry === true, opts.reconnectRea)
+      )] : []),
+      ...(opts.readPdf ? [tool(
+        READ_PDF_TOOL,
+        `Extract the text layer of a PDF file (use this instead of Read for .pdf). Returns the text page by page, up to ${PDF_MAX_PAGES_PER_CALL} pages per call; ask for the rest with pages. A scanned PDF has no text layer and says so.`,
+        {
+          arquivo: z.string().trim().min(1).max(4096).describe('Path of the .pdf (absolute, or relative to this conversation\'s folder).'),
+          pages: z.string().trim().max(20).optional().describe('Page or range, e.g. "3" or "1-5". Omit for the first pages.')
+        },
+        async ({ arquivo, pages }) => {
+          const reply = await readPdfText(opts.cwd, arquivo, pages)
+            .catch((err: unknown) => ({ ok: false, text: `Falhou: ${String(err)}` }))
+          return text(reply.text, !reply.ok)
+        }
       )] : [])
     ]
   })

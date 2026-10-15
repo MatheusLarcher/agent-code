@@ -1026,7 +1026,9 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max']
+  'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max'],
+  // DeepSeek: três degraus; xhigh cai para high e medium para low (clampEffortToModel).
+  'deepseek-flash': ['low', 'high', 'max']
 }
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
@@ -1376,7 +1378,9 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'deepseek-v4-pro:cloud': 1_000_000,
   'glm-5.3:cloud': 1_000_000,
   'glm-5.3-flash:cloud': 1_000_000,
-  'kimi-k3:cloud': 1_000_000
+  'kimi-k3:cloud': 1_000_000,
+  // DeepSeek V4.1 Flash — 1M de contexto, até 384K de saída.
+  'deepseek-flash': 1_000_000
 }
 
 /** Context-window size for a model id, falling back to DEFAULT_CONTEXT_LIMIT. */
@@ -1392,6 +1396,49 @@ export interface OllamaConfig {
   enabled: boolean
   /** API key from ollama.com → Settings → Keys (sent as ANTHROPIC_AUTH_TOKEN). */
   apiKey: string
+}
+
+// ---- DeepSeek integration ------------------------------------------------
+// Same trick as Ollama Cloud: DeepSeek exposes an Anthropic-compatible Messages
+// API, so the bundled CLI runs unchanged with ANTHROPIC_BASE_URL pointed there
+// (see src/main/deepseek.ts). Metered per token on the user's DeepSeek account.
+// https://api-docs.deepseek.com/guides/anthropic_api
+
+/** DeepSeek's Anthropic-compatible endpoint (the CLI appends `/v1/messages`). */
+export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/anthropic'
+
+/** DeepSeek models offered in the selector. A new one (e.g. a 4.1 Pro) is one
+ *  more line here + CONTEXT_LIMITS + MODEL_EFFORT — and, if it has no vision,
+ *  an entry in modelSupportsVision. */
+export const DEEPSEEK_MODELS = [{ id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash' }] as const
+
+/** True when `model` runs on the DeepSeek API (not Anthropic, not Ollama). */
+export function isDeepSeekModel(model: string | undefined): boolean {
+  if (!model) return false
+  return DEEPSEEK_MODELS.some((m) => m.id === model)
+}
+
+/** True when `model` does NOT run on the user's Claude login/account: GPT
+ *  (Codex), Ollama Cloud or DeepSeek. Each has its own credential, so the
+ *  Anthropic login, Claude accounts and Claude usage limits don't apply. */
+export function isNonClaudeModel(model: string | undefined): boolean {
+  return isOpenAIModel(model) || isOllamaModel(model) || isDeepSeekModel(model)
+}
+
+/** DeepSeek integration (optional). Enabled with an API key, the selector gains
+ *  DEEPSEEK_MODELS. The key is stored only in the SQLite db (sensitive). */
+export interface DeepSeekConfig {
+  enabled: boolean
+  /** API key from platform.deepseek.com → API keys (sent as ANTHROPIC_AUTH_TOKEN). */
+  apiKey: string
+}
+
+/** Saldo da conta DeepSeek (GET /user/balance), já validado no main. */
+export interface DeepSeekBalance {
+  /** `is_available` da API: false = sem saldo para chamar a API. */
+  available: boolean
+  /** Saldo total em USD; null se a conta só tem outra moeda. */
+  totalUsd: number | null
 }
 
 /** Vigia — a second, cheap session that watches the conversation and asks ONE
@@ -1748,6 +1795,8 @@ export interface ProvidersStatus {
   claude: boolean
   gpt: boolean
   ollama: boolean
+  /** Integração DeepSeek ligada e com chave. */
+  deepseek: boolean
 }
 
 /** Resposta de `sandboxCreate`: erro de disco vira `{ error }`, nunca lança. */
@@ -1819,6 +1868,8 @@ export interface AppConfig {
   localSpeech: LocalSpeechConfig
   /** Ollama Cloud key + toggle (adds Ollama models to the selector). */
   ollama: OllamaConfig
+  /** DeepSeek key + toggle (adds DEEPSEEK_MODELS to the selector). */
+  deepseek: DeepSeekConfig
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
   /** Independent high-risk gate for controlling arbitrary Windows applications. */
@@ -2099,6 +2150,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   transcribeEngine: 'whisper',
   localSpeech: { model: 'nvidia/parakeet-tdt-0.6b-v3' },
   ollama: { enabled: false, apiKey: '' },
+  deepseek: { enabled: false, apiKey: '' },
   skipPermissions: false,
   windowsControlEnabled: false,
   chromeControlEnabled: false,
@@ -2563,6 +2615,8 @@ export const Channels = {
   providersStatus: 'providers:status',
   /** main → renderer: um login, logout ou config de provedor mudou. */
   providersChanged: 'providers:changed',
+  /** Saldo da conta DeepSeek (null sem chave ou com falha). */
+  deepseekBalance: 'deepseek:balance',
   // main -> renderer (send)
   agentEvent: 'agent:event',
   agentPermissionRequest: 'agent:permission-request',

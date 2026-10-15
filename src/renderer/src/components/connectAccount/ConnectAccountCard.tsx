@@ -1,10 +1,10 @@
 /**
  * Botão grande "Conectar conta" no chat, só quando NENHUM provedor (Claude,
- * GPT, Ollama) está conectado. Conecta ali mesmo, reaproveitando os fluxos que
- * já existem em Configurações:
+ * GPT, Ollama, DeepSeek) está conectado. Conecta ali mesmo, reaproveitando os
+ * fluxos que já existem em Configurações:
  * - Claude e GPT: o login OAuth existente (abre o navegador do sistema); o card
  *   fica "Aguardando…" até o login voltar.
- * - Ollama: cola a API key e grava a config (`ollama.enabled` + chave).
+ * - Ollama e DeepSeek: cola a API key e grava a config (`<provedor>.enabled` + chave).
  *
  * "Cancelar" não mata o login do navegador (o fluxo existente não tem cancelar):
  * só devolve o card ao início e ignora o resultado que chegar depois.
@@ -24,14 +24,25 @@ interface Props {
   compact?: boolean
 }
 
-type Phase = { kind: 'idle' } | { kind: 'menu' } | { kind: 'waiting'; provider: 'claude' | 'gpt' } | { kind: 'ollama' }
+type KeyProvider = 'ollama' | 'deepseek'
+type Phase =
+  | { kind: 'idle' }
+  | { kind: 'menu' }
+  | { kind: 'waiting'; provider: 'claude' | 'gpt' }
+  | { kind: 'key'; provider: KeyProvider }
+
+/** Onde gerar a chave de cada provedor por API key. */
+const KEY_LINK: Record<KeyProvider, { href: string; label: string }> = {
+  ollama: { href: 'https://ollama.com/settings/keys', label: 'Gerar chave no ollama.com' },
+  deepseek: { href: 'https://platform.deepseek.com/api_keys', label: 'Gerar chave na DeepSeek' }
+}
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX.Element | null {
   const { notify } = useUI()
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
-  const [ollamaKey, setOllamaKey] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
   const [saving, setSaving] = useState(false)
   // Cada tentativa ganha um número; Cancelar ou desmontar invalida a atual.
   const attempt = useRef(0)
@@ -78,18 +89,18 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
     notify('aviso', 'Login cancelado. Se o navegador ainda estiver aberto, pode fechá-lo.')
   }
 
-  const saveOllama = async (): Promise<void> => {
-    const apiKey = ollamaKey.trim()
+  const saveKey = async (provider: KeyProvider): Promise<void> => {
+    const apiKey = apiKeyInput.trim()
     if (!apiKey) return
     const token = ++attempt.current
     setSaving(true)
     try {
-      await window.api.setConfig({ ollama: { enabled: true, apiKey } })
+      await window.api.setConfig(provider === 'ollama' ? { ollama: { enabled: true, apiKey } } : { deepseek: { enabled: true, apiKey } })
       if (token !== attempt.current) return
-      setOllamaKey('')
-      await confirm('ollama', token)
+      setApiKeyInput('')
+      await confirm(provider, token)
     } catch (err) {
-      if (token === attempt.current) notify('erro', `Não foi possível salvar a chave do Ollama: ${errorText(err)}`)
+      if (token === attempt.current) notify('erro', `Não foi possível salvar a chave do ${PROVIDER_LABEL[provider]}: ${errorText(err)}`)
     } finally {
       setSaving(false)
     }
@@ -109,7 +120,8 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
         <div className="connect-account-options">
           <button className="btn" onClick={() => void login('claude')}>Claude</button>
           <button className="btn" onClick={() => void login('gpt')}>GPT</button>
-          <button className="btn" onClick={() => setPhase({ kind: 'ollama' })}>Ollama</button>
+          <button className="btn" onClick={() => setPhase({ kind: 'key', provider: 'ollama' })}>Ollama</button>
+          <button className="btn" onClick={() => setPhase({ kind: 'key', provider: 'deepseek' })}>DeepSeek</button>
           <button className="btn ghost" onClick={() => setPhase({ kind: 'idle' })} aria-label="Voltar">
             Voltar
           </button>
@@ -121,28 +133,28 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
           <button className="btn" onClick={cancel}>Cancelar</button>
         </div>
       )}
-      {phase.kind === 'ollama' && (
+      {phase.kind === 'key' && (
         <form
           className="connect-account-ollama"
           onSubmit={(e) => {
             e.preventDefault()
-            void saveOllama()
+            void saveKey(phase.provider)
           }}
         >
           <input
             type="password"
-            aria-label="API key do Ollama"
-            placeholder="Cole a API key do Ollama"
-            value={ollamaKey}
+            aria-label={`API key do ${PROVIDER_LABEL[phase.provider]}`}
+            placeholder={`Cole a API key do ${PROVIDER_LABEL[phase.provider]}`}
+            value={apiKeyInput}
             autoFocus
-            onChange={(e) => setOllamaKey(e.target.value)}
+            onChange={(e) => setApiKeyInput(e.target.value)}
           />
           {/* target=_blank: o main abre links novos no navegador do sistema. */}
-          <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer">
-            Gerar chave no ollama.com
+          <a href={KEY_LINK[phase.provider].href} target="_blank" rel="noreferrer">
+            {KEY_LINK[phase.provider].label}
           </a>
           <div className="connect-account-actions">
-            <button type="submit" className="btn primary" disabled={!ollamaKey.trim() || saving}>
+            <button type="submit" className="btn primary" disabled={!apiKeyInput.trim() || saving}>
               Salvar
             </button>
             <button type="button" className="btn ghost" onClick={() => setPhase({ kind: 'menu' })}>

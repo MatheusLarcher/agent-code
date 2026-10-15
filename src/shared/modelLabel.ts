@@ -1,4 +1,4 @@
-import { CLAUDE_MODELS, OLLAMA_MODELS, OPENAI_MODELS, isAutoModel } from './ipc'
+import { CLAUDE_MODELS, DEEPSEEK_MODELS, OLLAMA_MODELS, OPENAI_MODELS, isAutoModel } from './ipc'
 
 /**
  * O nome que a tela mostra para o modelo que RESPONDEU (o id vem da resposta da
@@ -8,7 +8,7 @@ import { CLAUDE_MODELS, OLLAMA_MODELS, OPENAI_MODELS, isAutoModel } from './ipc'
  * modelo que rodou: vira ''.
  */
 const LABELS: ReadonlyMap<string, string> = new Map(
-  [...CLAUDE_MODELS, ...OPENAI_MODELS, ...OLLAMA_MODELS].map((m) => [m.id, m.label.replace(/\s*\([^()]*\)\s*$/u, '')])
+  [...CLAUDE_MODELS, ...OPENAI_MODELS, ...OLLAMA_MODELS, ...DEEPSEEK_MODELS].map((m) => [m.id, m.label.replace(/\s*\([^()]*\)\s*$/u, '')])
 )
 
 export function modelDisplayName(id: string | null | undefined): string {

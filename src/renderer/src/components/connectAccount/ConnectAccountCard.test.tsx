@@ -7,7 +7,7 @@ vi.mock('../../ui/UiProvider', () => ({ useUI: () => ({ notify }) }))
 
 import { ConnectAccountCard } from './ConnectAccountCard'
 
-const NONE: ProvidersStatus = { claude: false, gpt: false, ollama: false }
+const NONE: ProvidersStatus = { claude: false, gpt: false, ollama: false, deepseek: false }
 
 interface FakeApi {
   authLogin: ReturnType<typeof vi.fn>
@@ -118,6 +118,24 @@ describe('ConnectAccountCard', () => {
     )
     await waitFor(() => expect(notify).toHaveBeenCalledWith('sucesso', 'Conta conectada: Ollama'))
     expect(onConnected).toHaveBeenCalledWith('ollama')
+  })
+
+  it('DeepSeek: Salvar grava deepseek.enabled + chave e confirma', async () => {
+    api.providersStatus.mockResolvedValue({ ...NONE, deepseek: true })
+    const { onConnected } = renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar conta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'DeepSeek' }))
+    const input = screen.getByLabelText('API key do DeepSeek') as HTMLInputElement
+    expect(input.type).toBe('password')
+    const link = screen.getByRole('link', { name: 'Gerar chave na DeepSeek' }) as HTMLAnchorElement
+    expect(link.href).toBe('https://platform.deepseek.com/api_keys')
+    fireEvent.change(input, { target: { value: ' chave-falsa ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() =>
+      expect(api.setConfig).toHaveBeenCalledWith({ deepseek: { enabled: true, apiKey: 'chave-falsa' } })
+    )
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('sucesso', 'Conta conectada: DeepSeek'))
+    expect(onConnected).toHaveBeenCalledWith('deepseek')
   })
 
   it('Ollama: falha ao gravar avisa com erro', async () => {

@@ -1,7 +1,7 @@
 /**
  * "Algum provedor conectado?" — Claude (login ou conta do registro), GPT
- * (login do Codex) e Ollama (ligado + chave). O chat mostra o botão
- * "Conectar conta" quando os três estão desligados.
+ * (login do Codex), Ollama e DeepSeek (ligado + chave). O chat mostra o botão
+ * "Conectar conta" quando todos estão desligados.
  *
  * As consultas vêm injetadas: cada uma já existe em outro módulo e o index
  * decide qual usar. Consulta que lança conta como `false` — a função nunca
@@ -14,6 +14,7 @@ export interface ProviderStatusDeps {
   claude: () => Promise<boolean>
   gpt: () => Promise<boolean>
   ollama: () => boolean | Promise<boolean>
+  deepseek: () => boolean | Promise<boolean>
 }
 
 async function safe(query: () => boolean | Promise<boolean>): Promise<boolean> {
@@ -25,8 +26,10 @@ async function safe(query: () => boolean | Promise<boolean>): Promise<boolean> {
 }
 
 export async function providerStatusWith(deps: ProviderStatusDeps): Promise<ProvidersStatus> {
-  const [claude, gpt, ollama] = await Promise.all([safe(deps.claude), safe(deps.gpt), safe(deps.ollama)])
-  return { claude, gpt, ollama }
+  const [claude, gpt, ollama, deepseek] = await Promise.all([
+    safe(deps.claude), safe(deps.gpt), safe(deps.ollama), safe(deps.deepseek)
+  ])
+  return { claude, gpt, ollama, deepseek }
 }
 
 /** Registra `providersStatus` e devolve o `changed()` que o index chama depois

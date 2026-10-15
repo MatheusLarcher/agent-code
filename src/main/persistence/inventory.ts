@@ -49,6 +49,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.localSpeech.model',
       'config.ollama.enabled',
       'config.ollama.apiKey',
+      'config.deepseek.enabled',
+      'config.deepseek.apiKey',
       'config.skipPermissions',
       'config.windowsControlEnabled',
       'config.chromeControlEnabled',

@@ -89,6 +89,7 @@ import type {
   ClaudeAuthStatus,
   CodexStatus,
   ProvidersStatus,
+  DeepSeekBalance,
   SandboxCreateResult,
   FileAttachment,
   FileBytes,
@@ -465,6 +466,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   centralCorrection: (c: CentralCorrection): Promise<void> => ipcRenderer.invoke(Channels.centralCorrection, c),
   providersStatus: (): Promise<ProvidersStatus> => ipcRenderer.invoke(Channels.providersStatus),
   onProvidersChanged: (cb: (status: ProvidersStatus) => void): (() => void) => on(Channels.providersChanged, cb),
+  deepseekBalance: (): Promise<DeepSeekBalance | null> => ipcRenderer.invoke(Channels.deepseekBalance),
 
   // agent
   startAgent: (opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }> =>

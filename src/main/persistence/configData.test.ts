@@ -159,6 +159,15 @@ describe('configuração persistida', () => {
     expect(parsed.voice).toEqual({ voice: 'pf_dora', speed: 1.25, whisperModel: 'turbo-q8' })
     expect(parsed.localSpeech.model).toBe('modelo')
     expect(parsed.ollama).toEqual({ enabled: true, apiKey: '' })
+    // Config de antes da DeepSeek: o grupo nasce desligado.
+    expect(parsed.deepseek).toEqual({ enabled: false, apiKey: '' })
+  })
+
+  it('DeepSeek: merge profundo, gravar o interruptor não apaga a chave', () => {
+    const comChave = mergeAppConfig(defaultAppConfig(), { deepseek: { apiKey: 'chave-falsa' } })
+    expect(mergeAppConfig(comChave, { deepseek: { enabled: true } }).deepseek).toEqual({ enabled: true, apiKey: 'chave-falsa' })
+    expect(() => mergeAppConfig(defaultAppConfig(), { deepseek: { enabled: 'sim' } })).toThrow()
+    expect(() => mergeAppConfig(defaultAppConfig(), { deepseek: { model: 'x' } })).toThrow()
   })
 
   it('rejeita tipos inválidos em vez de transformar corrupção em defaults', () => {

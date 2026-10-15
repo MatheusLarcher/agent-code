@@ -17,7 +17,7 @@
  *   accountLimits(account, now) → as janelas da leitura no formato usageLimits.
  */
 import type { RateLimitStatus } from '@shared/ipc'
-import { isOllamaModel, isOpenAIModel } from '@shared/ipc'
+import { isNonClaudeModel } from '@shared/ipc'
 import type { ClaudeAccountView } from '@shared/claudeAccounts'
 import { accountDisplayName, readingToLimits } from '../accounts/accountUsageView'
 import type { OfficeFeed } from '../office/adapter/feed'
@@ -53,9 +53,9 @@ export function connectedAccounts(feed: AccountFeed | null | undefined): ClaudeA
   return (feed?.claudeAccounts ?? []).filter((a) => a.status === 'connected')
 }
 
-/** A conta Claude de uma conversa (sem conta gravada = a padrão); null em GPT/Ollama. */
+/** A conta Claude de uma conversa (sem conta gravada = a padrão); null em GPT/Ollama/DeepSeek. */
 function accountOf(c: { model?: string; claudeAccountId?: string }): string | null {
-  if (isOpenAIModel(c.model) || isOllamaModel(c.model)) return null
+  if (isNonClaudeModel(c.model)) return null
   return c.claudeAccountId ?? DEFAULT_ID
 }
 

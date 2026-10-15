@@ -30,6 +30,8 @@ const EXPECTED_KEYS = [
   'config.board.scrumMaster.podeParar',
   'config.chromeBridgeToken',
   'config.chromeControlEnabled',
+  'config.deepseek.apiKey',
+  'config.deepseek.enabled',
   'config.handoff.leituraGuiada',
   'config.localSpeech.model',
   'config.memorista.enabled',
@@ -79,6 +81,9 @@ describe('registro de persistência', () => {
     expect(isRegisteredPersistedKey('codexAuth')).toBe(true)
     expect(persistedKeyDefinition('codexAuth')).toMatchObject({ scope: 'device', sensitive: true })
     expect(() => persistedKeyDefinition('nova-chave')).toThrow('sem escopo declarado')
+    // A chave da DeepSeek fica só nesta máquina e marcada sensível, como a do Ollama.
+    expect(persistedKeyDefinition('config.deepseek.apiKey')).toMatchObject({ scope: 'device', sensitive: true, store: 'local' })
+    expect(persistedKeyDefinition('config.deepseek.enabled')).toMatchObject({ scope: 'device', store: 'local' })
   })
 
   it('preserva chave desconhecida de migração no escopo do dispositivo', () => {

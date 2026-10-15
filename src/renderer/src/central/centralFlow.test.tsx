@@ -40,7 +40,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
   })
   const remote = { running: false, url: '', ip: '', port: 0, token: '', clients: 0, relayConnected: false }
   const api = {
-    getConfig: vi.fn(async () => ({ voice: { voice: 'pf_dora', speed: 1 }, ollama: { enabled: false, apiKey: '' }, skipPermissions: false, windowsControlEnabled: false, remoteToken: '', remoteEnabled: false })),
+    getConfig: vi.fn(async () => ({ voice: { voice: 'pf_dora', speed: 1 }, ollama: { enabled: false, apiKey: '' }, deepseek: { enabled: false, apiKey: '' }, skipPermissions: false, windowsControlEnabled: false, remoteToken: '', remoteEnabled: false })),
     setConfig: vi.fn(async () => {}),
     isTypeSafeConfigured: vi.fn(async () => true),
     onAppCloseRequested: vi.fn(() => () => {}),
@@ -89,7 +89,7 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     codexLogout: vi.fn(async () => undefined),
     sandboxInfo: vi.fn(async () => ({ root: 'C:\\local\\sandbox' })),
     sandboxCreate: vi.fn(async () => ({ path: 'C:\\local\\sandbox\\2026-10-02_10-00_abcd' })),
-    providersStatus: vi.fn(async () => ({ claude: true, gpt: false, ollama: false })),
+    providersStatus: vi.fn(async () => ({ claude: true, gpt: false, ollama: false, deepseek: false })),
     onProvidersChanged: vi.fn(() => () => {}),
     pathExists: vi.fn(async () => true),
     projectTree: vi.fn(async () => ({ nodes: [], truncated: false, missing: [] })),

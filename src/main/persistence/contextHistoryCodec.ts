@@ -20,7 +20,7 @@ import { StorageError, type ContextTurnWrite } from './types'
  * comprimidos e endereçados pelo conteúdo, nunca inspecionados.
  */
 
-const PROVIDERS: ReadonlySet<ContextTurnSummary['provider']> = new Set(['claude', 'gpt', 'ollama'])
+const PROVIDERS: ReadonlySet<ContextTurnSummary['provider']> = new Set(['claude', 'gpt', 'ollama', 'deepseek'])
 
 /** Blob a gravar uma vez só (chave = `hash`). */
 export interface ContextBlobInsert {

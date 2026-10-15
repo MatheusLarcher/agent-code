@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { claudeAuthExpiry, claudeConnectedForCard, isClaudeAuthFailure } from './authExpiry'
 import { providerStatusWith } from './providerStatus'
 
-const off = { gpt: async () => false, ollama: () => false }
+const off = { gpt: async () => false, ollama: () => false, deepseek: () => false }
 
 afterEach(() => {
   claudeAuthExpiry.onChange(null)
@@ -14,7 +14,7 @@ describe('claudeConnectedForCard', () => {
   it('checagem indeterminada (sem JSON válido) não desliga o Claude: sem card', async () => {
     const extraConnected = vi.fn(async () => false)
     const status = await providerStatusWith({ ...off, claude: () => claudeConnectedForCard({ probe: async () => null, extraConnected }) })
-    expect(status).toEqual({ claude: true, gpt: false, ollama: false })
+    expect(status).toEqual({ claude: true, gpt: false, ollama: false, deepseek: false })
     expect(extraConnected).not.toHaveBeenCalled()
   })
 

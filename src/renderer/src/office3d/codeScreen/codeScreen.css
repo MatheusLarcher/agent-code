@@ -232,6 +232,7 @@ button.cm-act:hover { color: var(--cm-text-strong); }
 .cm-mt-claude { background: rgba(217, 119, 87, 0.18); color: #f0a589; }
 .cm-mt-gpt { background: rgba(16, 163, 127, 0.18); color: #5fd4b0; }
 .cm-mt-ollama { background: rgba(122, 162, 247, 0.16); color: #a9c1ff; }
+.cm-mt-deepseek { background: rgba(77, 107, 254, 0.2); color: #8ea2ff; }
 .cm-mchip { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px; color: #8f8f8f; font-size: 12px; white-space: nowrap; }
 .cm-mchip b { color: #ececec; font-weight: 600; }
 .cm-mchip .cm-icon { width: 14px; height: 14px; color: #9a9a9a; }
