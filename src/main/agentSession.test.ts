@@ -12,7 +12,10 @@ const configState = vi.hoisted(() => ({
   windowsControlEnabled: false as unknown,
   chromeControlEnabled: false as unknown,
   ollama: { enabled: false, apiKey: '' },
-  skillCatalog: undefined as { tiered: boolean; overrides: Record<string, never> } | undefined
+  skillCatalog: undefined as { tiered: boolean; overrides: Record<string, never> } | undefined,
+  // 'typesafe' aqui: os testes do TypeSafe abaixo só ligam `typeSafeState.active`.
+  // O padrão do app ('haiku') tem teste próprio.
+  memorySelector: 'typesafe' as unknown
 }))
 const codexState = vi.hoisted(() => ({ connected: true }))
 const cacheState = vi.hoisted(() => ({
@@ -31,6 +34,7 @@ vi.mock('./config', () => ({
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
     ollama: configState.ollama,
+    memorySelector: configState.memorySelector,
     ...(configState.skillCatalog ? { skillCatalog: configState.skillCatalog } : {})
   })
 }))
@@ -216,6 +220,7 @@ beforeEach(() => {
   configState.chromeControlEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
   configState.skillCatalog = undefined
+  configState.memorySelector = 'typesafe'
   codexState.connected = true
   cacheState.dir = 'C:\\test\\agent-code'
   cacheState.memoriesDir = 'C:\\test\\agent-code\\memories'
@@ -2588,6 +2593,91 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
     // O gate do memorista continua vendo a memória que está na conversa.
     expect(usedMemories('c1')).toEqual(['erp.md'])
     expect(queries).toEqual(['e o ERP?', 'e de novo o ERP?'])
+  })
+
+  it('padrão (memorySelector "haiku"): com o TypeSafe no ar, quem escolhe é o Haiku', async () => {
+    await memoriesFixture()
+    configState.memorySelector = 'haiku'
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '--- Memória relevante: erp.md ---\nDo TypeSafe.', relPaths: ['erp.md'] }
+    haikuState.choose = () => ({ block: '', relPaths: ['erp.md'], entries: [{ relPath: 'erp.md', body: 'O banco chama FALCAO (Haiku).' }] })
+    const { s } = makeSession()
+    await s.start()
+    // Modo Haiku: o catálogo volta ao system prompt, como fora do TypeSafe.
+    expect(appendedSystemPrompt()).toContain('AUTHORITATIVE PERSISTENT MEMORY CATALOG')
+    await s.send('e o ERP?')
+
+    expect(String(pushedMessages(s).at(-1)!.message.content)).toContain('O banco chama FALCAO (Haiku).')
+    expect(typeSafeState.queries).toEqual([])
+    const live = await liveContext(requestHooks().user, 'UserPromptSubmit')
+    expect(live).not.toContain('Do TypeSafe.')
+  })
+
+  it('valor ilegível no memorySelector vale como "haiku"', async () => {
+    await memoriesFixture()
+    configState.memorySelector = 'outro'
+    typeSafeState.active = true
+    haikuState.choose = () => ({ block: '', relPaths: ['erp.md'], entries: [{ relPath: 'erp.md', body: 'Via Haiku.' }] })
+    const { s } = makeSession()
+    await s.start()
+    await s.send('e o ERP?')
+    expect(String(pushedMessages(s).at(-1)!.message.content)).toContain('Via Haiku.')
+    expect(typeSafeState.queries).toEqual([])
+  })
+
+  describe('memórias do subagente (PreToolUse do agente principal)', () => {
+    type Hook = (input: Record<string, unknown>) => Promise<{ hookSpecificOutput?: { updatedInput?: Record<string, unknown> } }>
+    function pre(): Hook {
+      const options = queryMock.mock.calls.at(-1)![0].options as { hooks: Record<string, Array<{ hooks: Hook[] }>> }
+      return options.hooks.PreToolUse[0].hooks[0]
+    }
+    const agentCall = (extra: Record<string, unknown> = {}) => ({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Agent',
+      tool_use_id: 'sub-1',
+      tool_input: { description: 'Auditar o ERP', prompt: 'Confira o banco do ERP.', subagent_type: 'Explore' },
+      ...extra
+    })
+
+    it('o Haiku escolhe pela tarefa e a memória vai no começo do prompt, via updatedInput', async () => {
+      await memoriesFixture()
+      configState.memorySelector = 'haiku'
+      const queries: string[] = []
+      haikuState.choose = (_dir, query) => {
+        queries.push(query)
+        return { block: '--- Memória relevante: erp.md ---\nO banco chama FALCAO.', relPaths: ['erp.md'], entries: [] }
+      }
+      const { s } = makeSession()
+      await s.start()
+      const out = await pre()(agentCall())
+
+      const updated = out.hookSpecificOutput?.updatedInput
+      expect(updated?.prompt).toBe('--- Memória relevante: erp.md ---\nO banco chama FALCAO.\n\nConfira o banco do ERP.')
+      // O resto do input passa intacto.
+      expect(updated).toMatchObject({ description: 'Auditar o ERP', subagent_type: 'Explore' })
+      expect(queries).toEqual(['Auditar o ERP\n\nConfira o banco do ERP.'])
+      s.dispose()
+    })
+
+    it('falha, nenhuma escolha, modo TypeSafe ou chamada de dentro de um subagente: input intacto', async () => {
+      await memoriesFixture()
+      configState.memorySelector = 'haiku'
+      haikuState.choose = () => { throw new Error('caiu') }
+      const { s } = makeSession()
+      await s.start()
+      expect(await pre()(agentCall())).toEqual({})
+
+      haikuState.choose = () => ({ block: '', relPaths: [], entries: [] })
+      expect(await pre()(agentCall({ tool_use_id: 'sub-2' }))).toEqual({})
+
+      haikuState.choose = () => ({ block: '--- Memória relevante: erp.md ---\nX', relPaths: ['erp.md'], entries: [] })
+      expect(await pre()(agentCall({ tool_use_id: 'sub-3', agent_id: 'filho' }))).toEqual({})
+
+      configState.memorySelector = 'typesafe'
+      typeSafeState.active = true
+      expect(await pre()(agentCall({ tool_use_id: 'sub-4' }))).toEqual({})
+      s.dispose()
+    })
   })
 
   it('timeout ou erro na decisão mantém o fallback lexical vivo', async () => {

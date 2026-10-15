@@ -5,6 +5,7 @@ import {
   defaultAppConfig,
   mergeAppConfig,
   normalizeAllowedAutoModels,
+  normalizeMemorySelector,
   normalizeSkillOverrides,
   parseStoredAppConfig
 } from './persistence/configData'
@@ -57,7 +58,9 @@ const FIELDS: Field[] = [
   { key: 'config.typesafe.minConfidence', get: (c) => c.typesafe.minConfidence, patch: (v) => ({ typesafe: { minConfidence: v as number } as AppConfig['typesafe'] }) },
   // Lista (não escalar): vai como JSON de array pelo mesmo encode. Valor lido que
   // não é lista de textos volta ao padrão [] em vez de derrubar o boot.
-  { key: 'config.typesafe.allowedAutoModels', get: (c) => c.typesafe.allowedAutoModels, patch: (v) => ({ typesafe: { allowedAutoModels: normalizeAllowedAutoModels(v) } as AppConfig['typesafe'] }) }
+  { key: 'config.typesafe.allowedAutoModels', get: (c) => c.typesafe.allowedAutoModels, patch: (v) => ({ typesafe: { allowedAutoModels: normalizeAllowedAutoModels(v) } as AppConfig['typesafe'] }) },
+  // Ausente (config de antes do seletor) ou ilegível = 'haiku', o padrão.
+  { key: 'config.memorySelector', get: (c) => c.memorySelector, patch: (v) => ({ memorySelector: normalizeMemorySelector(v) }) }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold

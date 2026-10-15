@@ -3,9 +3,15 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  buildHaikuQuestion,
   chooseTurnMemories,
+  HAIKU_CHARS_PER_TOKEN,
   HAIKU_MEMORY_CANDIDATES,
+  HAIKU_MEMORY_MAX,
+  HAIKU_MEMORY_MAX_CHARS,
   HAIKU_MEMORY_MODEL,
+  HAIKU_QUESTION_MAX_CHARS,
+  HAIKU_QUESTION_MAX_TOKENS,
   InjectedMemoryLedger,
   narrowHaikuCandidates,
   parseHaikuMemoryChoice,
@@ -13,6 +19,7 @@ import {
   type MemoryQuery
 } from './memorySelectionHaiku'
 import { listMemoryFiles } from './memoryIndex'
+import { ConversationDigest } from './memory/conversationDigest'
 
 async function memories(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'mem-haiku-'))
@@ -124,25 +131,41 @@ describe('selectMemoriesWithHaiku', () => {
     expect(await selectMemoriesWithHaiku(dir, 'café', { query: throwing })).toBeNull()
   })
 
-  it('teto de 50.000 caracteres: a memória que estoura é pulada inteira', async () => {
+  it('teto de 75.000 caracteres: a memória que estoura é pulada inteira', async () => {
+    expect(HAIKU_MEMORY_MAX_CHARS).toBe(75_000)
     const dir = await memories({
-      'a.md': `# A\n${'a'.repeat(30_000)}`,
-      'b.md': `# B\n${'b'.repeat(30_000)}`,
+      'a.md': `# A\n${'a'.repeat(40_000)}`,
+      'b.md': `# B\n${'b'.repeat(40_000)}`,
       'c.md': `# C\n${'c'.repeat(1_000)}`
     })
     const chosen = await selectMemoriesWithHaiku(dir, 'tudo', { query: fakeQuery('{"memorias":["a.md","b.md","c.md"]}').run })
     expect(chosen?.relPaths).toEqual(['a.md', 'c.md'])
-    expect(chosen!.block.length).toBeLessThanOrEqual(50_000)
-    expect(chosen?.block).toContain('a'.repeat(30_000))
+    expect(chosen!.block.length).toBeLessThanOrEqual(HAIKU_MEMORY_MAX_CHARS)
+    expect(chosen?.block).toContain('a'.repeat(40_000))
   })
 
-  it('no máximo 10, mesmo que o Haiku peça mais', async () => {
+  it('no máximo 15, mesmo que o Haiku peça mais', async () => {
+    expect(HAIKU_MEMORY_MAX).toBe(15)
     const files: Record<string, string> = {}
-    for (let i = 0; i < 12; i++) files[`m${i}.md`] = `# M${i}\ncorpo ${i}`
+    for (let i = 0; i < 20; i++) files[`m${String(i).padStart(2, '0')}.md`] = `# M${i}\ncorpo ${i}`
     const dir = await memories(files)
     const picked = Object.keys(files).sort()
     const chosen = await selectMemoriesWithHaiku(dir, 'tudo', { query: fakeQuery(JSON.stringify({ memorias: picked })).run })
-    expect(chosen?.relPaths).toEqual(picked.slice(0, 10))
+    expect(chosen?.relPaths).toEqual(picked.slice(0, 15))
+  })
+
+  it('a conversa e o sujeito (subagente) vão na pergunta ao Haiku', async () => {
+    const dir = await memories(base)
+    const fake = fakeQuery('{"memorias":["deploy.md"]}')
+    const conversation = vi.fn((_max: number) => 'Usuário: vamos publicar\n\nAssistente: certo')
+    await selectMemoriesWithHaiku(dir, 'roda o build', { query: fake.run, conversation, subject: 'subagent' })
+    const prompt = fake.seen[0].prompt
+    expect(prompt).toContain('Resumo da conversa até aqui')
+    expect(prompt).toContain('Usuário: vamos publicar\n\nAssistente: certo')
+    expect(prompt).toContain('Tarefa entregue ao subagente')
+    expect(prompt).toContain('- deploy.md:')
+    expect(conversation.mock.calls[0][0]).toBeGreaterThan(0)
+    expect(conversation.mock.calls[0][0]).toBeLessThanOrEqual(HAIKU_QUESTION_MAX_CHARS)
   })
 
   it('pasta vazia ou mensagem vazia não chama o modelo', async () => {
@@ -151,6 +174,47 @@ describe('selectMemoriesWithHaiku', () => {
     expect(await selectMemoriesWithHaiku(empty, 'deploy', { query: run })).toEqual({ block: '', relPaths: [], entries: [] })
     expect(await selectMemoriesWithHaiku(await memories(base), '   ', { query: run })).toEqual({ block: '', relPaths: [], entries: [] })
     expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildHaikuQuestion', () => {
+  it('orçamento de 120k tokens a 3,5 caracteres por token', () => {
+    expect(HAIKU_QUESTION_MAX_TOKENS).toBe(120_000)
+    expect(HAIKU_CHARS_PER_TOKEN).toBe(3.5)
+    expect(HAIKU_QUESTION_MAX_CHARS).toBe(420_000)
+  })
+
+  it('conversa longa é truncada no teto, guardando as mensagens mais recentes', async () => {
+    const digest = new ConversationDigest()
+    for (let i = 0; i < 200; i++) digest.add(i % 2 ? 'assistant' : 'user', `msg-${i} ${'x'.repeat(5_000)}`)
+    const dir = await memories(base)
+    const candidates = listMemoryFiles(dir)
+    const max = 50_000
+    const question = buildHaikuQuestion('publica o app', candidates, (room) => digest.render(room), 'user', max)
+    expect(question.length).toBeLessThanOrEqual(max)
+    expect(question).toContain('msg-199 ')
+    expect(question).not.toContain('msg-0 ')
+    expect(question).toContain('Mensagem atual do usuário')
+    for (const file of candidates) expect(question).toContain(`- ${file.relPath}:`)
+  })
+
+  it('a mensagem e as candidatas têm prioridade; renderizador que estoura é cortado pelo fim', async () => {
+    const dir = await memories(base)
+    const candidates = listMemoryFiles(dir)
+    const question = buildHaikuQuestion('oi', candidates, () => `velha ${'y'.repeat(10_000)} nova`, 'user', 2_000)
+    expect(question.length).toBeLessThanOrEqual(2_000)
+    expect(question).toContain(' nova\n>>>')
+    expect(question).not.toContain('velha')
+    for (const file of candidates) expect(question).toContain(`- ${file.relPath}:`)
+  })
+
+  it('renderizador que lança não derruba a pergunta', async () => {
+    const dir = await memories(base)
+    const question = buildHaikuQuestion('oi', listMemoryFiles(dir), () => {
+      throw new Error('quebrou')
+    })
+    expect(question).not.toContain('Resumo da conversa')
+    expect(question).toContain('Mensagem atual do usuário')
   })
 })
 

@@ -11,8 +11,8 @@ import {
   skillCatalogFilesystemVersion,
   type SkillCatalogSnapshot
 } from '../skillDiscovery'
-import { exposeCacheSkills, managedSkillsFilesystemVersion, syncCacheSkills } from '../skillManager'
 import { activeSkillKits } from '../skillKits'
+import { skillSync } from './skillSync'
 import { rememberNativeSkillNames, resolveSkillTiers, skillCatalogPolicy, type SkillCatalogPolicy } from './skillTiers'
 import { createSkillsMcpServer, SKILLS_MCP_SERVER } from './skillTools'
 
@@ -105,30 +105,49 @@ export class SessionSkillCatalog {
   }
 
   /** Copia o kit gerenciado (e os kits ligados) para o cache; true = recarregar o nativo. */
-  syncManaged(cacheDir: string, cacheSkillsDir: string): boolean {
+  async syncManaged(cacheDir: string, cacheSkillsDir: string): Promise<boolean> {
+    return (await this.syncManagedAndFingerprint(cacheDir, cacheSkillsDir)).changed
+  }
+
+  /**
+   * A sincronização roda no worker do app (skillSync.ts), partilhada entre as
+   * sessões. Devolve também a assinatura barata do disco já lida para decidir o
+   * TTL, para o refresh não repetir a leitura.
+   */
+  private async syncManagedAndFingerprint(
+    cacheDir: string,
+    cacheSkillsDir: string
+  ): Promise<{ changed: boolean; fingerprint: string | null }> {
     const runtime = this.runtime
-    if (!runtime) return false
+    if (!runtime) return { changed: false, fingerprint: null }
     // Os kits ligados entram na versão: trocar o interruptor ressincroniza aqui.
     const kits = activeSkillKits(loadConfig())
-    const sourceVersion = managedSkillsFilesystemVersion(runtime.appRoot, kits)
-    const sourceChanged = sourceVersion !== this.managedSourceVersion
-    const result = sourceChanged
-      ? syncCacheSkills(runtime.appRoot, cacheDir, runtime.userHome, kits)
-      : exposeCacheSkills(cacheSkillsDir, runtime.userHome)
-    if (result.errors.length === 0) {
-      this.managedSourceVersion = sourceVersion
-      if (sourceChanged) this.managedReloadPending = true
-      return this.managedReloadPending
+    let fingerprint: string | null = null
+    const outcome = await skillSync().syncManaged(
+      { appRoot: runtime.appRoot, cacheDir, skillsDir: cacheSkillsDir, userHome: runtime.userHome, kits },
+      {
+        scope: this.cwd,
+        fingerprint: () => (fingerprint = skillCatalogFilesystemVersion(this.cwd, runtime.userHome))
+      }
+    )
+    // A versão fica registrada mesmo com erro: a nova tentativa completa é do
+    // coordenador, depois do backoff, e não a cada envio.
+    if (outcome.version !== this.managedSourceVersion) {
+      this.managedSourceVersion = outcome.version
+      this.managedReloadPending = true
     }
-    console.warn('[skills] managed skill synchronization failed:', result.errors.join('\n'))
-    return this.managedReloadPending
+    if (outcome.ran && outcome.result.errors.length > 0) {
+      console.warn('[skills] managed skill synchronization failed:', outcome.result.errors.join('\n'))
+    }
+    return { changed: this.managedReloadPending, fingerprint }
   }
 
   /** Atualização do catálogo para esta mensagem ('' quando nada mudou). */
   async refresh(): Promise<string> {
     const cacheInfo = getCacheInfo()
-    const managedChanged = this.syncManaged(cacheInfo.dir, cacheInfo.skillsDir)
-    const filesystemVersion = skillCatalogFilesystemVersion(this.cwd, this.runtime?.userHome)
+    const managed = await this.syncManagedAndFingerprint(cacheInfo.dir, cacheInfo.skillsDir)
+    const managedChanged = managed.changed
+    const filesystemVersion = managed.fingerprint ?? skillCatalogFilesystemVersion(this.cwd, this.runtime?.userHome)
     // Em níveis, o catálogo anunciado tem versão própria: o "nativo em dia" se mede
     // pela versão do snapshot nativo de onde ele saiu.
     const announcedFrom = this.policy.tiered ? this.nativeVersion : this.catalogVersion

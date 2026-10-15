@@ -197,7 +197,7 @@ import { detectProjectColor } from './projectColorScan'
 import { decodeWithNativeImage } from './projectColorImage'
 import { resolveProjectIdentity } from './persistence/projectIdentity'
 import { isSandboxProjectPath } from '../shared/projectColor'
-import { syncCacheSkills } from './skillManager'
+import { skillSync, type SkillSyncTarget } from './skills/skillSync'
 import { activeSkillKits, skillKitRoot } from './skillKits'
 import { skillNames as skillNamesIn } from './skillDirs'
 import { skillTierRows } from './skills/skillTiers'
@@ -975,6 +975,24 @@ function assertStorageWritable(allowTransitionFlush = false): void {
   }
 }
 
+/**
+ * Sincronização completa do kit de skills no cache, pelo worker do app
+ * (skills/skillSync.ts) — a mesma fila das sessões. Nunca rejeita: erro vai pro log.
+ */
+async function syncAppSkills(cacheDir: string, kits: SkillSyncTarget['kits']): Promise<void> {
+  try {
+    const result = await skillSync().syncAll({
+      appRoot: app.getAppPath(),
+      cacheDir,
+      userHome: devUserHome() ?? homedir(),
+      kits
+    })
+    for (const error of result.errors) console.error(`[skills] ${error}`)
+  } catch (error) {
+    console.error('[skills] sincronização falhou:', error)
+  }
+}
+
 async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
     throw new TypeError('windowsControlEnabled deve ser booleano.')
@@ -991,8 +1009,7 @@ async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   // Kit de skills ligado/desligado: o menu "/" e as sessões novas veem na hora;
   // as abertas ressincronizam no próximo envio (agentSession).
   if (activeSkillKits(next).join() !== kitsBefore) {
-    const skillSync = syncCacheSkills(app.getAppPath(), getCacheInfo().dir, undefined, activeSkillKits(next))
-    for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+    void syncAppSkills(getCacheInfo().dir, activeSkillKits(next))
   }
   // Chave nova salva ou Modo Automático religado: sai da pausa na hora.
   if (patch.typesafe && (next.typesafe.apiKey !== before.apiKey || (next.typesafe.enabled && !before.enabled))) {
@@ -1757,8 +1774,7 @@ export function registerIpc(): void {
     } else {
       storageLifecycle.updateSqliteLocation(info)
     }
-    const skillSync = syncCacheSkills(app.getAppPath(), info.dir, undefined, activeSkillKits(loadConfig()))
-    for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+    await syncAppSkills(info.dir, activeSkillKits(loadConfig()))
     void relocateLocalLeftovers(info.dir, info.localDir).then(logLeftoverRelocation)
     const enabled = loadConfig().windowsControlEnabled === true
     windowsControl.setEnabled(enabled)
@@ -3273,11 +3289,11 @@ app.whenReady().then(async () => {
   const storageAvailable = storageLifecycle.canMutate()
   // Do SQLite local: carrega com o banco fora do ar também.
   await bootStage('config', () => initializeConfigPersistence())
-  // Sincrono e recursivo em disco (e a pasta de dados pode estar no OneDrive):
-  // fora do caminho da janela, onde só atrasava a primeira pintura. Depois da
-  // config: os kits de skills (skillKits.ts) seguem os interruptores dela.
-  const skillSync = syncCacheSkills(app.getAppPath(), cacheInfo.dir, undefined, activeSkillKits(loadConfig()))
-  for (const error of skillSync.errors) console.error(`[skills] ${error}`)
+  // Recursivo em disco (e a pasta de dados pode estar no OneDrive): no worker de
+  // skills, sem esperar; a primeira sessão entra na mesma fila e vê o cache
+  // pronto. Depois da config: os kits de skills (skillKits.ts) seguem os
+  // interruptores dela.
+  void syncAppSkills(cacheInfo.dir, activeSkillKits(loadConfig()))
   if (storageAvailable) {
     await bootStage('codex-auth', () => initializeCodexAuthPersistence())
     // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do

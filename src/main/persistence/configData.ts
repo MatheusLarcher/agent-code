@@ -19,6 +19,7 @@ import {
   type SkillTier,
   type EffortChoice,
   type EffortLevel,
+  type MemorySelectorMode,
   type PlanningConfig,
   type TranscribeEngine,
   type VoiceId,
@@ -78,6 +79,15 @@ export function normalizeSkillOverrides(value: unknown): SkillCatalogConfig['ove
     out[name] = { tier: tier as SkillTier, category: c.category as SkillCategory }
   }
   return out
+}
+
+/**
+ * O seletor de memória lido do banco ou do patch: só 'typesafe' escolhe o
+ * TypeSafe; qualquer outro valor (ausente, tipo errado, nome desconhecido) vira
+ * 'haiku', o padrão — normaliza em vez de lançar, como os campos acima.
+ */
+export function normalizeMemorySelector(value: unknown): MemorySelectorMode {
+  return value === 'typesafe' ? 'typesafe' : 'haiku'
 }
 
 const partialConfigSchema = z
@@ -162,7 +172,10 @@ const partialConfigSchema = z
         allowedAutoModels: z.array(z.string().min(1)).optional()
       })
       .strict()
-      .optional()
+      .optional(),
+    // Solto de propósito: quem valida é `normalizeMemorySelector` (valor
+    // inválido vira 'haiku' em vez de derrubar a config inteira).
+    memorySelector: z.unknown().optional()
   })
   .strict()
 
@@ -217,7 +230,10 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     typesafe: (() => {
       const typesafe = { ...current.typesafe, ...(parsed.data.typesafe ?? {}) }
       return { ...typesafe, allowedAutoModels: normalizeAllowedAutoModels(typesafe.allowedAutoModels) }
-    })()
+    })(),
+    memorySelector: normalizeMemorySelector(
+      parsed.data.memorySelector === undefined ? current.memorySelector : parsed.data.memorySelector
+    )
   }
 }
 

@@ -53,6 +53,7 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.typesafe.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
   'config.typesafe.minConfidence': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.typesafe.allowedAutoModels': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.memorySelector': { scope: 'device', source: 'main-kv', store: 'local' },
   'agentcode.typesafe.usage.v1': { scope: 'device', source: 'main-kv' },
   codexAuth: { scope: 'device', sensitive: true, source: 'main-kv' },
   // Contas Claude: id, apelido, e-mail, plano e última leitura de consumo. Sem

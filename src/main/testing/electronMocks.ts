@@ -143,7 +143,7 @@ vi.mock('../remote/buildApk', () => ({ buildRemoteApk: vi.fn(), resolveRemoteRoo
 vi.mock('../config', () => ({
   ensureConfigLoaded: vi.fn(),
   initializeConfigPersistence: vi.fn(),
-  loadConfig: () => ({ planning: spy.planningConfig, typesafe: { allowedAutoModels: [] } }),
+  loadConfig: () => ({ planning: spy.planningConfig, typesafe: { allowedAutoModels: [] }, memorySelector: 'haiku' }),
   updateConfig: vi.fn()
 }))
 vi.mock('../voiceService', () => ({

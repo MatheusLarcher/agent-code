@@ -14,7 +14,8 @@ import {
 } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
-import { devUserHome } from './devDataDir'
+// Sem devDataDir (que importa 'electron'): este módulo roda também no worker de
+// sincronização (skills/skillSyncWorker.ts). Quem chama resolve a home do dev.
 import { directoryDigest, skillNames, VALID_SKILL_DIRECTORY } from './skillDirs'
 import { bundledSkillSources, kitSkillNames, kitsDigest, type SkillKitId } from './skillKits'
 
@@ -186,7 +187,7 @@ function removeGlobalEntry(link: string): void {
  * `isDirectory() === false`, so the SDK's skill scanner skips it and the Skill
  * tool answers `Unknown skill` for a skill the catalog just advertised.
  */
-export function exposeCacheSkills(skillsDir: string, userHome: string = devUserHome() ?? homedir(), machine: string = hostname()): SkillSyncResult {
+export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): SkillSyncResult {
   const globalRoot = join(userHome, '.claude', 'skills')
   const errors: string[] = []
   mkdirSync(skillsDir, { recursive: true })
@@ -273,7 +274,7 @@ export function exposeCacheSkills(skillsDir: string, userHome: string = devUserH
  * Agent Code exposed there, and never overrides a bundled or user-made cache
  * skill of the same name. Imports that vanished from `~/.claude` are removed.
  */
-export function importUserSkills(skillsDir: string, userHome: string = devUserHome() ?? homedir(), machine: string = hostname()): string[] {
+export function importUserSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): string[] {
   const errors: string[] = []
   const globalRoot = join(userHome, '.claude', 'skills')
   const manifestName = importedManifestName(machine)
@@ -392,8 +393,9 @@ export function ensureNativeSkillRoot(cacheDir: string, skillsDir: string = join
 export function syncCacheSkills(
   appRoot: string,
   cacheDir: string,
-  userHome: string = devUserHome() ?? homedir(),
-  kits: readonly SkillKitId[] = []
+  userHome: string = homedir(),
+  kits: readonly SkillKitId[] = [],
+  machine: string = hostname()
 ): SkillSyncResult {
   const kitOwned = kitSkillNames(appRoot)
   const sources = bundledSkillSources(appRoot, kits, kitOwned)
@@ -403,7 +405,7 @@ export function syncCacheSkills(
   // Upgrade the old name-only link manifest while every prior cache target is
   // still present. The final exposure pass can then safely remove stale links
   // by comparing their recorded target.
-  errors.push(...exposeCacheSkills(skillsDir, userHome).errors)
+  errors.push(...exposeCacheSkills(skillsDir, userHome, machine).errors)
 
   const previouslyBundled = readManaged(skillsDir, BUNDLED_MANIFEST_NAME)
   // A kit never takes over a skill of the same name the user already had in the
@@ -440,7 +442,7 @@ export function syncCacheSkills(
   }
   errors.push(...seedCacheSkills(appRoot, skillsDir, kitOwned))
 
-  const exposed = exposeCacheSkills(skillsDir, userHome)
+  const exposed = exposeCacheSkills(skillsDir, userHome, machine)
   return { ...exposed, errors: [...errors, ...exposed.errors] }
 }
 

@@ -5,7 +5,8 @@ export interface PromptContext {
   /** Change-only catalog updates that are intentionally part of history. */
   memory: string
   /** As memórias INTEIRAS escolhidas para este turno (Haiku ou busca lexical,
-   *  memorySelectionHaiku.ts), até 50.000 caracteres. Vão na mensagem, e não no
+   *  memorySelectionHaiku.ts), até 75.000 caracteres pelo Haiku (50.000 pela
+   *  busca lexical). Vão na mensagem, e não no
    *  hook, porque o `additionalContext` do hook é cortado em 10.000 caracteres.
    *  Só o que ainda não foi injetado igual nesta conversa. Opcional: '' = nada. */
   relevantMemory?: string

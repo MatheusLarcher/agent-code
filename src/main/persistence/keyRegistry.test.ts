@@ -34,6 +34,7 @@ const EXPECTED_KEYS = [
   'config.localSpeech.model',
   'config.memorista.enabled',
   'config.memorista.model',
+  'config.memorySelector',
   'config.ollama.apiKey',
   'config.ollama.enabled',
   'config.openai.speed',

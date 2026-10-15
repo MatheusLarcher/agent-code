@@ -1847,7 +1847,14 @@ export interface AppConfig {
   skillCatalog: SkillCatalogConfig
   /** Decisões estruturadas rápidas pelo TypeSafe AI (see TypeSafeConfig). */
   typesafe: TypeSafeConfig
+  /** Quem escolhe as memórias do turno (see MemorySelectorMode). */
+  memorySelector: MemorySelectorMode
 }
+
+/** Seletor de memória por turno. 'haiku' (padrão): uma chamada curta ao Haiku
+ *  com os caminhos, os cabeçalhos e a conversa, que também abastece os
+ *  subagentes. 'typesafe': o seletor TypeSafe, quando ligado e configurado. */
+export type MemorySelectorMode = 'haiku' | 'typesafe'
 
 export type PostgresTlsMode = 'disable' | 'prefer' | 'require' | 'verify-full'
 
@@ -2128,7 +2135,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     apiKey: '',
     minConfidence: DEFAULT_TYPESAFE_MIN_CONFIDENCE,
     allowedAutoModels: []
-  }
+  },
+  // Haiku por padrão: não depende de serviço externo e vê a conversa inteira.
+  memorySelector: 'haiku'
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */

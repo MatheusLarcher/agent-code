@@ -68,8 +68,11 @@ import {
   buildDynamicMemoryContext,
   type MemoryCatalogSnapshot
 } from './memoryIndex'
-import { selectMemoriesWithTypeSafe, typeSafeMemorySelectionActive, type MemorySelection } from './typesafe'
+import { selectMemoriesWithTypeSafe, type MemorySelection } from './typesafe'
 import { chooseTurnMemories, InjectedMemoryLedger, selectMemoriesWithHaiku } from './memorySelectionHaiku'
+import { memorySelectorUsesTypeSafe, subagentMemoryInput } from './memory/memorySelector'
+import { ConversationDigest } from './memory/conversationDigest'
+import { loadConversationSeed } from './memory/conversationSeed'
 import { TYPESAFE_BLOCKING_TIMEOUT_MS } from './typesafe/pause'
 import { forgetUsedMemories, recordUsedMemories } from './memoria/memoriasUsadas'
 import { homedir, hostname } from 'node:os'
@@ -192,6 +195,10 @@ export type MessageOrigin = 'pc' | 'celular'
 export function isCompactCommand(text: string): boolean {
   return /^\/compact(?:\s|$)/.test(text.trim())
 }
+
+/** Quanto o envio no modo Haiku espera a conversa gravada de uma sessão
+ *  retomada entrar no resumo (seedConversationDigest) antes de escolher. */
+export const CONVERSATION_SEED_WAIT_MS = 2_000
 
 /**
  * Carimbo que abre TODA mensagem do usuário.
@@ -625,6 +632,12 @@ export class AgentSession {
   /** Memórias já postas na mensagem nesta conversa (relPath → hash): a mesma,
    *  igual, não vai de novo. Zera ao compactar e ao descartar a sessão. */
   private readonly injectedMemories = new InjectedMemoryLedger()
+  /** A conversa (usuário + texto do assistente principal) que o Haiku vê ao
+   *  escolher memórias do turno e dos subagentes. Começa vazia a cada sessão. */
+  private readonly conversationDigest = new ConversationDigest()
+  /** Retomada: a carga da conversa gravada para o resumo (conversationSeed.ts),
+   *  disparada uma vez no start. Nunca rejeita. null = não há o que semear. */
+  private conversationSeed: Promise<void> | null = null
   private liveId: string | null = null
   private liveText = ''
   /** De qual envio é cada saída e cada terminal (`turnIds`). */
@@ -968,8 +981,44 @@ export class AgentSession {
     this.sink(ids ? ({ ...e, turnIds: ids } as ChatEvent) : e)
   }
 
+  /** Sessão retomada: o resumo que o Haiku vê começa com a conversa já gravada,
+   *  e não vazio. Uma vez por sessão, sem segurar o start nem o envio. */
+  private seedConversationDigest(): void {
+    const sessionId = this.opts.resume
+    if (!sessionId || this.conversationSeed) return
+    this.conversationSeed = Promise.resolve()
+      .then(() => loadConversationSeed({
+        sessionId,
+        cwd: this.opts.cwd,
+        sessionStore: this.sessionStore,
+        memoriesDir: getCacheInfo().memoriesDir
+      }))
+      .then((entries) => {
+        if (!this.disposed) this.conversationDigest.prepend(entries)
+      })
+      .catch(() => undefined)
+  }
+
+  /** O envio no modo Haiku espera a semeadura, mas só até um teto curto: uma
+   *  carga lenta (store remoto) não atrasa a mensagem — o Haiku escolhe com o
+   *  resumo que houver. */
+  private async awaitConversationSeed(): Promise<void> {
+    const seed = this.conversationSeed
+    if (!seed) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ceiling = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, CONVERSATION_SEED_WAIT_MS)
+    })
+    try {
+      await Promise.race([seed, ceiling])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async start(): Promise<boolean> {
     if (this.disposed) return false
+    this.seedConversationDigest()
     // Handoff com "permitir tudo, exceto destrutivo" (o padrão) nasce com
     // "Permitir tudo", independente do toggle global que o renderer mandou; o
     // gate destrutivo continua levando o destrutivo ao usuário.
@@ -1069,7 +1118,8 @@ export class AgentSession {
     // Tell the model where its per-user memory lives (and pre-load the complete catalog), so
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
-    this.skills.syncManaged(cacheInfo.dir, cacheInfo.skillsDir)
+    // No worker do app (skills/skillSync.ts): o thread principal fica livre enquanto copia.
+    await this.skills.syncManaged(cacheInfo.dir, cacheInfo.skillsDir)
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
     // The CLI (driven via SDK) only discovers skills under <cwd>/.claude/skills and
@@ -1082,11 +1132,11 @@ export class AgentSession {
     // adicional inexistente não serve para nada ao CLI.
     const planningDir = cacheInfo.dir ? planningDataDir(cacheInfo.dir) : ''
     const planningDirs = planningDir && existsSync(planningDir) ? [planningDir] : []
-    // O seletor do TypeSafe substitui o catálogo: com ele no ar, nem o índice
-    // completo entra no system prompt nem as versões são marcadas como
-    // entregues — desligar o recurso no meio da conversa faz o próximo despacho
-    // injetar o catálogo inteiro.
-    const memorySelectorActive = await typeSafeMemorySelectionActive()
+    // O seletor do TypeSafe substitui o catálogo: com ele escolhido e no ar,
+    // nem o índice completo entra no system prompt nem as versões são marcadas
+    // como entregues — desligar o recurso no meio da conversa faz o próximo
+    // despacho injetar o catálogo inteiro.
+    const memorySelectorActive = await memorySelectorUsesTypeSafe()
     const memorySnapshot = memorySelectorActive ? null : this.readMemoryCatalogSnapshot(memoriesDir)
     this.memoryFilesystemVersion = memorySnapshot?.filesystemVersion ?? ''
     this.memoryCatalogVersion = memorySnapshot?.version ?? ''
@@ -1328,18 +1378,29 @@ export class AgentSession {
           // silêncio: build e download legítimos passam minutos sem emitir.
           this.toolsInFlight.add(input.tool_use_id)
           this.markActivity()
+          // Subagente lançado pelo agente PRINCIPAL: o Haiku escolhe as memórias
+          // da tarefa dele (com a conversa) e elas vão no começo do prompt, via
+          // `updatedInput`. Modo TypeSafe, nada escolhido ou falha = input intacto.
+          const updatedInput = (name === 'Agent' || name === 'Task') && !input.agent_id
+            ? await subagentMemoryInput(input.tool_input, {
+              dir: getCacheInfo().memoriesDir,
+              conversation: (max) => this.conversationDigest.render(max),
+              env: claudeAccounts.envFor(this.opts.claudeAccountId)
+            })
+            : null
+          const withInput = updatedInput ? { updatedInput } : {}
           if (planning) {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: planning.decision,
-              permissionDecisionReason: planning.reason } }
+              permissionDecisionReason: planning.reason, ...withInput } }
           }
           // Destrutivo: um `allow` do settings.json pularia o canUseTool (e o gate
           // destrutivo dele); `ask` força a passagem pelo gate, que leva à UI.
           const destructive = destructiveCommandReason(name, (input.tool_input ?? {}) as Record<string, unknown>, this.opts.cwd)
           if (destructive) {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'ask' as const,
-              permissionDecisionReason: `Comando destrutivo (${destructive}): precisa da confirmação do usuário.` } }
+              permissionDecisionReason: `Comando destrutivo (${destructive}): precisa da confirmação do usuário.`, ...withInput } }
           }
-          return {}
+          return updatedInput ? { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, updatedInput } } : {}
         }] }],
         // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
         // a incerteza nunca é retirada e o reinício fica bloqueado para sempre.
@@ -1617,12 +1678,16 @@ export class AgentSession {
     // request, porque o hook roda outra vez a cada volta do loop de ferramentas.
     const selectionTurn = ++this.memorySelectionTurn
     let relevantMemory = ''
-    if (!(await typeSafeMemorySelectionActive().catch(() => false))) {
-      // Sem TypeSafe: o Haiku escolhe (busca lexical se ele não decidir) e as
-      // memórias vão INTEIRAS na mensagem — até 50.000 caracteres, que o hook
-      // (cortado em 10.000) não comporta. O hook leva só os docs.
-      const chosen = await chooseTurnMemories(getCacheInfo().memoriesDir, outText, this.injectedMemories, (dir, query) =>
-        selectMemoriesWithHaiku(dir, query, { env: claudeAccounts.envFor(this.opts.claudeAccountId) })
+    if (!(await memorySelectorUsesTypeSafe())) {
+      // Modo Haiku (padrão): ele escolhe vendo a conversa (busca lexical se não
+      // decidir) e as memórias vão INTEIRAS na mensagem — até 75.000
+      // caracteres, que o hook (cortado em 10.000) não comporta. O hook leva só os docs.
+      await this.awaitConversationSeed()
+      const chosen =await chooseTurnMemories(getCacheInfo().memoriesDir, outText, this.injectedMemories, (dir, query) =>
+        selectMemoriesWithHaiku(dir, query, {
+          env: claudeAccounts.envFor(this.opts.claudeAccountId),
+          conversation: (max) => this.conversationDigest.render(max)
+        })
       )
       relevantMemory = chosen.block
       this.activeMemorySelection = Promise.resolve({ block: '', relPaths: chosen.relPaths })
@@ -1646,6 +1711,9 @@ export class AgentSession {
           return selection
         })
     }
+    // Depois da escolha: a mensagem atual vai à parte na pergunta ao Haiku, não
+    // repetida no resumo. Registrada nos dois modos — o usuário pode trocar.
+    if (messageKind === 'normal') this.conversationDigest.add('user', text)
     const promptParts = {
       stamp, memory: memoryCatalogUpdate, relevantMemory, skills: skillCatalogUpdate, projects: projectsCatalogUpdate, others: othersUpdate
     }
@@ -2016,6 +2084,7 @@ export class AgentSession {
     this.memorySelectionTurn++
     this.activeMemorySelection = null
     this.injectedMemories.reset()
+    this.conversationDigest.reset()
     forgetUsedMemories(this.opts.convId)
     // Antes do resto: um intervalo sobrevivendo à sessão emitiria evento de uma
     // conversa que já não existe.
@@ -2118,7 +2187,7 @@ export class AgentSession {
   private async warnMemorySelectorDown(selectionTurn: number, selection: MemorySelection | null): Promise<void> {
     if (selection !== null) return
     try {
-      if (!(await typeSafeMemorySelectionActive())) return
+      if (!(await memorySelectorUsesTypeSafe())) return
     } catch {
       return
     }
@@ -2136,7 +2205,7 @@ export class AgentSession {
     // ficam deliberadamente sem atualizar — se o usuário desligar o recurso no
     // meio da conversa, o próximo despacho vê a divergência e entrega o catálogo
     // completo de uma vez.
-    if (await typeSafeMemorySelectionActive()) return ''
+    if (await memorySelectorUsesTypeSafe()) return ''
     const memoriesDir = getCacheInfo().memoriesDir
     const filesystemVersion = memoryCatalogFilesystemVersion(memoriesDir)
     if (filesystemVersion === this.memoryFilesystemVersion) return ''
@@ -2547,6 +2616,12 @@ ${lines}
         // sentinela; na troca por cota o modelo muda no meio da tarefa).
         const model = this.responseModel(message)
         this.recordLlmCall(message, blocks, track, model)
+        // O texto do agente principal entra no resumo da conversa que o Haiku vê
+        // ao escolher memórias. Ferramentas, pensamento e subagentes ficam fora.
+        if (parentToolUseId === null && Array.isArray(blocks)) {
+          const said = blocks.filter((block) => block.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n')
+          this.conversationDigest.add('assistant', said)
+        }
         // Conversa de handoff: "ATENÇÃO:"/"DESVIO DO PLANO:" no início de uma linha
         // do agente principal vira aviso em tempo real (toast + celular).
         if (this.opts.handoff && !this.opts.planning && parentToolUseId === null) {

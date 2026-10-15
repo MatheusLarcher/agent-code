@@ -4256,6 +4256,23 @@ img.inline-att[data-caret] {
   font-size: 13px;
   cursor: pointer;
 }
+/* "Seleção de memórias": rádios com nome + explicação em duas linhas. */
+.settings-memory-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-memory-selector-option {
+  align-items: flex-start;
+}
+.settings-memory-selector-option input {
+  margin-top: 2px;
+}
+.settings-memory-selector-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 /* Listas curtas dentro de uma seção (cofre de chaves, conflitos de memória).
    Rolam internamente: a lista pode crescer sem empurrar o resto da aba. */
 .settings-list {

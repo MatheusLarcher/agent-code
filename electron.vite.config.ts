@@ -26,7 +26,10 @@ export default defineConfig({
           // worker_threads da fila de gravação (persistence/writeQueue/preparer.ts)
           // e do export diário em parquet (parquetExport.ts): irmãos do index.js.
           conversationPrepareWorker: resolve('src/main/persistence/writeQueue/prepareWorker.ts'),
-          parquetExportWorker: resolve('src/main/parquetExportWorker.ts')
+          parquetExportWorker: resolve('src/main/parquetExportWorker.ts'),
+          // worker_threads da sincronização de skills (skills/skillSync.ts): irmão
+          // do index.js; nada no caminho dele importa 'electron'.
+          skillSyncWorker: resolve('src/main/skills/skillSyncWorker.ts')
         }
       }
     }

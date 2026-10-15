@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CONFIG } from '../../shared/ipc'
-import { defaultAppConfig, mergeAppConfig, normalizeAllowedAutoModels, normalizeSkillOverrides, parseStoredAppConfig } from './configData'
+import {
+  defaultAppConfig,
+  mergeAppConfig,
+  normalizeAllowedAutoModels,
+  normalizeMemorySelector,
+  normalizeSkillOverrides,
+  parseStoredAppConfig
+} from './configData'
 
 describe('configuração persistida', () => {
   it('mantém o cofre DESLIGADO por padrão e preserva a ativação explícita', () => {
@@ -220,5 +227,19 @@ describe('configuração persistida', () => {
     const small = mergeAppConfig(atual, { voice: { whisperModel: 'small-fp32' } })
     // Gravar só a velocidade não apaga a escolha do modelo (merge aninhado).
     expect(mergeAppConfig(small, { voice: { speed: 1.25 } }).voice.whisperModel).toBe('small-fp32')
+  })
+
+  it('seletor de memória: Haiku por padrão; "typesafe" é aceito; o resto volta a "haiku"', () => {
+    expect(DEFAULT_CONFIG.memorySelector).toBe('haiku')
+    expect(defaultAppConfig().memorySelector).toBe('haiku')
+    expect(parseStoredAppConfig('{}').memorySelector).toBe('haiku')
+    const ts = mergeAppConfig(defaultAppConfig(), { memorySelector: 'typesafe' })
+    expect(ts.memorySelector).toBe('typesafe')
+    expect(parseStoredAppConfig(JSON.stringify(ts)).memorySelector).toBe('typesafe')
+    // Gravar outro campo não desfaz a escolha.
+    expect(mergeAppConfig(ts, { skipPermissions: true }).memorySelector).toBe('typesafe')
+    expect(mergeAppConfig(ts, { memorySelector: 'gpt' }).memorySelector).toBe('haiku')
+    expect(mergeAppConfig(ts, { memorySelector: 1 }).memorySelector).toBe('haiku')
+    expect(normalizeMemorySelector(null)).toBe('haiku')
   })
 })

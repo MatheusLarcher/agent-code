@@ -16,6 +16,7 @@ import { BackupsSection } from './BackupsSection'
 import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
+import { MemorySelectorSetting } from './MemorySelectorSetting'
 import { ChromeControlSection } from './ChromeControlSection'
 import { VoiceSettingsSection } from './VoiceSettingsSection'
 import { HandoffSettingsSection } from './HandoffSettingsSection'
@@ -660,6 +661,12 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
+
+                <MemorySelectorSetting
+                  cfg={cfg}
+                  setCfg={setCfg}
+                  patchConfig={(patch) => patchConfig(patch as DeepPartial<AppConfig>)}
+                />
               </fieldset>
             )}
 
