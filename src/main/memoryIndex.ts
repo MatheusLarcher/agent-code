@@ -1,6 +1,17 @@
-import { createHash } from 'node:crypto'
-import { readdirSync, readFileSync, realpathSync, statSync, type Dirent } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
+import {
+  memoryFileIndex,
+  memoryFileIndexVersion,
+  memoryFileTerms,
+  memorySummary,
+  normalizedTerms,
+  watchedMemoryFileIndex,
+  type CachedMemoryFile,
+  type MemoryFileIndex
+} from './memory/memoryFileCache'
+
+export { memorySummary }
 
 /**
  * Walks the memories folder — including SUBFOLDERS, which the user uses to group
@@ -25,72 +36,13 @@ export interface MemoryCatalogSnapshot {
   version: string
 }
 
-interface MemoryFileMetadata {
-  relPath: string
-  fullPath: string
-  modifiedAtMs: number
-  sizeBytes: number
-}
-
-/** All Markdown files that form persistent memory, including the root index.
- * Symlinks and hidden entries are skipped so the catalog cannot escape its root. */
-function listMemoryFileMetadata(dir: string): MemoryFileMetadata[] {
-  const out: MemoryFileMetadata[] = []
-  const walk = (current: string, folders: string[]): void => {
-    let entries: Dirent<string>[]
-    try {
-      entries = readdirSync(current, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
-      const fullPath = join(current, entry.name)
-      if (entry.isDirectory()) {
-        walk(fullPath, [...folders, entry.name])
-        continue
-      }
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
-      try {
-        const stat = statSync(fullPath)
-        out.push({
-          relPath: [...folders, entry.name].join('/'),
-          fullPath,
-          modifiedAtMs: stat.mtimeMs,
-          sizeBytes: stat.size
-        })
-      } catch {
-        // A file can disappear while the tree is being scanned.
-      }
-    }
-  }
-  walk(dir, [])
-  return out
-}
-
-function updateMemoryHash(
-  hash: ReturnType<typeof createHash>,
-  relPath: string,
-  content: string
-): void {
-  hash.update(relPath).update('\0').update(content, 'utf8').update('\0')
-}
-
-/** Content signature checked before every user dispatch. Reading the bodies is
- * intentional: cloud sync can preserve both size and timestamp while replacing a
- * memory, and that change must still invalidate the authoritative catalog. */
+/** Content signature checked before every user dispatch. It hashes the bodies:
+ * cloud sync can preserve both size and timestamp while replacing a memory, and
+ * that change must still invalidate the authoritative catalog. The bodies come
+ * from the in-memory index (memory/memoryFileCache.ts), which keeps them current
+ * — all Markdown files, root index included; symlinks and hidden entries skipped. */
 export function memoryCatalogFilesystemVersion(dir: string): string {
-  const hash = createHash('sha256').update(dir).update('\0')
-  for (const metadata of listMemoryFileMetadata(dir)) {
-    try {
-      const content = readFileSync(metadata.fullPath, 'utf8')
-      if (content.includes('\0')) continue
-      updateMemoryHash(hash, metadata.relPath, content)
-    } catch {
-      // A file can disappear or become unreadable while the tree is hashed.
-    }
-  }
-  return hash.digest('hex')
+  return memoryFileIndexVersion(memoryFileIndex(dir))
 }
 
 export function renderMemoryCatalog(files: MemoryCatalogFile[], rootDir = ''): string {
@@ -114,27 +66,14 @@ ${entries.length > 0 ? entries.join('\n\n') : '(no persistent memory files are c
 [/AUTHORITATIVE PERSISTENT MEMORY CATALOG]`)
 }
 
-/** Reads every Markdown memory only when a conversation starts or metadata changed. */
+/** Every Markdown memory (from the in-memory index) when a conversation starts or the version changed. */
 export function createMemoryCatalogSnapshot(dir: string): MemoryCatalogSnapshot {
-  const files: MemoryCatalogFile[] = []
-  for (const metadata of listMemoryFileMetadata(dir)) {
-    try {
-      const content = readFileSync(metadata.fullPath, 'utf8')
-      if (content.includes('\0')) continue
-      files.push({
-        relPath: metadata.relPath,
-        content,
-        modifiedAtMs: metadata.modifiedAtMs,
-        sizeBytes: metadata.sizeBytes
-      })
-    } catch {
-      // A file can disappear or become unreadable between metadata and content scans.
-    }
-  }
+  const index = memoryFileIndex(dir)
+  const files: MemoryCatalogFile[] = index.files
+    .filter((file) => !file.hasNul)
+    .map((file) => ({ relPath: file.relPath, content: file.content, modifiedAtMs: file.mtimeMs, sizeBytes: file.sizeBytes }))
   const catalog = renderMemoryCatalog(files, dir)
-  const hash = createHash('sha256').update(dir).update('\0')
-  for (const file of files) updateMemoryHash(hash, file.relPath, file.content)
-  const filesystemVersion = hash.digest('hex')
+  const filesystemVersion = memoryFileIndexVersion(index)
   return {
     rootDir: dir,
     files,
@@ -163,46 +102,26 @@ export interface MemoryFile {
   hook: string
 }
 
-export function memorySummary(markdown: string, filename: string): { title: string; hook: string } {
-  const title = /^#\s+(.+)$/m.exec(markdown)?.[1]?.trim() || filename.replace(/\.md$/i, '').replace(/-/g, ' ')
-  const hook =
-    /^description:\s*(.+)$/m.exec(markdown)?.[1]?.trim().replace(/^['"]|['"]$/g, '') ||
-    'Feedback aprendido com o usuário'
-  return { title, hook }
+const memoryFileLists = new WeakMap<MemoryFileIndex, MemoryFile[]>()
+
+/** A lista de `listMemoryFiles` de uma geração do índice, montada uma vez por geração. */
+function memoryFilesOf(index: MemoryFileIndex): MemoryFile[] {
+  let list = memoryFileLists.get(index)
+  if (!list) {
+    list = index.files
+      // `.md` minúsculo, como a varredura direta sempre exigiu aqui; o índice da
+      // raiz é a saída desta lista, não uma entrada dela.
+      .filter((file) => file.name.endsWith('.md') && !(file.folders.length === 0 && file.name === 'MEMORY.md'))
+      .map((file) => ({ relPath: file.relPath, folders: file.folders, title: file.title, hook: file.hook }))
+    memoryFileLists.set(index, list)
+  }
+  return list
 }
 
-/** Every memory file under `dir`, recursively, sorted by path. Never throws. */
+/** Every memory file under `dir`, recursively, sorted by path. Never throws.
+ * Served from the in-memory index (memory/memoryFileCache.ts). */
 export function listMemoryFiles(dir: string): MemoryFile[] {
-  const out: MemoryFile[] = []
-  const walk = (current: string, folders: string[]): void => {
-    let entries: Dirent<string>[]
-    try {
-      entries = readdirSync(current, { withFileTypes: true })
-    } catch {
-      return // unreadable folder — skip it instead of killing the whole scan
-    }
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
-      const full = join(current, entry.name)
-      if (entry.isDirectory()) {
-        walk(full, [...folders, entry.name])
-        continue
-      }
-      if (!entry.name.endsWith('.md')) continue
-      // The root index is the output of this scan, not an input to it.
-      if (folders.length === 0 && entry.name === 'MEMORY.md') continue
-      let markdown = ''
-      try {
-        markdown = readFileSync(full, 'utf8')
-      } catch {
-        continue
-      }
-      const { title, hook } = memorySummary(markdown, entry.name)
-      out.push({ relPath: [...folders, entry.name].join('/'), folders, title, hook })
-    }
-  }
-  walk(dir, [])
-  return out
+  return memoryFilesOf(memoryFileIndex(dir)).slice()
 }
 
 /** One "- [Title](path) — hook" line, capped so the index stays scannable. */
@@ -241,14 +160,14 @@ const MAX_SCANNED_MEMORIES = 250
 /** Guarda de tamanho: uma memória acima disso é PULADA, nunca cortada ao meio.
  * Injetar meio arquivo é pior que não injetar — o modelo age no que faltou. */
 const MAX_MEMORY_BYTES = 64 * 1024
-/** Teto de memórias por turno — o mesmo da seleção pelo Haiku (memorySelectionHaiku.ts). */
+/** Teto de memórias por turno na busca lexical e no TypeSafe. O Haiku tem o
+ *  dele (HAIKU_MEMORY_MAX, em memorySelectionHaiku.ts). */
 export const MAX_SELECTED_MEMORIES = 10
 /** Teto de uma memória sozinha: acima disso ela é pulada, nunca cortada. */
 const MAX_EXCERPT_CHARS = 50_000
 /** Teto do bloco inteiro do turno, em caracteres. Memória que estoura o que
  * sobra é PULADA (a próxima, menor, ainda pode caber), nunca cortada. */
 export const MAX_TOTAL_EXCERPT_CHARS = 50_000
-const STOP_WORDS = new Set(['a', 'ao', 'as', 'com', 'da', 'de', 'do', 'e', 'em', 'eu', 'me', 'na', 'no', 'o', 'os', 'para', 'por', 'que', 'um', 'uma'])
 
 /** Memory values belong in the encrypted vault, never in automatic context.
  * Old/manual notes can still contain common credential assignments, so protect
@@ -263,21 +182,40 @@ export function redactMemorySecrets(text: string): string {
     )
 }
 
-function normalizedTerms(text: string): string[] {
-  return [...new Set(text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [])]
-    .filter((term) => !STOP_WORDS.has(term))
-}
-
 function pathInside(root: string, candidate: string): boolean {
   const rel = relative(root, candidate)
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
 }
 
 function readRootIndex(dir: string): string {
+  const cached = watchedMemoryFileIndex(dir)?.byRelPath.get('MEMORY.md')
+  if (cached) return cached.content.trim()
   try {
     return readFileSync(join(dir, 'MEMORY.md'), 'utf8').trim()
   } catch {
     return ''
+  }
+}
+
+/** O arquivo vale como memória injetável: não vazio, sem NUL e dentro do teto. */
+function injectable(file: CachedMemoryFile): boolean {
+  return !file.hasNul && file.bytes > 0 && file.bytes <= MAX_MEMORY_BYTES
+}
+
+/** Leitura direta do disco, para caminho que o índice não conhece (fora do
+ * padrão, link, maiúsculas trocadas no Windows). Mesmas guardas de sempre: o
+ * caminho resolvido fica dentro da raiz; vazio, grande demais ou binário é `null`. */
+function readMemoryFileFromDisk(dir: string, relPath: string): string | null {
+  try {
+    const root = realpathSync(dir)
+    const full = realpathSync(join(root, ...relPath.split('/')))
+    if (!pathInside(root, full)) return null
+    const size = statSync(full).size
+    if (size === 0 || size > MAX_MEMORY_BYTES) return null
+    const body = readFileSync(full, 'utf8')
+    return body.includes('\0') ? null : body
+  } catch {
+    return null
   }
 }
 
@@ -307,33 +245,39 @@ export function rankMemoriesByQuery(dir: string, query: string, candidates?: Mem
   const terms = normalizedTerms(query)
   if (terms.length === 0) return []
 
-  let root: string
-  try {
-    root = realpathSync(dir)
-  } catch {
-    return []
-  }
+  // Corpo e termos vêm do índice em memória; o disco só é tocado para um
+  // candidato que o índice não conhece.
+  const index = memoryFileIndex(dir)
+  if (!index.rootExists) return []
 
   const ranked: RankedMemory[] = []
-  for (const file of candidates ?? listMemoryFiles(dir).slice(0, MAX_SCANNED_MEMORIES)) {
-    try {
-      const full = realpathSync(join(root, ...file.relPath.split('/')))
-      const size = statSync(full).size
-      if (!pathInside(root, full) || size === 0 || size > MAX_MEMORY_BYTES) continue
-      const body = readFileSync(full, 'utf8')
-      if (body.includes('\0')) continue
-      const metadata = normalizedTerms(`${file.folders.join(' ')} ${file.title} ${file.hook} ${file.relPath}`)
-      const content = normalizedTerms(body)
-      let score = 0
-      for (const term of terms) {
-        if (metadata.some((value) => value === term)) score += 6
-        else if (metadata.some((value) => value.includes(term) || term.includes(value))) score += 3
-        if (content.includes(term)) score += 1
+  for (const file of candidates ?? memoryFilesOf(index).slice(0, MAX_SCANNED_MEMORIES)) {
+    const cached = index.byRelPath.get(file.relPath)
+    let body: string | null
+    let metadata: string[] | null = null
+    let content: { has(term: string): boolean }
+    if (cached) {
+      if (!injectable(cached)) continue
+      body = cached.content
+      const cachedTerms = memoryFileTerms(cached)
+      // O cabeçalho do candidato é o do índice (o comum): reaproveita os termos.
+      if (file.title === cached.title && file.hook === cached.hook && file.folders.join('/') === cached.folders.join('/')) {
+        metadata = cachedTerms.meta
       }
-      ranked.push({ file, body, score })
-    } catch {
-      // A memory can disappear or become unreadable while a message is being sent.
+      content = cachedTerms.content
+    } else {
+      body = readMemoryFileFromDisk(dir, file.relPath)
+      if (body === null) continue
+      content = new Set(normalizedTerms(body))
     }
+    metadata ??= normalizedTerms(`${file.folders.join(' ')} ${file.title} ${file.hook} ${file.relPath}`)
+    let score = 0
+    for (const term of terms) {
+      if (metadata.some((value) => value === term)) score += 6
+      else if (metadata.some((value) => value.includes(term) || term.includes(value))) score += 3
+      if (content.has(term)) score += 1
+    }
+    ranked.push({ file, body, score })
   }
 
   ranked.sort((a, b) => b.score - a.score || a.file.relPath.localeCompare(b.file.relPath))
@@ -349,19 +293,13 @@ export function rankMemoriesByQuery(dir: string, query: string, candidates?: Mem
  * skipped whole, never truncated.
  */
 export function readMemoryBody(dir: string, relPath: string): string | null {
-  try {
-    const root = realpathSync(dir)
-    const full = realpathSync(join(root, ...relPath.split('/')))
-    if (!pathInside(root, full)) return null
-    const size = statSync(full).size
-    if (size === 0 || size > MAX_MEMORY_BYTES) return null
-    const body = readFileSync(full, 'utf8')
-    if (body.includes('\0')) return null
-    const redacted = redactMemorySecrets(body).trim()
-    return redacted || null
-  } catch {
-    return null
-  }
+  // Árvore grande: o índice mantido pelo vigia é o atual. Árvore pequena (ou sem
+  // índice ainda): um arquivo lido direto custa menos que revarrer a pasta.
+  const cached = watchedMemoryFileIndex(dir)?.byRelPath.get(relPath)
+  const body = cached ? (injectable(cached) ? cached.content : null) : readMemoryFileFromDisk(dir, relPath)
+  if (body === null) return null
+  const redacted = redactMemorySecrets(body).trim()
+  return redacted || null
 }
 
 /** O cabeçalho de uma memória injetada. Um só formato, os dois seletores. */
