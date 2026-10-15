@@ -24,6 +24,7 @@ import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
 import { initFreezeLog, logFreezes } from './freezeLog'
 import { startMemoryWatch } from './memoryWatch'
+import { warmMemoryFileCache } from './memory/memoryFileCache'
 import { readOfficeAgentFile } from './officeAgents'
 import { installJsProfilingPolicy, rendererIndexMatcher } from './jsProfilingPolicy'
 import { SessionLeases } from './sessionLeases'
@@ -3294,6 +3295,9 @@ app.whenReady().then(async () => {
   // pronto. Depois da config: os kits de skills (skillKits.ts) seguem os
   // interruptores dela.
   void syncAppSkills(cacheInfo.dir, activeSkillKits(loadConfig()))
+  // Índice das memórias aquecido em segundo plano (memory/memoryFileCache.ts):
+  // sem isto, o primeiro envio lê a pasta inteira de forma síncrona.
+  void warmMemoryFileCache(cacheInfo.memoriesDir).catch(() => undefined)
   if (storageAvailable) {
     await bootStage('codex-auth', () => initializeCodexAuthPersistence())
     // Migrou levando só o banco? O cofre é reconstruído do espelho. Precisa do
