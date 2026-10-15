@@ -255,7 +255,7 @@ describe('ManagerChatFloat — o chat de verdade dentro do painel', () => {
         </div>
       </UiProvider>
     )
-    const box = screen.getByPlaceholderText(/Mensagem para o Claude/) as HTMLTextAreaElement
+    const box = screen.getByPlaceholderText(/Mensagem para o Agent/) as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: '[[post' } })
     expect(within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.getAttribute('data-tipo'))).toEqual(['decisao'])
     fireEvent.keyDown(box, { key: 'Enter' })

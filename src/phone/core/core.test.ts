@@ -100,6 +100,8 @@ describe('redutor do feed', () => {
     expect(reduce(list, tool('s', { parentToolUseId: 'task-1' }))).toBe(list)
     expect(reduce(list, tool('p', { name: 'TodoWrite' }))).toBe(list)
     expect(reduce(list, { kind: 'stall-status', stalled: true, since: 1 })).toBe(list)
+    expect(reduce(list, { kind: 'compacting', active: true, since: 1 } as ChatMsg)).toBe(list)
+    expect(isHiddenMessage({ kind: 'compacting' })).toBe(true)
     expect(isHiddenMessage({ kind: 'tool-use', name: 'TaskCreate' })).toBe(true)
     expect(isHiddenMessage({ kind: 'tool-use', name: 'Read', parentToolUseId: null })).toBe(false)
   })

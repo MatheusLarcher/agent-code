@@ -126,7 +126,7 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
     expect(seen.windows).toBeNull()
     expect(screen.queryByText(/saída/)).toBeNull()
     expect(screen.getByText('Oi')).toBeTruthy()
-    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
   })
 
   it('chat de planejamento maximizado (hideLastUsage): sem o quadro "Última resposta"; o resto fica', () => {
@@ -186,7 +186,7 @@ describe('ChatPanel — barra de controles da sessão', () => {
     const select = container.querySelector('select.model-select') as HTMLSelectElement
     fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })
     expect(onModelChange).toHaveBeenCalledWith('claude-sonnet-5-5')
-    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
   })
 })
 
@@ -261,6 +261,18 @@ describe('ChatPanel — faixa de trabalho', () => {
   it('ocupado, a faixa diz "Agent está trabalhando" — o turno pode ser de outro modelo além do Claude', () => {
     renderPanel({ busy: true })
     expect(document.querySelector('.working-banner')?.textContent).toBe('Agent está trabalhando')
+    // A antiga bolinha (.working-ring) deu lugar ao loading animado.
+    expect(document.querySelector('.working-ring')).toBeNull()
+    expect(document.querySelector('.working-banner > .working-loader.chat-live-loader')).toBeTruthy()
+  })
+
+  it('compactando: a faixa e a linha ao vivo viram o aviso, com o loading no modo compactar', () => {
+    renderPanel({ busy: true, compactingSince: Date.now() - 2000 })
+    expect(document.querySelector('.working-banner')?.textContent).toBe('Agent está compactando a conversa')
+    expect(document.querySelector('.working-loader.compacting')).toBeTruthy()
+    const live = document.querySelector('.chat-live.compacting')!
+    expect(live.querySelector('.chat-live-text')?.textContent).toBe('Compactando a conversa…')
+    expect(live.querySelector('.chat-live-loader.compacting')).toBeTruthy()
   })
 })
 

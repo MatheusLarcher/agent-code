@@ -73,7 +73,7 @@ afterEach(() => {
 describe('os envios no App, sem a tela Entregas', () => {
   it('a barra não tem "Entregas" e o chat fica no lugar de sempre', async () => {
     render(<UiProvider><App /></UiProvider>)
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     expect(screen.queryByRole('button', { name: /^Entregas/ })).toBeNull()
     expect(screen.queryByRole('region', { name: 'Entregas' })).toBeNull()
     // A leitura dos envios continua (toasts e a TV Implantação).
@@ -90,7 +90,7 @@ describe('os envios no App, sem a tela Entregas', () => {
       planningList: vi.fn(async () => ({ ok: true, slugs: ['relatorios'] }))
     })
     render(<UiProvider><App /></UiProvider>)
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     await waitFor(() => expect(fake.api.handoffList).toHaveBeenCalled())
     const next = world().map((e) => (e.id === 'e2' ? { ...e, status: 'concluida' as const } : e))
     await fake.change(next, 'p1')
@@ -100,7 +100,7 @@ describe('os envios no App, sem a tela Entregas', () => {
 
   it('a fila parou (incompleto por erro do turno): um aviso só, no lugar do "envio incompleto", com quantos esperam', async () => {
     render(<UiProvider><App /></UiProvider>)
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     await waitFor(() => expect(fake.api.handoffList).toHaveBeenCalled())
     const next = world().map((e) =>
       e.id === 'e1' ? { ...e, status: 'incompleta' as const, motivo: 'o turno terminou com erro: API Error: 500 — faltou [x]' } : e

@@ -57,7 +57,7 @@ function setup(extra: { draft?: string; draftMedia?: unknown[]; convId?: string 
     </UiProvider>
   )
   const r = render(ui(extra.convId ?? 'c1', extra.draft ?? '', extra.draftMedia))
-  const box = (): EditorElement => screen.getByPlaceholderText(/Mensagem para o Claude/) as EditorElement
+  const box = (): EditorElement => screen.getByPlaceholderText(/Mensagem para o Agent/) as EditorElement
   const attach = (...files: File[]): void => {
     fireEvent.change(r.container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files } })
   }

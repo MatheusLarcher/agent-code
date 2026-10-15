@@ -13,6 +13,8 @@ export interface RemoteLightInputs<C extends { id: string }> {
   queued: string
   permission: unknown
   stalled: number | undefined
+  /** Início da compactação em curso (epoch ms), ou undefined. */
+  compacting?: number
   /** O retrato da Central (só nela; null nas outras). */
   central: unknown
 }
@@ -24,6 +26,7 @@ const same = <C extends { id: string }>(a: RemoteLightInputs<C>, b: RemoteLightI
   a.queued === b.queued &&
   a.permission === b.permission &&
   a.stalled === b.stalled &&
+  a.compacting === b.compacting &&
   a.central === b.central
 
 export class RemoteLightDiff<C extends { id: string }> {

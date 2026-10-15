@@ -113,6 +113,11 @@ export type ChatEvent =
    *  not content: the renderer must not turn it into a chat bubble.
    *  `since` is the epoch ms of the last sign of life. */
   | { kind: 'stall-status'; stalled: boolean; since: number }
+  /** O CLI está compactando a conversa (`system/status` 'compacting' do SDK) ou
+   *  acabou (status nulo, `compact_boundary`, fim/erro/interrupção do turno).
+   *  Estado, não conteúdo, como o `stall-status`: só acende/apaga a linha viva
+   *  "Compactando a conversa…". `since` = epoch ms do início (ou do fim). */
+  | { kind: 'compacting'; active: boolean; since: number }
   /** Reparo do espelho do transcript (mirrorRepair.ts). Estado, não conteúdo:
    *  `deferred` = a mensagem `messageUuid` NÃO foi enviada porque o banco ainda
    *  não voltou; o renderer a devolve para a cabeça da fila de espera.
@@ -2742,6 +2747,8 @@ export interface RemoteConversation {
   etapas?: RemoteEtapasProgress
   /** Epoch ms since the running turn went silent (stall watchdog), if stalled. */
   stalledSince?: number
+  /** Epoch ms do início da compactação da conversa em curso, se compactando. */
+  compactingSince?: number
   /** Context/output/cost accounting shown in the desktop header. */
   tokens?: { context: number; output: number; cost: number; contextLimit: number }
   /** Pending permission/AskUserQuestion request, if any — same shape the desktop

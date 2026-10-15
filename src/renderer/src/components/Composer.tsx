@@ -1045,7 +1045,7 @@ export function Composer(props: Props): JSX.Element {
     ? 'Inicie uma sessão primeiro…'
     : blocked
       ? 'A pasta do projeto não existe mais — não dá para digitar.'
-      : props.placeholder ?? 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
+      : props.placeholder ?? 'Mensagem para o Agent…  (Enter envia, Shift+Enter quebra linha)'
 
   // O k-ésimo anexo do texto, no espelho: invisível, só ocupa o lugar. A miniatura
   // tem tamanho fixo no CSS, então vai sem `src` (não repete a data: URL da foto);

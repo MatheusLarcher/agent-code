@@ -33,13 +33,18 @@ export interface ChatContent {
   messages: UIMessage[]
   /** O cartão do código ao vivo; some quando o tool-use dele chega no chat. */
   live: ToolUseMessage | null
+  /** Início da compactação em curso (só do agente principal): a linha ao vivo vira "Compactando a conversa…". */
+  compactingSince?: number
 }
 
 /** O que o modo Chat mostra do personagem. */
 export function chatContent(feed: OfficeFeed | null, model: OfficeCharacterModel, live: ToolInputDelta | undefined): ChatContent {
-  const messages = turnMessages(feed, lookupOf(model))
+  const info = lookupOf(model)
+  const messages = turnMessages(feed, info)
   const shown = live && !messages.some((m) => m.kind === 'tool-use' && m.id === live.toolUseId)
-  return { messages, live: shown ? liveToolMessage(live) : null }
+  // A compactação é da conversa: o subagente (trilha) não a mostra.
+  const compactingSince = info.role === 'principal' && !info.trackId ? feed?.compactingSince?.[info.convId] : undefined
+  return { messages, live: shown ? liveToolMessage(live) : null, ...(compactingSince !== undefined ? { compactingSince } : {}) }
 }
 
 export interface ChatPanelProps {
@@ -79,7 +84,7 @@ export function ChatPanel({ head, color, content, header, endSignal = 0, tts = n
     <div className="o3d-chat-screen">
       {header === undefined ? <TurnHeader head={head} color={color} /> : header}
       <div className="message-list o3d-chat-screen-body" ref={bodyRef} onScroll={onScroll}>
-        <TurnRows messages={content.messages} busy={head.busy} live={content.live} limit={SCREEN_MESSAGES} tts={tts} quote={quote} />
+        <TurnRows messages={content.messages} busy={head.busy} live={content.live} compactingSince={content.compactingSince} limit={SCREEN_MESSAGES} tts={tts} quote={quote} />
       </div>
     </div>
   )

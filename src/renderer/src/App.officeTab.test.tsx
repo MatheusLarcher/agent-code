@@ -249,7 +249,7 @@ describe('App — aba Escritório', () => {
 
   it('o Quadro só conta como aberto na aba Conversa: sem scan de disco com o Escritório; volta aberto na Conversa', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     fireEvent.click(screen.getByTitle('Quadro: as tarefas do projeto e quem está trabalhando em cada uma'))
     await waitFor(() => expect(api.projectTree).toHaveBeenCalledTimes(1))
 
@@ -274,7 +274,7 @@ describe('App — aba Escritório', () => {
     const centered = (): number =>
       vi.mocked(window.HTMLElement.prototype.scrollIntoView).mock.calls.filter(([arg]) => (arg as ScrollIntoViewOptions | undefined)?.block === 'center').length
     const { container } = render(<UiProvider><App /></UiProvider>)
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     vi.mocked(window.HTMLElement.prototype.scrollIntoView).mockClear()
 
     fireEvent.change(screen.getByPlaceholderText('Buscar conversas ou projetos…'), { target: { value: 'orçamento' } })
@@ -284,10 +284,10 @@ describe('App — aba Escritório', () => {
 
     fireEvent.click(tab(/Escritório/))
     const stub = await screen.findByTestId('office-stub')
-    await waitFor(() => expect(within(stub).getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy())
+    await waitFor(() => expect(within(stub).getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy())
     expect(stub.querySelector('[data-mid="m1"]')?.classList.contains('msg-flash')).toBe(false)
     fireEvent.click(tab(/Conversa/))
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     expect(container.querySelector('[data-mid="m1"]')?.classList.contains('msg-flash')).toBe(false)
     expect(centered()).toBe(1)
   })
@@ -317,7 +317,7 @@ describe('App — aba Escritório', () => {
     // Clique no agente no 3D: o Escritório seleciona a conversa dele (model.convId).
     act(() => office.props?.onOpenConversation('c2'))
     await waitFor(() => expect(office.props?.conversation?.id).toBe('c2'))
-    const ta = within(await screen.findByTestId('office-monitor-stub')).getByPlaceholderText(/Mensagem para o Claude/i) as HTMLTextAreaElement
+    const ta = within(await screen.findByTestId('office-monitor-stub')).getByPlaceholderText(/Mensagem para o Agent/i) as HTMLTextAreaElement
     await waitFor(() => expect(ta.disabled).toBe(false))
     fireEvent.change(ta, { target: { value: 'oi, agente da mesa' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
@@ -411,6 +411,6 @@ describe('App — aba Escritório', () => {
     expect(localStorage.getItem('agentcode.mainTab')).toBe('chat')
     fireEvent.click(screen.getByRole('button', { name: 'Voltar para a Conversa' }))
     expect(selected(/Conversa/)).toBe('true')
-    expect(await screen.findByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(await screen.findByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
   })
 })

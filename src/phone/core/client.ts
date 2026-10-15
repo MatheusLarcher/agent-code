@@ -455,6 +455,10 @@ export class RemoteClient {
       this.patchConv(msg.convId, { stalledSince: ev.stalled ? ev.since : undefined })
       return
     }
+    if (ev.kind === 'compacting') {
+      this.patchConv(msg.convId, { compactingSince: ev.active ? ev.since : undefined })
+      return
+    }
     if (msg.convId === OFFICE_CONV_ID) {
       // Aviso de handoff (handoffNoticeBridge): só toast, com o app aberto.
       const notice = msg.event as unknown as { kind?: string }

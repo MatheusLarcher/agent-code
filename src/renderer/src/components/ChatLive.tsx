@@ -1,6 +1,6 @@
 /**
  * A linha "ao vivo" no fim do chat enquanto o agente trabalha — no lugar da
- * antiga bolha de três pontos. No trilho do turno, um ponto pulsando; o que ele
+ * antiga bolha de três pontos. No trilho do turno, o loading (ChatLoader); o que ele
  * faz AGORA com brilho correndo no texto ("Lendo auth.ts…", "Rodando os
  * testes…", senão "Pensando…") e o tempo do turno (desde o pedido).
  *
@@ -8,8 +8,10 @@
  * monitor do Escritório (TurnRows). O texto vem do resumo da Central
  * (summarizeActivity, a forma "agora").
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { summarizeActivity } from '../central/activitySummary'
+import { COMPACTING_LABEL } from '@shared/compacting'
+import { ChatLoader, useVisiblePause } from './ChatLoader'
 
 interface Loose {
   kind?: string
@@ -56,18 +58,40 @@ export function elapsed(ms: number): string {
   return h > 0 ? `${h}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`
 }
 
-export function ChatLive({ messages }: { messages: readonly unknown[] }): JSX.Element {
-  const label = useMemo(() => liveLabel(messages), [messages])
+export function ChatLive({
+  messages,
+  compactingSince
+}: {
+  messages: readonly unknown[]
+  /** Epoch ms do início da compactação em curso (evento `compacting` do main): a linha vira o aviso. */
+  compactingSince?: number
+}): JSX.Element {
+  const compacting = compactingSince != null
+  const activity = useMemo(() => liveLabel(messages), [messages])
+  const label = compacting ? COMPACTING_LABEL : activity
   const since = useMemo(() => turnStart(messages), [messages])
   const [mountedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
+  const rootRef = useRef<HTMLDivElement>(null)
+  const paused = useVisiblePause(rootRef)
   useEffect(() => {
+    if (paused) return
+    setNow(Date.now())
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
-  }, [])
-  const start = since != null && since <= now ? since : mountedAt
+  }, [paused])
+  // Compactando, o relógio conta desde o início da compactação; senão, desde o pedido.
+  const from = compacting ? compactingSince : since
+  const start = from != null && from <= now ? from : mountedAt
   return (
-    <div className="chat-live" role="status" aria-label={`Agente trabalhando: ${label}`}>
+    <div
+      ref={rootRef}
+      className={compacting ? 'chat-live compacting' : 'chat-live'}
+      role="status"
+      aria-label={compacting ? 'Compactando a conversa' : `Agente trabalhando: ${label}`}
+      data-paused={paused ? '' : undefined}
+    >
+      <ChatLoader compacting={compacting} />
       {/* A chave troca com a ação: o texto novo entra com um fade curto. */}
       <span key={label} className="chat-live-text">
         {label}

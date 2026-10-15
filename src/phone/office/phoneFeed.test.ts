@@ -62,6 +62,13 @@ describe('feed do escritório no celular', () => {
     feed.dispose()
   })
 
+  it('a compactação em curso vai ao feed só com a conversa ocupada (o aviso do chat do escritório)', () => {
+    const c = fakeClient([{ ...conv('a', true), compactingSince: 1000 }, { ...conv('b', false), compactingSince: 2000 }])
+    const feed = new PhoneOfficeFeed(c)
+    expect(feed.getSnapshot()!.compactingSince).toEqual({ a: 1000 })
+    feed.dispose()
+  })
+
   it('o histórico curto guarda só o turno atual e no máximo 40 eventos', () => {
     let list = track([], { convId: 'a', event: { kind: 'turn-start' } })
     for (let i = 0; i < 60; i++) list = track(list, { convId: 'a', event: { kind: 'tool-use', id: `t${i}`, name: 'Read', input: {}, parentToolUseId: null } })

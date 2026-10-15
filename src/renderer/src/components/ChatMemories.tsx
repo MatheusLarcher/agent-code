@@ -3,6 +3,7 @@ import type { ContextTurnSummary } from '@shared/contextSnapshot'
 import type { UIMessage } from '../types'
 import { REREAD_MS } from '../office3d/codeScreen/useContextTurns'
 import { chatMemoryEntries, memoryTurnSegments, type ChatMemoryEntry } from './chatMemoryModel'
+import { ChatMemoryPreview, useMemoryPreviewReader } from './ChatMemoryPreview'
 import './chatContext.css'
 
 /** Só metadados: snapshots e ferramentas já persistidos, nunca texto de memória ou cofre. */
@@ -84,6 +85,8 @@ export function ChatMemoryAttachment({ entries, error, onRetry }: { entries: rea
   const [open, setOpen] = useState(false)
   const [notice, setNotice] = useState<{ ok: boolean; message: string } | null>(null)
   const [revealing, setRevealing] = useState<string | null>(null)
+  // O cache das amostras vive com o cartão: fechar e reabrir a lista não relê.
+  const readPreview = useMemoryPreviewReader()
   if (!entries.length && !error) return null
   const reveal = async (memory: string): Promise<void> => {
     setRevealing(memory)
@@ -101,7 +104,7 @@ export function ChatMemoryAttachment({ entries, error, onRetry }: { entries: rea
         <Brain /><span><strong>{entries.length} {entries.length === 1 ? 'memória' : 'memórias'} neste turno</strong><small>Fornecidas no contexto ou lidas explicitamente · ver arquivos</small></span>
       </button>
       {open && <ul className="chat-memory-list">{entries.map((m) => <li key={m.relPath}>
-        <span>{m.relPath}<small>{[m.supplied ? 'Fornecida no contexto' : '', m.read ? 'Lida pelo agente' : ''].filter(Boolean).join(' · ')}</small></span>
+        <ChatMemoryPreview relPath={m.relPath} read={readPreview}>{m.relPath}<small>{[m.supplied ? 'Fornecida no contexto' : '', m.read ? 'Lida pelo agente' : ''].filter(Boolean).join(' · ')}</small></ChatMemoryPreview>
         <button type="button" disabled={revealing !== null} aria-label={`Mostrar ${m.relPath} na pasta`} onClick={() => void reveal(m.relPath)}>{revealing === m.relPath ? 'Abrindo…' : 'Mostrar na pasta'}</button>
       </li>)}</ul>}
     </>}

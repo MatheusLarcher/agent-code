@@ -24,6 +24,9 @@ export interface MemoryListItem {
 /** O texto de uma memória (markdown, só leitura). */
 export interface MemoryReadResult {
   relPath: string
+  /** Título e gancho (a amostra do chat mostra os dois); ausentes em respostas antigas. */
+  title?: string
+  hook?: string
   body: string
 }
 

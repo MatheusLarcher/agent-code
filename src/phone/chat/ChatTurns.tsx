@@ -2,11 +2,13 @@
  * O turno do agente no chat do celular (o visual aprovado em
  * docs/spec/chat-visual-20261007): avatar ✦ + "Agent" no topo e um trilho vertical
  * com um ponto por item — narração, linha-resumo dos passos, pensamento — na ordem
- * em que aconteceram. Com o turno rodando, a última linha é a "ao vivo": ponto
- * pulsando no trilho, o que o agente faz agora (brilho correndo), o tempo do turno e
+ * em que aconteceram. Com o turno rodando, a última linha é a "ao vivo": o loading
+ * (ChatLoader) no trilho, o que o agente faz agora (brilho correndo), o tempo do turno e
  * o "■ parar" — o único status do turno (não há mais a faixa "trabalhando…" embaixo).
  */
 import type { ReactNode } from 'react'
+import { COMPACTING_LABEL } from '@shared/compacting'
+import { ChatLoader } from '@renderer/components/ChatLoader'
 import { stepActivity, type ChatRowItem } from '@renderer/components/chatSteps'
 import { client, toast } from '../app/runtime'
 import { fmtElapsed } from '../core/format'
@@ -74,19 +76,32 @@ export interface Live {
   since?: number
   /** O turno emudeceu desde então: "Sem resposta há Xs" no lugar do texto. */
   stalledSince?: number
+  /** A conversa está sendo compactada desde então: "Compactando a conversa…" e o tempo dela. */
+  compactingSince?: number
 }
 
-/** O único status do turno: o que faz agora (ou "sem resposta há…"), o tempo e o "■ parar". */
-function LiveRow({ text, since, stalledSince }: Live): JSX.Element {
-  const now = useTick(!!since || !!stalledSince)
+/**
+ * O único status do turno: o loading no trilho (ChatLoader, o mesmo do PC), o que
+ * faz agora (ou "Compactando a conversa…", ou "sem resposta há…"), o tempo e o "■ parar".
+ */
+export function LiveRow({ text, since, stalledSince, compactingSince }: Live): JSX.Element {
+  const now = useTick(!!since || !!stalledSince || !!compactingSince)
   const stop = (): void => {
     client.interrupt().catch((err) => toast('Não consegui parar: ' + errorText(err)))
   }
+  const compacting = !stalledSince && !!compactingSince
+  const clock = compacting ? compactingSince : since
+  const cls = `turn-item live${stalledSince ? ' stalled' : ''}${compacting ? ' compacting' : ''}`
   return (
-    <div className={`turn-item live${stalledSince ? ' stalled' : ''}`} aria-live="polite">
+    <div className={cls} aria-live="polite">
+      <ChatLoader compacting={compacting} className="live-loader" />
       <div className="live-row">
-        {stalledSince ? <span className="live-stalled">Sem resposta há {fmtElapsed(stalledSince, now)}</span> : <span className="shimmer">{text}</span>}
-        {since && !stalledSince ? <span className="live-t">{fmtElapsed(since, now)}</span> : null}
+        {stalledSince ? (
+          <span className="live-stalled">Sem resposta há {fmtElapsed(stalledSince, now)}</span>
+        ) : (
+          <span className={compacting ? 'live-compacting' : 'shimmer'}>{compacting ? COMPACTING_LABEL : text}</span>
+        )}
+        {clock && !stalledSince ? <span className="live-t">{fmtElapsed(clock, now)}</span> : null}
         <button type="button" className="live-stop" title="Parar o turno" aria-label="Parar" onClick={stop}>
           ■ parar
         </button>

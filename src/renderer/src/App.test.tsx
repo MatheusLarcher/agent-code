@@ -268,7 +268,7 @@ async function flushConnect(ok = true): Promise<void> {
   })
 }
 async function send(text: string): Promise<HTMLElement> {
-  const ta = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+  const ta = await screen.findByPlaceholderText(/Mensagem para o Agent/i)
   // A hidratação é assíncrona e o campo nasce DESABILITADO enquanto não há
   // conversa ativa. O textarea já existe nesse meio-tempo, então digitar cedo
   // demais é engolido em silêncio e o teste falha depois, longe da causa, num
@@ -292,7 +292,7 @@ async function centralSettled(): Promise<void> {
 // (clipboardData with only text/plain, no file), driving the Composer's
 // onPaste exactly like Composer.draft.test.tsx-style tests do at this layer.
 async function pasteLine(line: string): Promise<void> {
-  const ta = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+  const ta = await screen.findByPlaceholderText(/Mensagem para o Agent/i)
   const clipboardData = {
     items: [] as { kind: string }[],
     getData: (type: string) => (type === 'text/plain' ? line : '')
@@ -824,11 +824,11 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
         <App />
       </UiProvider>
     )
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     await pasteLine('C:\\pasta\\relatorio.pdf')
     await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: relatorio\.pdf/)).toBeTruthy())
 
-    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Agent/i), { key: 'Enter' })
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
@@ -865,7 +865,7 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
 
     await pasteLine('C:\\pasta\\notas.txt')
     await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: notas\.txt/)).toBeTruthy())
-    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Agent/i), { key: 'Enter' })
     expect(screen.getByText(/Na fila/)).toBeTruthy()
     expect(api.sendMessage).toHaveBeenCalledTimes(1) // ainda não despachou
 
@@ -892,10 +892,10 @@ describe('App — anexo por referência (fileRefs: caminho/link colado)', () => 
         <App />
       </UiProvider>
     )
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     await pasteLine('C:\\pasta\\dados.csv')
     await waitFor(() => expect(screen.getByAltText(/Arquivo anexado: dados\.csv/)).toBeTruthy())
-    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Claude/i), { key: 'Enter' })
+    fireEvent.keyDown(await screen.findByPlaceholderText(/Mensagem para o Agent/i), { key: 'Enter' })
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
@@ -1517,7 +1517,7 @@ describe('App — Econômico e Loop foram removidos', () => {
       </UiProvider>
     )
 
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     expect(screen.queryByRole('button', { name: /Loop/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Econômico/i })).toBeNull()
   })
@@ -2202,7 +2202,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     api.syncConversations.mockClear()
     api.kvSet.mockClear()
     api.appCloseReady.mockClear()
-    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    const box = await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     fireEvent.change(box, { target: { value: 'rascunho antes de fechar' } })
     // O Composer grava o rascunho na conversa ao perder o foco: é a gravação pendente.
     fireEvent.blur(box)
@@ -2234,7 +2234,7 @@ describe('App — fechar o app antes do histórico carregar não apaga o histór
     api.kvSet.mockClear()
     api.appReloadReady.mockClear()
     await waitFor(() => expect(appReloadCb).toBeTypeOf('function'))
-    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    const box = await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     fireEvent.change(box, { target: { value: 'rascunho antes de recarregar' } })
     // O Composer grava o rascunho na conversa ao perder o foco: é a gravação pendente.
     fireEvent.blur(box)
@@ -2875,7 +2875,7 @@ describe('App — conversa de planejamento', () => {
     expect(api.planningOpen).toHaveBeenCalledWith({ projectCwd: '/proj', slug: 'checkout' })
     // O MESMO ChatPanel, agora como coluna de chat da tela.
     expect(container.querySelector('.planning-workspace .pl-chat .chat-panel')).toBeTruthy()
-    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
     // O seletor do chat edita o modelo do Agent Manager (a config de planejamento),
     // com o Automático; Econômico e Loop não existem mais.
     const select = container.querySelector('.pl-chat select.model-select') as HTMLSelectElement
@@ -3482,7 +3482,7 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
       const current = { titulo: 'Checkout', rev: 4, etapas: [{ id: 'nova', titulo: 'Nova etapa', status: 'em_andamento' }] }
       api.planningSaveRoteiro.mockResolvedValueOnce({ ok: false, code: 'roteiro_conflict', message: 'x', current })
       render(<UiProvider><App /></UiProvider>)
-      await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+      await screen.findByPlaceholderText(/Mensagem para o Agent/i)
       await waitFor(() => expect(remote()).toBeTruthy())
 
       await act(async () => remote()?.({ type: 'rename', convId: 'p1', title: 'Checkout com Pix' }))
@@ -3504,7 +3504,7 @@ describe('App — título automático (recuo na hora, nome curto do LLM depois)'
       const remote = captureRemoteAction() as unknown as () => ((a: unknown) => void) | null
       addPlanningApi()
       const { container } = render(<UiProvider><App /></UiProvider>)
-      await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+      await screen.findByPlaceholderText(/Mensagem para o Agent/i)
       await waitFor(() => expect(remote()).toBeTruthy())
 
       await act(async () => remote()?.({ type: 'plan', cwd: '/proj', convId: 'c-remoto', pedido: 'planejar o pix' }))
@@ -3580,7 +3580,7 @@ describe('App — autosave só das conversas alteradas', () => {
 
     saveSpy.fn.mockClear()
     api.syncConversations.mockClear()
-    const box = await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    const box = await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     fireEvent.change(box, { target: { value: 'rascunho do tique' } })
     fireEvent.blur(box)
     await waitFor(() => expect(upsertedIds()).toContain('c1'))

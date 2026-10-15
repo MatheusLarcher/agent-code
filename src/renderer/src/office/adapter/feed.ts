@@ -47,6 +47,8 @@ export interface OfficeFeed {
   /** `scrum` = board.scrumMaster.enabled; opcional porque os feeds antigos (testes) não trazem — ausente, sem SM. */
   observersOn: Readonly<{ po: boolean; vigia: boolean; memorista: boolean; scrum?: boolean }>
   stalledSince: Readonly<Record<string, number>>
+  /** Opcional: início (epoch ms) da compactação em curso, por conversa; a linha ao vivo do chat vira "Compactando a conversa…". */
+  compactingSince?: Readonly<Record<string, number>>
   tracks: Readonly<Record<string, TrackMap>>
   projectIcons: Readonly<Record<string, string | null>>
   /** Opcional: a cor fixa de cada projeto por cwd (office/useProjectColors no PC, `/api/state` no celular); sem ela, a reserva (office3d/projectColor.ts). */

@@ -144,7 +144,7 @@ export const result: ChatEvent = { kind: 'result', id: 'r', isError: false, text
 export const streamEnd: ChatEvent = { kind: 'error', id: 'fim', text: 'Agent stopped: aborted' }
 
 export async function typeInConversation(text: string): Promise<void> {
-  const box = (await screen.findByPlaceholderText(/Mensagem para o Claude/i)) as HTMLTextAreaElement
+  const box = (await screen.findByPlaceholderText(/Mensagem para o Agent/i)) as HTMLTextAreaElement
   await waitFor(() => expect(box.disabled).toBe(false))
   fireEvent.change(box, { target: { value: text } })
   fireEvent.keyDown(box, { key: 'Enter' })

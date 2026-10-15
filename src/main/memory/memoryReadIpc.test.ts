@@ -23,7 +23,9 @@ describe('IPC só de leitura do painel de Memórias', () => {
 
   it('o texto de uma: o segredo fica só como marca; entrada inválida e serviço fora do ar não lançam', async () => {
     const call = setup()
-    expect(await call(Channels.memoryReadEntry, '2D/vps.md')).toEqual({ relPath: '2D/vps.md', body: 'senha: {{secret:vps_2d}}' })
+    expect(await call(Channels.memoryReadEntry, '2D/vps.md')).toEqual({ relPath: '2D/vps.md', title: 'T 2D/vps.md', hook: 'gancho', body: 'senha: {{secret:vps_2d}}' })
+    // Caixa diferente (caminho tirado do disco no Windows) ainda acha a memória.
+    expect(await call(Channels.memoryReadEntry, '2d/VPS.md')).toMatchObject({ relPath: '2D/vps.md' })
     expect(await call(Channels.memoryReadEntry, 'nao-existe.md')).toBeNull()
     for (const bad of [42, '', 'x'.repeat(600), 'a\0b']) expect(await call(Channels.memoryReadEntry, bad)).toBeNull()
     const offline = setup(() => null)

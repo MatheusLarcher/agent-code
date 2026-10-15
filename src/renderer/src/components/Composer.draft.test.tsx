@@ -55,7 +55,7 @@ function renderComposer(props: { convId?: string | null; draft?: string } = {}):
 }
 
 function textarea(): HTMLTextAreaElement {
-  return screen.getByPlaceholderText(/Mensagem para o Claude/) as HTMLTextAreaElement
+  return screen.getByPlaceholderText(/Mensagem para o Agent/) as HTMLTextAreaElement
 }
 
 describe('Composer — rascunho só salva ao perder o foco (não a cada tecla)', () => {

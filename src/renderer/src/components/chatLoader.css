@@ -1,0 +1,102 @@
+/* O loading do agente (ChatLoader.tsx): núcleo que respira + três pontos em
+   órbita. Só transform/opacity (nada de box-shadow animado); parado com
+   prefers-reduced-motion e enquanto [data-paused] (fora da tela/janela escondida).
+   Tamanho e cores por variável: o trilho do chat, o tile do 1º do turno, a faixa
+   "Agent está trabalhando" e o celular só trocam as variáveis. */
+.chat-live-loader {
+  --cl-box: 16px;
+  --cl-r: 5px;
+  --cl-dot: 3px;
+  --cl-core: 5px;
+  --cl-ink: var(--accent, #d97757);
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: var(--cl-box);
+  height: var(--cl-box);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.chat-live-loader .cl-core,
+.chat-live-loader .cl-orbit > span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  background: var(--cl-ink);
+}
+.chat-live-loader .cl-core {
+  width: var(--cl-core);
+  height: var(--cl-core);
+  margin: calc(var(--cl-core) / -2) 0 0 calc(var(--cl-core) / -2);
+  animation: cl-breathe 1.6s ease-in-out infinite;
+}
+.chat-live-loader .cl-orbit {
+  position: absolute;
+  inset: 0;
+  animation: cl-spin 1.6s linear infinite;
+}
+.chat-live-loader .cl-orbit > span {
+  width: var(--cl-dot);
+  height: var(--cl-dot);
+  margin: calc(var(--cl-dot) / -2) 0 0 calc(var(--cl-dot) / -2);
+  transform: rotate(var(--a, 0deg)) translateY(calc(var(--cl-r) * -1));
+}
+.chat-live-loader .cl-orbit > span:nth-child(2) {
+  opacity: 0.7;
+}
+.chat-live-loader .cl-orbit > span:nth-child(3) {
+  opacity: 0.4;
+}
+
+/* Compactando: a órbita gira devagar e os pontos se contraem até o núcleo e voltam. */
+.chat-live-loader.compacting .cl-orbit {
+  animation-duration: 3.2s;
+}
+.chat-live-loader.compacting .cl-orbit > span {
+  opacity: 1;
+  animation: cl-squeeze 1.1s ease-in-out infinite alternate;
+}
+.chat-live-loader.compacting .cl-orbit > span:nth-child(2) {
+  animation-delay: -0.18s;
+}
+.chat-live-loader.compacting .cl-orbit > span:nth-child(3) {
+  animation-delay: -0.36s;
+}
+.chat-live-loader.compacting .cl-core {
+  animation: cl-press 1.1s ease-in-out infinite alternate;
+}
+
+.chat-live-loader[data-paused],
+.chat-live-loader[data-paused] * {
+  animation-play-state: paused !important;
+}
+
+@keyframes cl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes cl-breathe {
+  50% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+}
+@keyframes cl-squeeze {
+  to {
+    transform: rotate(var(--a, 0deg)) translateY(-1px) scale(0.55);
+    opacity: 0.5;
+  }
+}
+@keyframes cl-press {
+  to {
+    transform: scale(1.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-live-loader,
+  .chat-live-loader * {
+    animation: none !important;
+  }
+}

@@ -98,7 +98,7 @@ describe('chat flutuante do Escritório: a barrinha fatiada no lugar da faixa do
     expect(container.querySelector('.chat-header [data-testid="usage-mini"]')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Transparência do chat' })).toBeTruthy()
     expect(screen.getByText('Oi')).toBeTruthy()
-    expect(screen.getByPlaceholderText(/Mensagem para o Claude/i)).toBeTruthy()
+    expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
   })
 
   it('o mouse na barrinha mostra o que é cada consumo, os números e o custo (com o histórico do banco)', async () => {

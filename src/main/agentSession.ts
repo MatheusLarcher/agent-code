@@ -112,6 +112,7 @@ import type {
 import { claudeAccounts } from './accounts'
 import { toEpochMs } from './accounts/usageMath'
 import { sdkEffort } from '../shared/autoEffort'
+import { compactFailedText, readCompactStatus } from '../shared/compacting'
 import { buildInjectedMessage } from './injectNow'
 import { imageContentBlocks } from '../shared/inlineMedia'
 import { storageLifecycle } from './persistence/lifecycle'
@@ -755,6 +756,8 @@ export class AgentSession {
   private lastActivityAt = Date.now()
   private readonly toolsInFlight = new Set<string>()
   private stalled = false
+  /** O CLI está compactando (evento `compacting` aceso na tela)? */
+  private compacting = false
   /** Turno encerrado por travamento definitivo: os ids dele (rabo a engolir). */
   private stallAborted: { turnIds: string[] } | null = null
   private stallTimer: ReturnType<typeof setInterval> | undefined
@@ -905,6 +908,14 @@ export class AgentSession {
       this.stalled = false
       this.emit({ kind: 'stall-status', stalled: false, since: Date.now() })
     }
+  }
+
+  /** Acende/apaga a linha "Compactando a conversa…". Só emite na troca: o fim
+   *  chega por vários caminhos (status nulo, boundary, fim/erro do turno). */
+  private setCompacting(active: boolean): void {
+    if (this.compacting === active) return
+    this.compacting = active
+    this.emit({ kind: 'compacting', active, since: Date.now() })
   }
 
   /** O comando em segundo plano retornou: a trava passa a esperar a próxima lista de tarefas do SDK. */
@@ -2538,6 +2549,8 @@ ${lines}
           this.lastLiveContext = null
           this.injectedMemories.reset()
           this.stageCompaction?.compacted()
+          // A linha viva vira a de resultado logo abaixo (o status nulo já a apaga).
+          this.setCompacting(false)
           // The CLI already knows how to compact (manual `/compact` or automatic
           // when the context window fills up) — it rewrites its own transcript
           // and keeps going. This app only translates that into a visible line,
@@ -2557,6 +2570,15 @@ ${lines}
             id: nextId(),
             text: `Conversa compactada (${trigger})${savings}`
           })
+        } else if ((message as { subtype?: string }).subtype === 'status') {
+          // Compactação ao vivo (shared/compacting.ts): 'compacting' acende a
+          // linha viva; o status nulo apaga, com a nota se falhou.
+          const compact = readCompactStatus(message)
+          if (compact?.phase === 'start') this.setCompacting(true)
+          else if (compact?.phase === 'end') {
+            this.setCompacting(false)
+            if (compact.failed) this.emit({ kind: 'status', id: nextId(), text: compactFailedText(compact.error) })
+          }
         } else if ((message as { subtype?: string }).subtype === 'background_tasks_changed') {
           const tasks = (message as unknown as {
             tasks: Array<{ task_id: string; task_type: string; description: string }>
@@ -2834,6 +2856,8 @@ ${lines}
     // Fora do turno nenhum bloco de ferramenta segue aberto: um Stop no meio de
     // um Write nunca manda `content_block_stop`, e o monitor ficaria "escrevendo".
     this.toolInput.finishAll()
+    // Fim, erro, interrupção ou travamento: a linha "Compactando…" nunca fica presa.
+    this.setCompacting(false)
     if (!this.turnActive && this.idleWaiters.size === 0) return
     this.turnActive = false
     // O dispose fecha o turno DEPOIS de tirar a sessão do registro: não recriar.

@@ -236,7 +236,7 @@ describe('reinício do app no meio do turno', () => {
   it('marca de outro PC: este não retoma', async () => {
     seedTurn({ msgId: 'u1', at: 1, sent: true, device: 'outro-pc' })
     mount()
-    await screen.findByPlaceholderText(/Mensagem para o Claude/i)
+    await screen.findByPlaceholderText(/Mensagem para o Agent/i)
     await sleep(2_500)
     expect(api.sendMessage).not.toHaveBeenCalled()
     expect(recoveryCard()).toBeNull()

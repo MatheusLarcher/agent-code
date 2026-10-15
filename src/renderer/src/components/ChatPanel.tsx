@@ -11,6 +11,7 @@ import { contextLimitFor, fastModeTransport } from '@shared/ipc'
 import type { TurnRecovery, UIMessage } from '../types'
 import type { CrewMember } from '../crew'
 import { MessageList, type TtsControls } from './MessageList'
+import { ChatLoader } from './ChatLoader'
 import { Composer, type RefProject } from './Composer'
 import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import { CrewChip } from './CrewChip'
@@ -81,7 +82,7 @@ function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: nu
  * O texto afirma o que é observável ("sem resposta há X"), não um diagnóstico:
  * o turno continua vivo e pode terminar sozinho. Nada é cancelado por isto.
  */
-function WorkingBanner({ stalledSince }: { stalledSince?: number }): JSX.Element {
+function WorkingBanner({ stalledSince, compacting }: { stalledSince?: number; compacting?: boolean }): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!stalledSince) return
@@ -92,10 +93,14 @@ function WorkingBanner({ stalledSince }: { stalledSince?: number }): JSX.Element
 
   return (
     <div className={`working-banner${stalledSince ? ' stalled' : ''}`} role="status" aria-live="polite">
-      <span className="working-ring" />
+      <ChatLoader className="working-loader" compacting={compacting} />
       <span className="working-text">
         {stalledSince ? (
           <>Sem resposta há {fmtDuration(Math.max(0, now - stalledSince))}</>
+        ) : compacting ? (
+          <>
+            Agent está compactando a conversa<span className="working-dots" />
+          </>
         ) : (
           <>
             Agent está trabalhando<span className="working-dots" />
@@ -138,6 +143,9 @@ interface Props {
   /** Epoch ms do último sinal de vida, quando o turno está sem responder além
    *  do limiar. Ausente = trabalhando normalmente. */
   stalledSince?: number
+  /** Epoch ms do início da compactação em curso (evento `compacting`): a linha
+   *  ao vivo e a faixa viram o aviso "Compactando a conversa…". */
+  compactingSince?: number
   /** Independent high-risk permission warning, constrained to the chat column. */
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
@@ -413,7 +421,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.topNotice}
 
-      {busy && <WorkingBanner stalledSince={props.stalledSince} />}
+      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} />}
 
       {messages.length === 0 && (
         <div className="empty-state">
@@ -441,6 +449,7 @@ export function ChatPanel(props: Props): JSX.Element {
         scrollToId={props.scrollToId}
         scrollSeq={props.scrollSeq}
         busy={busy}
+        compactingSince={props.compactingSince}
         tts={props.tts}
         onRetry={props.onRetry}
         onUseAccount={props.onUseAccount}

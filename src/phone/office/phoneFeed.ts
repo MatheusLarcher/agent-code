@@ -73,6 +73,7 @@ export class PhoneOfficeFeed implements FeedSource {
     const busyIds = new Set<string>()
     const permissions: Record<string, PermissionRequest> = {}
     const stalledSince: Record<string, number> = {}
+    const compactingSince: Record<string, number> = {}
     const conversations = s.conversations.map((c) => {
       if (c.busy) {
         busyIds.add(c.id)
@@ -80,6 +81,7 @@ export class PhoneOfficeFeed implements FeedSource {
       } else delete this.busySince[c.id]
       if (c.permission) permissions[c.id] = c.permission
       if (c.stalledSince) stalledSince[c.id] = c.stalledSince
+      if (c.busy && c.compactingSince) compactingSince[c.id] = c.compactingSince
       // A conversa aberta tem o histórico completo; as outras, o turno acompanhado pelo SSE.
       const msgs = c.id === s.convId && s.messages.length ? s.messages : (this.turns.get(c.id) ?? [])
       return toConversation(c, msgs)
@@ -96,6 +98,7 @@ export class PhoneOfficeFeed implements FeedSource {
       memoristaDiagnostics: {},
       observersOn: { po: false, vigia: false, memorista: false },
       stalledSince,
+      compactingSince,
       tracks: {},
       projectIcons: {},
       // A cor fixa de cada projeto, do `/api/state` (as que faltam chegam num pedido seguinte; até lá, a reserva).

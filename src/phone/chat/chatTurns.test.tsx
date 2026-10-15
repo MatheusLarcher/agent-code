@@ -72,6 +72,31 @@ describe('chat do celular — turno e ao vivo', () => {
     expect(container.querySelector('.live-stop')).toBeTruthy()
   })
 
+  it('compactando: a linha ao vivo vira o aviso, com o loading em modo compactar no trilho', () => {
+    const compacting = { ...conv(true), compactingSince: Date.now() - 4_000 } as ConvSummary
+    client.store.set({ conversations: [compacting], convId: 'c1', messages: HISTORY, historyLoading: false, loaded: true })
+    const { container } = render(<MessageList onRefresh={async () => undefined} />)
+    const live = container.querySelector('.turn-item.live.compacting')!
+    expect(live.querySelector('.live-compacting')?.textContent).toBe('Compactando a conversa…')
+    expect(live.querySelector('.live-loader.chat-live-loader.compacting')?.getAttribute('aria-hidden')).toBe('true')
+    expect(live.querySelector('.live-t')?.textContent).toBe('4s')
+    expect(live.querySelector('.shimmer')).toBeNull()
+  })
+
+  it('turno normal: o loading criativo no trilho (sem o modo compactar); "sem resposta" vence o compactando', () => {
+    client.store.set({ conversations: [conv(true)], convId: 'c1', messages: HISTORY, historyLoading: false, loaded: true })
+    const { container, unmount } = render(<MessageList onRefresh={async () => undefined} />)
+    const loader = container.querySelector('.turn-item.live > .live-loader')!
+    expect(loader.classList.contains('compacting')).toBe(false)
+    expect(loader.querySelectorAll('.cl-orbit > span')).toHaveLength(3)
+    unmount()
+    const both = { ...conv(true), stalledSince: Date.now() - 65_000, compactingSince: Date.now() - 1_000 } as ConvSummary
+    client.store.set({ conversations: [both], convId: 'c1' })
+    const again = render(<MessageList onRefresh={async () => undefined} />).container
+    expect(again.querySelector('.turn-item.live.stalled')).toBeTruthy()
+    expect(again.querySelector('.turn-item.live.compacting')).toBeNull()
+  })
+
   it('sem turno rodando não há parar', () => {
     client.store.set({ conversations: [conv(false)], convId: 'c1', messages: HISTORY, historyLoading: false, loaded: true })
     const { container } = render(<MessageList onRefresh={async () => undefined} />)

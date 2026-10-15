@@ -1011,7 +1011,7 @@ button svg {
 /* Sem resposta há tempo demais: âmbar, não vermelho — o turno não falhou, só
    emudeceu, e ainda pode terminar sozinho. A varredura da borda para, porque
    uma animação de progresso durante um silêncio é exatamente a informação
-   errada; o anel continua girando, já que o trabalho segue em aberto. */
+   errada; o loading continua girando, já que o trabalho segue em aberto. */
 .working-banner.stalled {
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-2));
   border-bottom-color: color-mix(in srgb, var(--warn) 45%, transparent);
@@ -1022,18 +1022,9 @@ button svg {
   width: 100%;
   background: color-mix(in srgb, var(--warn) 35%, transparent);
 }
-.working-banner.stalled .working-ring {
-  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
-  border-top-color: var(--warn);
-}
-.working-ring {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  border: 2.4px solid var(--accent-dim);
-  border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
-  flex-shrink: 0;
+/* O loading da faixa (ChatLoader, chatLoader.css): âmbar no silêncio. */
+.working-banner.stalled .working-loader {
+  --cl-ink: var(--warn);
 }
 .working-dots::after {
   content: '';

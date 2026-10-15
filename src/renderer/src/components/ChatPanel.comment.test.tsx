@@ -104,7 +104,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}, wrap: (p: ReactNode) =
   return { ...view, onSend, onDraftChange, composerRef, rerender }
 }
 
-const box = (): EditorElement => screen.getByPlaceholderText(/Mensagem para o Claude/) as EditorElement
+const box = (): EditorElement => screen.getByPlaceholderText(/Mensagem para o Agent/) as EditorElement
 const answer = (c: HTMLElement, id: string): HTMLElement =>
   [...c.querySelectorAll<HTMLElement>('.msg.assistant')].find((m) => m.textContent?.includes(id === 'a1' ? 'Primeiro' : 'Outra'))!
 const firstP = (c: HTMLElement): HTMLElement => answer(c, 'a1').querySelector('.md > p')!

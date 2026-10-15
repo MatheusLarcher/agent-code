@@ -57,7 +57,7 @@ function renderComposer(cards?: readonly RefCard[]): { onSend: ReturnType<typeof
   return { onSend }
 }
 
-const box = (): HTMLTextAreaElement => screen.getByPlaceholderText(/Mensagem para o Claude/) as HTMLTextAreaElement
+const box = (): HTMLTextAreaElement => screen.getByPlaceholderText(/Mensagem para o Agent/) as HTMLTextAreaElement
 const type = (value: string): void => void fireEvent.change(box(), { target: { value } })
 const options = (): HTMLElement[] => screen.queryAllByRole('option')
 const titles = (): string[] => options().map((o) => o.querySelector('.pl-ref-title')?.textContent ?? '')

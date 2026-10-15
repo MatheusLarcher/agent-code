@@ -602,6 +602,9 @@ export function App(): JSX.Element {
   // última atividade. Só muda o texto da faixa "trabalhando": o turno pode
   // muito bem terminar sozinho, então nada é cancelado por causa disto.
   const [stalledSince, setStalledSince] = useState<Record<string, number>>({})
+  // Conversas compactando agora (evento `compacting` do main) → epoch ms do início:
+  // a linha ao vivo vira "Compactando a conversa…" até o compact_boundary.
+  const [compactingSince, setCompactingSince] = useState<Record<string, number>>({})
   // Sidebar paging: the app opens with only the newest CONVERSATIONS_PER_PROJECT
   // of each project, and só dos PROJECTS_IN_FIRST_PAGE projetos mais recentes —
   // o resto chega em segundo plano. `projectSummaries` é a lista de projetos do
@@ -965,6 +968,16 @@ export function App(): JSX.Element {
       if (e.kind === 'stall-status') {
         setStalledSince((prev) => {
           if (e.stalled) return { ...prev, [cid]: e.since }
+          if (!(cid in prev)) return prev
+          const next = { ...prev }
+          delete next[cid]
+          return next
+        })
+        return
+      }
+      if (e.kind === 'compacting') {
+        setCompactingSince((prev) => {
+          if (e.active) return { ...prev, [cid]: e.since }
           if (!(cid in prev)) return prev
           const next = { ...prev }
           delete next[cid]
@@ -2077,8 +2090,8 @@ export function App(): JSX.Element {
   const pubLastAt = useRef(0)
   const pubAllRef = useRef(true)
   const remoteDiff = useRef(new RemoteLightDiff<Conversation>())
-  const remoteInputsRef = useRef({ permissions, stalledSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
-  remoteInputsRef.current = { permissions, stalledSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
+  const remoteInputsRef = useRef({ permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
+  remoteInputsRef.current = { permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
   useEffect(() => {
     if (!hydrated || !phoneLinked) {
       // O próximo celular (ou a ponte religada) recebe a lista inteira.
@@ -2103,13 +2116,14 @@ export function App(): JSX.Element {
           queued: (queuedBy.get(c.id) ?? []).map((m) => `${m.id}:${m.text.length}`).join('|'),
           permission: inputs.permissions[c.id],
           stalled: inputs.stalledSince[c.id],
+          compacting: inputs.compactingSince[c.id],
           central: isCentralConversation(c) ? centralRef.current : null
         })),
         all
       )
       void window.api.publishRemoteState({
         ...(all ? {} : { delta: true, removed }),
-        conversations: changed.map(({ conv: c, busy, connected, permission, stalled }) => ({
+        conversations: changed.map(({ conv: c, busy, connected, permission, stalled, compacting }) => ({
           id: c.id,
           title: c.title,
           cwd: c.cwd,
@@ -2133,6 +2147,7 @@ export function App(): JSX.Element {
           fastModeAvailable: modelSupportsFastMode(c.model),
           todoPlan: c.todoPlan,
           stalledSince: stalled,
+          compactingSince: compacting,
           tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
           permission: permission as PermissionRequest | undefined,
           // Aba Planos do celular: liga a conversa do Agent Manager ao plano (projeto = cwd).
@@ -2159,7 +2174,7 @@ export function App(): JSX.Element {
       })
       freezeSection('celular', publishStartedAt)
     }, Math.max(0, pubLastAt.current + REMOTE_PUBLISH_MIN_MS - Date.now()))
-  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, usageLimits, storageStatus?.installationId])
+  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, usageLimits, storageStatus?.installationId])
   useEffect(() => () => clearTimeout(pubTimer.current), [])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
@@ -3657,6 +3672,7 @@ export function App(): JSX.Element {
     setBusy(cid, false)
     setBusySince((m) => withoutKey(m, cid))
     setStalledSince((m) => withoutKey(m, cid))
+    setCompactingSince((m) => withoutKey(m, cid))
     delete inflightRef.current[cid]
   }, [setBusy])
 
@@ -4111,10 +4127,10 @@ export function App(): JSX.Element {
     const publishStartedAt = freezeClock()
     officeStore.publish({ conversations, activeId, busyIds,
       busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics, memoristaDiagnostics, observersOn, stalledSince,
-      tracks, projectIcons, usageLimits, speakingId, claudeAccounts: claudeAccountList })
+      compactingSince, tracks, projectIcons, usageLimits, speakingId, claudeAccounts: claudeAccountList })
     freezeSection('escritorio', publishStartedAt)
   }, [conversations, activeId, busyIds, busySince, permissions, vigiaAlerts, vigiaAt, poDiagnostics,
-    memoristaDiagnostics, observersOn, stalledSince, tracks, projectIcons, usageLimits, speakingId, claudeAccountList])
+    memoristaDiagnostics, observersOn, stalledSince, compactingSince, tracks, projectIcons, usageLimits, speakingId, claudeAccountList])
   useOfficeAccountsRefresh(mainTab === 'office', refreshAccounts)
   useProjectColors(conversations) // a cor fixa de cada projeto entra no feed do escritório (office/useProjectColors.ts)
   const iconRequested = useRef<Set<string>>(new Set())
@@ -4364,6 +4380,7 @@ export function App(): JSX.Element {
       // Atrelado ao `busy`: uma entrada que sobrou (sessão morreu sem
       // emitir o "voltou") não pode acusar travamento num chat parado.
       stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
+      compactingSince={showBusy && active ? compactingSince[active.id] : undefined}
       windowsControlEnabled={windowsControlEnabled}
       onDisableWindowsControl={() => void toggleWindowsControl(false)}
       tokens={tokens}

@@ -37,6 +37,7 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   const speakingId = useStore(tts, (s) => s.speakingId)
   const busy = useStore(client.store, (s) => !!s.conversations.find((c) => c.id === s.convId)?.busy)
   const stalledSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.stalledSince)
+  const compactingSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.compactingSince)
   // O chat resumido (o mesmo agrupamento do PC): cada resposta com a sua linha-resumo.
   const rows = useMemo(() => buildChatRows(messages.filter((m) => !isHiddenMessage(m)), { busy }), [messages, busy])
   const blocks = useMemo(() => groupTurns(rows, busy && !loading), [rows, busy, loading])
@@ -214,7 +215,7 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
                   key={b.key}
                   rows={b.rows}
                   model={model}
-                  live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince } : null}
+                  live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince, compactingSince } : null}
                   isFresh={isFresh}
                   renderRow={renderRow}
                 />

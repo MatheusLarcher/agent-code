@@ -35,9 +35,11 @@ export interface TurnRowsProps {
   tts?: TtsControls | null
   /** "Comentar" nos blocos da resposta (o trecho vai para o campo de quem monta). */
   quote?: QuoteListApi
+  /** Início da compactação em curso: a linha ao vivo vira "Compactando a conversa…". */
+  compactingSince?: number
 }
 
-export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, quote }: TurnRowsProps): JSX.Element {
+export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, quote, compactingSince }: TurnRowsProps): JSX.Element {
   const { planDir } = useChatDisplay()
   // O mesmo chat resumido da conversa (chatSteps): cada resposta com a sua linha-resumo; o limite conta linhas.
   const rows = useMemo(() => buildChatRows(messages, { busy }), [messages, busy])
@@ -61,8 +63,8 @@ export function TurnRows({ messages, busy, live = null, limit = 0, tts = null, q
         )
       })}
       {live && <ToolCard m={live} />}
-      {/* A mesma linha "ao vivo" do chat (ponto pulsando, o que faz agora e o tempo). */}
-      {liveLine && <ChatLive messages={messages} />}
+      {/* A mesma linha "ao vivo" do chat (o loading, o que faz agora e o tempo). */}
+      {liveLine && <ChatLive messages={messages} compactingSince={compactingSince} />}
       {messages.length === 0 && !live && !busy && <div className="msg system-note">Nada neste turno ainda.</div>}
     </AnimGateProvider>
   )

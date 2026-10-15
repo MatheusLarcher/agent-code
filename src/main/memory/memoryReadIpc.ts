@@ -36,8 +36,12 @@ export function registerMemoryReadIpc(deps: Deps): void {
   deps.handle(Channels.memoryReadEntry, async (_e, relPath): Promise<MemoryReadResult | null> => {
     if (!validRel(relPath)) return null
     try {
-      const e = (await (deps.entries() ?? Promise.resolve([]))).find((x) => x.relPath === relPath)
-      return e ? { relPath: e.relPath, body: e.body } : null
+      const all = await (deps.entries() ?? Promise.resolve([]))
+      // O chat tira o caminho do arquivo no disco: no Windows a caixa pode não bater.
+      const lower = relPath.toLowerCase()
+      const loose = all.filter((x) => x.relPath.toLowerCase() === lower)
+      const e = all.find((x) => x.relPath === relPath) ?? (loose.length === 1 ? loose[0] : undefined)
+      return e ? { relPath: e.relPath, title: e.title, hook: e.hook, body: e.body } : null
     } catch {
       return null
     }

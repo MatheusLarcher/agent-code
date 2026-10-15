@@ -23,7 +23,7 @@ interface Options {
   disabled?: boolean
 }
 
-const DEFAULT_PLACEHOLDER = 'Mensagem para o Claude…  (Enter envia, Shift+Enter quebra linha)'
+const DEFAULT_PLACEHOLDER = 'Mensagem para o Agent…  (Enter envia, Shift+Enter quebra linha)'
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const png = (name: string): File =>
   new File([Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0))], name, { type: 'image/png' })
