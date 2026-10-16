@@ -46,9 +46,11 @@ export function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
     const i = prev.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
     if (i >= 0) {
       const copy = [...prev]
-      copy[i] = { ...e }
+      // O streaming reescreve a mensagem: a hora é a de quando ela começou.
+      copy[i] = { ...e, ts: copy[i].ts ?? Date.now() }
       return copy
     }
+    return [...prev, { ...e, ts: Date.now() } as UIMessage]
   }
   if (e.kind === 'tool-result') {
     const i = prev.findIndex((m) => m.kind === 'tool-use' && m.id === e.toolUseId)

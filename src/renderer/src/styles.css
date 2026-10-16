@@ -1731,6 +1731,21 @@ button svg {
 .msg-time-rel {
   opacity: 0.85;
 }
+/* Hora discreta de cada mensagem (usuário e agente). */
+.msg-clock {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.msg.user .msg-clock {
+  padding: 0 2px;
+  text-align: right;
+}
 
 /* ---- permission card ---- */
 .permission-card {

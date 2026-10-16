@@ -120,6 +120,19 @@ function MessageTime({ ts }: { ts: number }): JSX.Element {
   )
 }
 
+/** Hora discreta de cada mensagem: "14:32" (ou "03/10 14:32" se não for de hoje). */
+function MsgClock({ ts }: { ts: number }): JSX.Element {
+  const d = new Date(ts)
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  const day = relativeToday(ts, Date.now()) ? '' : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} `
+  return (
+    <span className="msg-clock" title={d.toLocaleString('pt-BR')}>
+      {day}
+      {time}
+    </span>
+  )
+}
+
 type UserMsg = Extract<UIMessage, { kind: 'user' }>
 type AssistantMsg = Extract<UIMessage, { kind: 'assistant-text' }>
 
@@ -185,7 +198,7 @@ function UserRow({ m, ctx }: { m: UserMsg; ctx: ChatRowContext }): JSX.Element {
           )}
         </div>
       )}
-      {m.ts && <MessageTime ts={m.ts} />}
+      {m.ts && <MsgClock ts={m.ts} />}
     </div>
   )
 }
@@ -227,6 +240,7 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
         {m.aborted && (
           <div className="msg-aborted">Resposta interrompida pelo Stop — pode estar incompleta.</div>
         )}
+        {m.ts && m.id !== lastTsId && <MsgClock ts={m.ts} />}
       </div>
     </div>
   )
@@ -236,7 +250,7 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
 export function lastAnswerTsId(messages: readonly UIMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
-    if (m.kind === 'assistant-text' && m.ts) return m.id
+    if (m.kind === 'assistant-text' && m.answer && m.ts) return m.id
   }
   return null
 }

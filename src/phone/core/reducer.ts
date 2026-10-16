@@ -33,7 +33,8 @@ export function reduce(list: ChatMsg[], e: ChatMsg): ChatMsg[] {
   if (e.kind === 'tool-use' && PLAN_TOOLS.has(e.name)) return list
   if (e.kind === 'assistant-text') {
     const i = list.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
-    if (i >= 0) return replaceAt(list, i, { ...e })
+    if (i >= 0) return replaceAt(list, i, { ...e, ts: list[i].ts ?? e.ts ?? Date.now() })
+    return [...list, { ...e, ts: e.ts ?? Date.now() }]
   }
   if (e.kind === 'tool-result') {
     const j = list.findIndex((m) => m.kind === 'tool-use' && m.id === e.toolUseId)

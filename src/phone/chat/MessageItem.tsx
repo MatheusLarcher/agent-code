@@ -6,7 +6,7 @@ import { memo, useEffect, useState } from 'react'
 import { CardRefText, Markdown, type CardRefResolver } from '@renderer/components/Markdown'
 import { client } from '../app/runtime'
 import { triggerDownload } from '../core/download'
-import { basename, fmtBytes, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
+import { basename, fmtBytes, fmtClock, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
 import type { ChatMsg, UserMsg } from '../core/types'
 import { Icon } from '../ui/icons'
 import { BlurText, isPlainText } from './motion'
@@ -36,14 +36,15 @@ function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolea
       </div>
       {m.queued && <div className="msg-queued">Na fila</div>}
       {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
-      {m.ts ? <div className="msg-time">{fmtMsgTime(m.ts)}</div> : null}
+      {m.ts ? <div className="msg-clock" title={fmtMsgTime(m.ts)}>{fmtClock(m.ts)}</div> : null}
     </div>
   )
 }
 
 /** Texto do agente sem balão (o trilho do turno já diz de quem é). Novo e sem Markdown: entra palavra a palavra. */
-function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak, resolveRef, fresh }: {
+function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak, resolveRef, fresh, ts }: {
   id: string
+  ts?: number
   text: string
   answer: boolean
   /** Texto completo (não mais em streaming). */
@@ -70,6 +71,7 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
           <Icon name={speaking ? 'stop' : 'speaker'} size={15} /> {speaking ? 'Parar' : 'Ouvir'}
         </button>
       )}
+      {ts ? <div className="msg-clock" title={fmtMsgTime(ts)}>{fmtClock(ts)}</div> : null}
     </div>
   )
 }
@@ -120,6 +122,7 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
           onSpeak={onSpeak}
           resolveRef={resolveRef}
           fresh={fresh}
+          ts={m.ts}
         />
       )
     case 'thinking':

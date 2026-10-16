@@ -34,6 +34,8 @@
 .msg.msg-highlight { animation: msgflash 2.2s ease-out; }
 @keyframes msgflash { 0%, 25% { box-shadow: 0 0 0 3px var(--text); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .msg-time { font-size: 10.5px; color: var(--faint); padding: 0 2px; }
+/* Hora discreta de cada mensagem (sua e do agente). */
+.msg-clock { font-size: 10px; color: var(--faint); opacity: 0.75; padding: 0 2px; margin-top: 2px; font-variant-numeric: tabular-nums; user-select: none; }
 .msg-canceled { font-size: 11px; font-weight: 600; color: var(--muted); padding: 0 2px; }
 .msg-queued {
   font-size: 11px; font-weight: 650; color: var(--accent);

@@ -8,6 +8,14 @@ export function fmtMsgTime(ts: number, now = new Date()): string {
   return sameDay ? `Hoje às ${time}` : `${d.toLocaleDateString('pt-BR')} às ${time}`
 }
 
+/** Hora discreta da mensagem: "14:32" ou "03/10 14:32" se não for de hoje. */
+export function fmtClock(ts: number, now = new Date()): string {
+  const d = new Date(ts)
+  const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
+  return sameDay ? time : `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${time}`
+}
+
 export function fmtBytes(n: number): string {
   if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB'
   if (n >= 1024) return Math.round(n / 1024) + ' KB'
