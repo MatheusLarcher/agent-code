@@ -146,7 +146,7 @@ describe('AgentSession — compactação no fim da etapa (PreCompact)', () => {
 
   it('teto do modelo, contexto desconhecido e /compact manual: passa sempre', async () => {
     const { s, pre } = await started({ handoff: { slug: 'x' } })
-    setContext(s, 400_000)
+    setContext(s, 600_000)
     await expect(pre!(compact('auto'))).resolves.toEqual({})
     setContext(s, 0)
     await expect(pre!(compact('auto'))).resolves.toEqual({})

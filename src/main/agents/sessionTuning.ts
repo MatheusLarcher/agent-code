@@ -23,12 +23,12 @@ export const HANDOFF_MAX_CONCURRENT_SUBAGENTS = 6
 
 /**
  * Janela de compactação da conversa de handoff, em tokens. O contexto médio
- * medido foi de 214k–329k por chamada: compactar em 200k corta o custo de cada
- * chamada sem mecanismo próprio do app. Env (ganha das outras fontes; o limiar
+ * medido foi de 214k–329k por chamada; compacta em 500k (pedido do usuário) para
+ * manter mais contexto antes do resumo. Env (ganha das outras fontes; o limiar
  * efetivo é o menor entre ela e o máximo do modelo) — nunca o percentual
  * `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, que tem relatos de não disparar.
  */
-export const HANDOFF_AUTO_COMPACT_WINDOW = 200_000
+export const HANDOFF_AUTO_COMPACT_WINDOW = 500_000
 
 function isHandoffImplementation(role: SessionTuningRole): boolean {
   return Boolean(role.handoff) && !role.planning

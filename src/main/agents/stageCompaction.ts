@@ -5,7 +5,7 @@ import { HANDOFF_AUTO_COMPACT_WINDOW } from './sessionTuning'
  * Compactação no fim da etapa (só a conversa de implementação de handoff).
  *
  * Um prompt do roteiro roda num turno longo, e a compactação automática do CLI
- * (janela de 200k, sessionTuning.ts) disparava no meio de uma etapa, antes do
+ * (janela de 500k, sessionTuning.ts) disparava no meio de uma etapa, antes do
  * resumo dela, e o que o agente tinha levantado nos arquivos se perdia. O hook
  * `PreCompact` do SDK aceita `decision: 'block'`: a automática fica adiada até
  * o agente fechar um item `[etapa]` do plano e dispara na chamada seguinte, no
@@ -14,14 +14,14 @@ import { HANDOFF_AUTO_COMPACT_WINDOW } from './sessionTuning'
  */
 
 /** Teto absoluto do adiamento: acima dele a automática passa, etapa fechada ou não. */
-export const STAGE_COMPACT_MAX_CEILING = 400_000
+export const STAGE_COMPACT_MAX_CEILING = 600_000
 
 /** Fração do limite do modelo usada como teto: o contexto medido é o da última resposta, e as ferramentas seguintes somam a ele. */
 const CEILING_FRACTION = 0.6
 
 /**
  * Teto do adiamento para o modelo, ou `null` quando não há folga acima da
- * janela de compactação (modelo de 200k): aí a automática nunca é segurada.
+ * janela de compactação (modelo menor que ~834k): aí a automática nunca é segurada.
  */
 export function stageCompactCeiling(model: string | undefined): number | null {
   const ceiling = Math.min(STAGE_COMPACT_MAX_CEILING, Math.floor(contextLimitFor(model) * CEILING_FRACTION))

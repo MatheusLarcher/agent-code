@@ -30,7 +30,7 @@ describe('handoffSessionEnv — só a conversa de implementação de handoff', (
   it('handoff: até 6 subagentes e compactação em 200k tokens (env, nunca o percentual)', () => {
     expect(handoffSessionEnv({ handoff: { slug: 'p' } })).toEqual({
       CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '6',
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000'
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000'
     })
   })
 

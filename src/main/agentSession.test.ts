@@ -1195,7 +1195,7 @@ describe('AgentSession — afinação por tipo de conversa (plugins, subagentes,
     const handoff = makeSession({ cwd: '/proj', handoff: { slug: 'p' } })
     await handoff.s.start()
     expect(envOf().CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBe('6')
-    expect(envOf().CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000')
+    expect(envOf().CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('500000')
     expect(envOf().CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBeUndefined()
     expect(envOf().CLAUDE_CODE_ENABLE_TODO_TOOLS).toBe('true')
     handoff.s.dispose()
