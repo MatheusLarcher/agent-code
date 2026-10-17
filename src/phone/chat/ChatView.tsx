@@ -4,6 +4,7 @@ import { useStore } from '../core/store'
 import { Composer } from '../composer/Composer'
 import { StatusPill } from '../shell/StatusMenu'
 import { Icon } from '../ui/icons'
+import { ProjectLogo, projectLabel } from '../ui/ProjectLogo'
 import { ReconnectBar, TodoPlan, TurnRecovery } from './ChatBars'
 import { MessageList } from './MessageList'
 import { PermissionModal } from './PermissionModal'
@@ -19,7 +20,11 @@ export function ChatView(): JSX.Element {
           <Icon name="back" size={22} />
         </button>
         <button type="button" className="topbar-title" title="Trocar conversa" onClick={backToList}>
-          <span className="t">{conv?.title || 'Conversa'}</span>
+          {conv?.cwd && <ProjectLogo cwd={conv.cwd} size={26} />}
+          <span className="topbar-stack">
+            <span className="t">{conv?.title || 'Conversa'}</span>
+            {conv?.cwd && <span className="topbar-sub">{projectLabel(conv.cwd)}</span>}
+          </span>
         </button>
         <StatusPill />
       </header>

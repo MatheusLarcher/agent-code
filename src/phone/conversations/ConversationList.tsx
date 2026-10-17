@@ -5,9 +5,9 @@
  * projeto começa recolhido; tocar no cabeçalho abre/fecha.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { isSandboxProjectPath } from '@shared/projectColor'
 import { client, nav, openConversation, openTab, toast } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
-import { basename } from '../core/format'
 import { errorText } from '../core/net'
 import { createStore, useStore } from '../core/store'
 import type { ConvSummary, SearchResult } from '../core/types'
@@ -17,23 +17,34 @@ import { BACK, useBackHandler } from '../shell/backButton'
 import { StatusPill } from '../shell/StatusMenu'
 import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
+import { ProjectLogo, projectLabel } from '../ui/ProjectLogo'
 
 interface Group {
+  /** Chave do grupo: a pasta, ou SANDBOX_KEY para todas as subpastas do sandbox. */
+  key: string
   cwd: string
   convs: ConvSummary[]
+  sandbox?: boolean
 }
 
-function groupByProject(conversations: ConvSummary[], projects: string[]): Group[] {
-  const groups = new Map<string, ConvSummary[]>()
-  const sorted = conversations.filter((c) => c.id !== CENTRAL_CONV_ID).sort((a, b) => b.updatedAt - a.updatedAt)
-  for (const c of sorted) {
-    const k = c.cwd || ''
-    if (!groups.has(k)) groups.set(k, [])
-    groups.get(k)!.push(c)
+const SANDBOX_KEY = 'sandbox:'
+
+/** Agrupa por pasta como a barra do PC: as subpastas do sandbox viram UM grupo "Sandbox", no topo. */
+export function groupByProject(conversations: ConvSummary[], projects: string[]): Group[] {
+  const groups = new Map<string, Group>()
+  const keyOf = (cwd: string): string => (isSandboxProjectPath(cwd) ? SANDBOX_KEY : cwd)
+  const add = (cwd: string): Group => {
+    const key = keyOf(cwd)
+    let g = groups.get(key)
+    if (!g) groups.set(key, (g = { key, cwd, convs: [], sandbox: key === SANDBOX_KEY }))
+    return g
   }
+  const sorted = conversations.filter((c) => c.id !== CENTRAL_CONV_ID).sort((a, b) => b.updatedAt - a.updatedAt)
+  for (const c of sorted) add(c.cwd || '').convs.push(c)
   // Projetos que o PC conhece sem conversa carregada ainda ganham o "+".
-  for (const p of projects) if (p && !groups.has(p)) groups.set(p, [])
-  return [...groups.entries()].map(([cwd, convs]) => ({ cwd, convs }))
+  for (const p of projects) if (p) add(p)
+  const all = [...groups.values()]
+  return [...all.filter((g) => g.sandbox), ...all.filter((g) => !g.sandbox)]
 }
 
 /**
@@ -86,8 +97,8 @@ export function ConversationList(): JSX.Element {
     return () => clearTimeout(t)
   }, [query])
 
-  const create = (cwd: string): void => {
-    client.conversationAction({ type: 'create', cwd }).then(
+  const create = (g: Group): void => {
+    client.conversationAction(g.sandbox ? { type: 'create', sandbox: true } : { type: 'create', cwd: g.cwd }).then(
       (id) => id && openConversation(id),
       (err) => toast(errorText(err))
     )
@@ -160,16 +171,16 @@ export function ConversationList(): JSX.Element {
             )}
             {groups.map((g) => (
               <CollapsibleGroup
-                key={g.cwd}
-                title={basename(g.cwd)}
+                key={g.key}
+                title={projectLabel(g.cwd)}
                 count={g.convs.length}
-                open={!!open[g.cwd]}
-                onToggle={() => toggleProject(g.cwd)}
+                open={!!open[g.key]}
+                onToggle={() => toggleProject(g.key)}
                 busy={g.convs.some((c) => c.busy)}
                 waiting={g.convs.some((c) => !!c.permission)}
-                icon="folder"
+                leading={<ProjectLogo cwd={g.cwd} size={18} />}
                 actions={
-                  <button type="button" className="hist-plus" title="Nova conversa neste projeto" aria-label="Nova conversa neste projeto" onClick={() => create(g.cwd)}>
+                  <button type="button" className="hist-plus" title="Nova conversa neste projeto" aria-label="Nova conversa neste projeto" onClick={() => create(g)}>
                     +
                   </button>
                 }

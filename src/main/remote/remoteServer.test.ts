@@ -427,6 +427,7 @@ describe('RemoteServer — um celular por PC + novas ações do celular', () => 
     onInterrupt: (id) => interrupts.push(id),
     onSetMode: (convId, mode, on) => modes.push({ convId, mode, on }),
     onConversationAction: (a) => actions.push(a),
+    createSandboxDir: async () => ({ path: 'C:/sb/2026-10-16_22-15_aaaa' }),
     loadPairedDevice: () => paired,
     savePairedDevice: (d) => {
       paired = d
@@ -516,6 +517,13 @@ describe('RemoteServer — um celular por PC + novas ações do celular', () => 
     expect((await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'rename', convId: 'c9', title: 'Novo' })).status).toBe(200)
     expect((await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'delete', convId: 'c9' })).status).toBe(200)
     expect(actions.map((a) => (a as { type: string }).type)).toEqual(['create', 'rename', 'delete'])
+  })
+
+  it('/api/conversation create com sandbox: o PC cria a subpasta nova e a conversa nasce nela', async () => {
+    actions.length = 0
+    const r = await call(`/api/conversation?token=${tok}&dev=fone-C`, { type: 'create', sandbox: true })
+    expect(r.status).toBe(200)
+    expect(actions).toEqual([{ type: 'create', cwd: 'C:/sb/2026-10-16_22-15_aaaa', convId: (r.json as { convId: string }).convId }])
   })
 
   it('/api/state expõe uso, projetos, celular pareado e estado do relay', async () => {

@@ -12,6 +12,7 @@ import { servePlanningRoute } from './planningBridge'
 import { answerAppIpc, appIpcEventLine, type AppIpcBridge } from './appIpcBridge'
 import { isRemoteIpcEventChannel } from '../../shared/remoteIpc'
 import { RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
+import { serveProjectIcon } from './projectIconRoute'
 import { detailsByIds, historyPage, historyWindow, lightenMessages } from './remoteHistory'
 import type { RemoteSearchResult } from '../../shared/remoteSearch'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
@@ -48,6 +49,8 @@ export interface RemoteServerDeps {
   onSetMode?: (convId: string, mode: 'fast', on: boolean) => void
   /** A phone managed conversations: create in a project, rename, delete. */
   onConversationAction?: (action: RemoteConversationAction) => void
+  /** Subpasta nova de sandbox para o "+" do Sandbox no celular (main/sandbox.ts). */
+  createSandboxDir?: () => Promise<{ path: string } | { error: string }>
   /** Read / persist the single paired phone (per installation, never synced). */
   loadPairedDevice?: () => RemotePairedDevice | null
   savePairedDevice?: (device: RemotePairedDevice | null) => void
@@ -402,6 +405,7 @@ export class RemoteServer {
       if (path === '/api/tts-parts' && req.method === 'POST') return this.serveTtsParts(req, res)
       if (path === '/api/file') return this.serveFile(url, res)
       if (path === '/api/office-agent') return this.serveOfficeAgent(url, res)
+      if (path === '/api/project-icon') return serveProjectIcon(url, res, [...(this.store.global('projects') ?? []), ...this.store.list().map((c) => c.cwd)])
       if (path.startsWith('/api/planning/')) {
         const state: RemoteStatePayload = { conversations: this.store.list(), projects: this.store.global('projects') }
         return servePlanningRoute(path, req, url, res, { state, onConversationAction: this.deps.onConversationAction })
@@ -635,7 +639,7 @@ export class RemoteServer {
 
   private async serveConversationAction(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req)
-    let j: { type?: string; cwd?: string; convId?: string; title?: string } = {}
+    let j: { type?: string; cwd?: string; convId?: string; title?: string; sandbox?: boolean } = {}
     try {
       j = (JSON.parse(body ?? 'null') as typeof j | null) ?? {}
     } catch {
@@ -643,7 +647,12 @@ export class RemoteServer {
     }
     const convId = String(j.convId ?? '').trim()
     let action: RemoteConversationAction | null = null
-    if (j.type === 'create') {
+    if (j.type === 'create' && j.sandbox === true) {
+      // "+" do Sandbox: como no PC, cada conversa nasce numa subpasta nova (o PC cria).
+      const made = (await this.deps.createSandboxDir?.()) ?? { error: 'sandbox indisponível neste PC' }
+      if ('error' in made) return sendJson(res, 500, { ok: false, error: made.error })
+      action = { type: 'create', cwd: made.path, convId: `c-${randomBytes(6).toString('hex')}` }
+    } else if (j.type === 'create') {
       const cwd = String(j.cwd ?? '').trim()
       if (!cwd) return sendJson(res, 400, { ok: false, error: 'cwd obrigatório' })
       // Only folders the desktop already knows: the phone can't pick arbitrary paths.
@@ -660,7 +669,7 @@ export class RemoteServer {
     }
     if (!action) return sendJson(res, 400, { ok: false, error: 'type inválido' })
     this.deps.onConversationAction?.(action)
-    sendJson(res, 200, { ok: true, convId: action.type === 'create' ? action.convId : convId })
+    sendJson(res, 200, action.type === 'create' ? { ok: true, convId: action.convId, cwd: action.cwd } : { ok: true, convId })
   }
 
   /** Phone → PC: change a conversation's model and/or reasoning effort. */

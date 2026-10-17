@@ -705,12 +705,14 @@ export class RemoteClient {
   }
 
   /** Criar (num projeto que o PC conhece), renomear ou excluir conversa. */
-  async conversationAction(body: { type: 'create'; cwd: string } | { type: 'rename'; convId: string; title: string } | { type: 'delete'; convId: string }): Promise<string | null> {
-    const r = await this.post<{ ok?: boolean; convId?: string }>('/api/conversation', body)
+  async conversationAction(body: { type: 'create'; cwd: string } | { type: 'create'; sandbox: true } | { type: 'rename'; convId: string; title: string } | { type: 'delete'; convId: string }): Promise<string | null> {
+    const r = await this.post<{ ok?: boolean; convId?: string; cwd?: string }>('/api/conversation', body)
     if (body.type === 'rename') this.patchConv(body.convId, { title: body.title })
     if (body.type === 'delete') this.store.set((s) => ({ conversations: s.conversations.filter((c) => c.id !== body.convId) }))
     if (body.type === 'create' && r.convId) {
-      const optimistic: ConvSummary = { id: r.convId, title: 'Nova conversa', cwd: body.cwd, busy: false, connected: false, updatedAt: Date.now(), queued: [] }
+      // No sandbox a pasta nasce no PC: ele devolve qual é.
+      const cwd = 'cwd' in body ? body.cwd : r.cwd || ''
+      const optimistic: ConvSummary = { id: r.convId, title: 'Nova conversa', cwd, busy: false, connected: false, updatedAt: Date.now(), queued: [] }
       this.store.set((s) => ({ conversations: [optimistic, ...s.conversations] }))
     }
     // O PC aplica de forma assíncrona; um retrato logo depois confirma.

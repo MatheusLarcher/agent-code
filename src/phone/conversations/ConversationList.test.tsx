@@ -86,6 +86,24 @@ describe('ConversationList — projetos recolhidos', () => {
     expect(document.querySelector('.coll-group .central-row')).toBeNull()
   })
 
+  it('as subpastas do sandbox viram UM grupo "Sandbox" no topo, e o "+" pede subpasta nova ao PC', () => {
+    const SB = 'C:\\Users\\u\\AppData\\Roaming\\agent-code-desktop\\agent-code-local\\sandbox\\'
+    client.store.set({
+      conversations: [...CONVS, conv('s1', SB + '2026-10-16_22-15_72d3'), conv('s2', SB + '2026-10-14_01-27_f416')],
+      projects: [SB + '2026-10-13_15-53_553a']
+    })
+    const action = vi.spyOn(client, 'conversationAction').mockResolvedValue('' as never)
+    render(<ConversationList />)
+    const titles = Array.from(document.querySelectorAll('.coll-title')).map((t) => t.textContent)
+    expect(titles).toEqual(['Sandbox', 'alfa', 'beta'])
+    expect(header('Sandbox').querySelector('.coll-count')?.textContent).toBe('2')
+    fireEvent.click(header('Sandbox'))
+    expect(screen.getByText('Conversa s1')).toBeTruthy()
+    expect(screen.getByText('Conversa s2')).toBeTruthy()
+    fireEvent.click(screen.getAllByLabelText('Nova conversa neste projeto')[0])
+    expect(action).toHaveBeenCalledWith({ type: 'create', sandbox: true })
+  })
+
   it('a busca mostra os resultados soltos, sem grupos', async () => {
     vi.useFakeTimers()
     vi.spyOn(client, 'search').mockResolvedValue([

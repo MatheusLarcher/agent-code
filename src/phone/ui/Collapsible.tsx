@@ -17,18 +17,20 @@ export interface CollapsibleGroupProps {
   /** Algum item esperando resposta do usuário. */
   waiting?: boolean
   icon?: IconName
+  /** No lugar do `icon`: um elemento próprio (ex.: a logo do projeto). */
+  leading?: ReactNode
   /** Botões à direita do cabeçalho; tocar neles não abre/fecha o grupo. */
   actions?: ReactNode
   children?: ReactNode
 }
 
-export function CollapsibleGroup({ title, count, open, onToggle, busy, waiting, icon, actions, children }: CollapsibleGroupProps): JSX.Element {
+export function CollapsibleGroup({ title, count, open, onToggle, busy, waiting, icon, leading, actions, children }: CollapsibleGroupProps): JSX.Element {
   return (
     <section className={`coll-group${open ? ' open' : ''}`}>
       <div className="coll-head">
         <button type="button" className="coll-toggle" aria-expanded={open} onClick={onToggle}>
           <Icon name="chevron" size={14} className="coll-chev" />
-          {icon && <Icon name={icon} size={14} />}
+          {leading ?? (icon && <Icon name={icon} size={14} />)}
           <span className="coll-title">{title}</span>
           <span className="coll-count">{count}</span>
           {!open && busy && <span className="coll-busy" title="Trabalhando" aria-label="Trabalhando" />}

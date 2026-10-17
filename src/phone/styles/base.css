@@ -116,6 +116,11 @@ svg { flex: 0 0 auto; }
 }
 .topbar-title span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-sub { font-size: 11.5px; color: var(--muted); font-weight: 500; }
+.topbar-stack { min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.topbar-stack .t, .topbar-stack .topbar-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* logo do projeto (ui/ProjectLogo.tsx): lista de projetos e cabeçalho da conversa */
+.proj-logo { flex: 0 0 auto; border-radius: 6px; object-fit: contain; }
+.proj-logo-glyph { color: var(--muted); }
 
 /* pílula de conexão (abre o menu da conexão): ● nome da filial ▾ — verde online, cinza offline */
 .status {

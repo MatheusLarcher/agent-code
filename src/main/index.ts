@@ -1335,6 +1335,7 @@ const remote = new RemoteServer({
   onInterrupt: (convId) => send(Channels.remoteInterrupt, { convId }),
   onSetMode: (convId, mode, on) => send(Channels.remoteSetMode, { convId, mode, on }),
   onConversationAction: (action) => send(Channels.remoteConversationAction, action),
+  createSandboxDir: sandboxCreateResult,
   loadPairedDevice: () => remotePairing.pairedDevice(),
   savePairedDevice: (device) => remotePairing.setPairedDevice(device),
   onSetSkipPerms: (on) => send(Channels.remoteSetSkipPerms, { on }),
