@@ -6,9 +6,18 @@ import { memo, useEffect, useState } from 'react'
 import { CardRefText, Markdown, type CardRefResolver } from '@renderer/components/Markdown'
 import { client } from '../app/runtime'
 import { triggerDownload } from '../core/download'
-import { basename, fmtBytes, fmtClock, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
+import { basename, clipText, fmtBytes, fmtClock, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
 import type { ChatMsg, UserMsg } from '../core/types'
 import { Icon } from '../ui/icons'
+import { CENTRAL_QUOTE_MAX } from '../central/centralActions'
+import type { CentralQuote } from '../central/centralStore'
+import { Swipeable } from '../central/Swipeable'
+
+/** Citação do modo resposta (arrastar a mensagem para a direita, como na Central). */
+function quoteOf(id: string, who: string, text: string): CentralQuote | null {
+  const t = text.trim()
+  return t ? { id, who, text: clipText(t, CENTRAL_QUOTE_MAX) } : null
+}
 import { BlurText, isPlainText } from './motion'
 import { ToolCard } from './ToolCard'
 
@@ -17,7 +26,7 @@ function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolea
   const text = m.text ? readableMedia(m.text) : ''
   return (
     <div className={`msg-row user${fresh ? ' pop' : ''}`}>
-      <div className={`msg user${flash ? ' msg-highlight' : ''}`} data-mid={m.id}>
+      <Swipeable quote={quoteOf(m.id, 'Você', text)} className={`msg user${flash ? ' msg-highlight' : ''}`} data-mid={m.id}>
         {!!m.images?.length && (
           <div className="msg-imgs">
             {m.images.map((src, i) => (
@@ -33,7 +42,7 @@ function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolea
           </div>
         )}
         {text && (resolveRef ? <CardRefText text={text} resolveRef={resolveRef} /> : text)}
-      </div>
+      </Swipeable>
       {m.queued && <div className="msg-queued">Na fila</div>}
       {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
       {m.ts ? <div className="msg-clock" title={fmtMsgTime(m.ts)}>{fmtClock(m.ts)}</div> : null}
@@ -58,7 +67,7 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
   const parsed = parseDownloads(text)
   const blur = fresh && !resolveRef && isPlainText(parsed.clean)
   return (
-    <div className={`msg assistant${answer ? ' answer' : ' narration'}${fresh && !blur ? ' pop' : ''}`}>
+    <Swipeable quote={done ? quoteOf(id, 'Agent', parsed.clean) : null} className={`msg assistant${answer ? ' answer' : ' narration'}${fresh && !blur ? ' pop' : ''}`}>
       {parsed.clean && (blur ? <div className="md"><BlurText text={parsed.clean} /></div> : <Markdown text={parsed.clean} resolveRef={resolveRef} />)}
       {parsed.paths.map((path) => (
         <button key={path} type="button" className="msg-dl" onClick={() => triggerDownload(client.fileUrl(path), path)}>
@@ -72,7 +81,7 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
         </button>
       )}
       {ts ? <div className="msg-clock" title={fmtMsgTime(ts)}>{fmtClock(ts)}</div> : null}
-    </div>
+    </Swipeable>
   )
 }
 

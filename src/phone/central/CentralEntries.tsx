@@ -20,7 +20,7 @@ import { ToolCard } from '../chat/ToolCard'
 import { Icon } from '../ui/icons'
 import { centralChoose, centralQuoteOf, loadTurnTools, tint, toggleTurnTools } from './centralActions'
 import { centralUi, type CentralQuote, type SentBubble } from './centralStore'
-import { useSwipeReply } from './useSwipeReply'
+import { Swipeable } from './Swipeable'
 
 const ASK_HINT: Record<string, string> = {
   'low-confidence': 'não tenho certeza — a mensagem está esperando',
@@ -64,20 +64,6 @@ export function QuoteBox({ q }: { q: { who: string; color?: string; text: string
         {q.who && <span className="c-quote-who">{q.who}</span>}
         <span className="c-quote-text">{q.text}</span>
       </div>
-    </div>
-  )
-}
-
-/** Envolve a entrada com o gesto de responder (quando ela aceita resposta). */
-function Swipeable({ quote, className, style, children }: { quote: CentralQuote | null; className: string; style?: CSSProperties; children: ReactNode }): JSX.Element {
-  const swipe = useSwipeReply(quote)
-  if (!swipe) return <div className={className} style={style}>{children}</div>
-  return (
-    <div className={`${className} ${swipe.className}`} style={{ ...style, ...swipe.style }} {...swipe.handlers}>
-      {children}
-      <span className={`c-swipe-ic${swipe.armed ? ' armed' : ''}`} style={{ opacity: swipe.iconOpacity }}>
-        <Icon name="reply" size={16} />
-      </span>
     </div>
   )
 }

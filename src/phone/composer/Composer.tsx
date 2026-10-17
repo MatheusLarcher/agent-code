@@ -1,7 +1,8 @@
 /**
  * O campo de mensagem: anexos (galeria/câmera/arquivo ou colar imagem), ditado,
- * enviar, e — fora da Central — modelo/esforço e modos da conversa. Na Central, a
- * citação do modo resposta fica acima do campo e o envio leva o `replyTo`.
+ * enviar, e — fora da Central — modelo/esforço e modos da conversa. A citação do modo
+ * resposta fica acima do campo: na Central o envio leva o `replyTo`; no chat normal ela
+ * entra no começo do texto.
  */
 import { useEffect, useRef, useState } from 'react'
 import { client, toast } from '../app/runtime'
@@ -93,12 +94,19 @@ export function Composer({ draft }: { draft?: ComposerDraft | null } = {}): JSX.
     }
   }
 
+  // A citação é da conversa em que foi feita: trocar de conversa a descarta.
+  useEffect(() => setCentralReply(null), [convId])
+
   const send = (): void => {
-    const body = text.trim()
-    if ((!body && !images.length && !files.length) || !convId) return
+    const typed = text.trim()
+    if ((!typed && !images.length && !files.length) || !convId) return
     const sentImages = images
     const sentFiles = files
+    // Central: o `replyTo` diz o destino. Chat normal: a citação vai no texto, para o agente saber a que você responde.
+    const quote = !central ? centralUi.get().replyTo : null
     const reply = central ? takeCentralReply() : null
+    if (quote) setCentralReply(null)
+    const body = quote ? `> ${quote.who}: ${quote.text.replace(/\s+/g, ' ')}\n\n${typed}` : typed
     if (central) centralNoteSent(body, sentImages.length + sentFiles.length)
     setText('')
     setImages([])
@@ -106,8 +114,9 @@ export function Composer({ draft }: { draft?: ComposerDraft | null } = {}): JSX.
     requestAnimationFrame(grow)
     client.send({ text: body, images: sentImages, files: sentFiles, replyTo: reply }).catch((err) => {
       if (central) centralSendFailed(body)
-      // Não perde o que foi escrito: volta ao campo.
-      setText((cur) => (cur ? cur : body))
+      // Não perde o que foi escrito (nem a citação): volta ao campo.
+      if (quote && !centralUi.get().replyTo) setCentralReply(quote)
+      setText((cur) => (cur ? cur : typed))
       setImages((cur) => (cur.length ? cur : sentImages))
       setFiles((cur) => (cur.length ? cur : sentFiles))
       requestAnimationFrame(grow)
@@ -117,7 +126,7 @@ export function Composer({ draft }: { draft?: ComposerDraft | null } = {}): JSX.
 
   return (
     <footer className="composer">
-      {central && replyTo && (
+      {replyTo && (
         <div className="c-quote c-replybar" style={{ ['--c' as string]: replyTo.color || 'var(--muted)' }}>
           <div className="c-quote-body">
             {replyTo.who && <span className="c-quote-who">{replyTo.who}</span>}

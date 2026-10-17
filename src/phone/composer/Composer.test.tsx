@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { client } from '../app/runtime'
 import { resetApp } from '../app/testSupport'
+import { setCentralReply } from '../central/centralStore'
+import { MessageItem } from '../chat/MessageItem'
+import type { ChatMsg } from '../core/types'
 import { Composer } from './Composer'
 import { fmtClock } from './RecordingBar'
 
@@ -180,6 +183,30 @@ describe('Composer', () => {
     expect(track.stop).toHaveBeenCalled()
     expect(audioCtxs[0].close).toHaveBeenCalled()
     expect(post).not.toHaveBeenCalled()
+  })
+
+  it('chat normal: arrastar a mensagem do agent cita ela, o envio leva a citação e a barra some', () => {
+    const send = vi.spyOn(client, 'send').mockResolvedValue(undefined as never)
+    const msg = { kind: 'assistant-text', id: 'a1', text: 'Terminei o build.', final: true, answer: true } as ChatMsg
+    render(<><MessageItem m={msg} flash={false} voiceReady={false} speakingId={null} onSpeak={() => undefined} /><Composer /></>)
+    const bubble = document.querySelector('.msg.assistant') as HTMLElement
+    fireEvent.pointerDown(bubble, { pointerId: 1, clientX: 10, clientY: 10, button: 0 })
+    fireEvent.pointerMove(bubble, { pointerId: 1, clientX: 40, clientY: 11 })
+    fireEvent.pointerMove(bubble, { pointerId: 1, clientX: 90, clientY: 11 })
+    fireEvent.pointerUp(bubble, { pointerId: 1 })
+    expect(document.querySelector('.c-replybar')?.textContent).toContain('Terminei o build.')
+    fireEvent.change(textarea(), { target: { value: 'e o apk?' } })
+    fireEvent.click(screen.getByLabelText('Enviar'))
+    expect(send.mock.calls[0][0]).toMatchObject({ text: '> Agent: Terminei o build.\n\ne o apk?', replyTo: null })
+    expect(document.querySelector('.c-replybar')).toBeNull()
+  })
+
+  it('trocar de conversa descarta a citação', () => {
+    render(<Composer />)
+    act(() => setCentralReply({ id: 'a1', who: 'Agent', text: 'x' }))
+    expect(document.querySelector('.c-replybar')).toBeTruthy()
+    act(() => client.store.set({ convId: 'c2' }))
+    expect(document.querySelector('.c-replybar')).toBeNull()
   })
 
   it('cronômetro formata m:ss', () => {
