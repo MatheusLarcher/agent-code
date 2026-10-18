@@ -1,6 +1,7 @@
 import type { Dirent } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { findAndroidIcon } from './androidIcon'
 
 /**
  * Finds an icon inside a project folder so the sidebar can show it next to the
@@ -255,5 +256,6 @@ export async function findProjectIconFile(
       continue
     }
   }
-  return null
+  // Android app with no conventional logo file: the manifest's launcher icon.
+  return findAndroidIcon(root)
 }
