@@ -149,6 +149,8 @@ import { usePlanningModel } from './planning/usePlanningModel'
 import { NewPlanningDialog } from './planning/NewPlanningDialog'
 import { planProjectsOf, startOfficePlan } from './planning/officePlanStart'
 import { HandoffButton } from './planning/HandoffDialog'
+import { findManagerConversation, runRemotePlanningAction } from './planning/remoteHandoff'
+import { applyRemoteModelChange, remoteModelFields, type RemoteModelControls } from './remote/remoteModel'
 import { reportMcpDropped, reportMcpFailed, useMcpInbound } from './useMcpInbound'
 import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/mcpInbound'
 import { deepseekSelectable, selectableModels } from '@shared/selectableModels'
@@ -2102,6 +2104,8 @@ export function App(): JSX.Element {
   const remoteDiff = useRef(new RemoteLightDiff<Conversation>())
   const remoteInputsRef = useRef({ permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
   remoteInputsRef.current = { permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
+  // Republica sem mudança de conversa: config do Agent Manager trocada, ou pedido do celular recusado.
+  const [remoteNudge, setRemoteNudge] = useState(0)
   useEffect(() => {
     if (!hydrated || !phoneLinked) {
       // O próximo celular (ou a ponte religada) recebe a lista inteira.
@@ -2118,9 +2122,12 @@ export function App(): JSX.Element {
       pubAllRef.current = false
       const queuedBy = new Map<string, QueuedMessage[]>()
       for (const item of queueRef.current) queuedBy.set(item.convId, [...(queuedBy.get(item.convId) ?? []), item])
+      // A config do Agent Manager é o modelo/esforço da conversa dele (remoteModelFields).
+      const planning = planningConfigRef.current
       const { changed, removed } = remoteDiff.current.diff(
         convsRef.current.map((c) => ({
           conv: c,
+          modelKey: isPlanningConversation(c) ? `${planning.model}|${planning.effort}|${inputs.typesafeReady}` : undefined,
           busy: busyRef.current.has(c.id),
           connected: connectedRef.current.has(c.id),
           queued: (queuedBy.get(c.id) ?? []).map((m) => `${m.id}:${m.text.length}`).join('|'),
@@ -2151,8 +2158,8 @@ export function App(): JSX.Element {
                 errorText: c.recovery.errorText
               }
             : undefined,
-          model: c.model,
-          effort: c.effort ?? DEFAULT_EFFORT,
+          // O que o seletor do PC mostra (no Manager, a config dele) e o "Auto · X".
+          ...remoteModelFields(c, planning, inputs.typesafeReady),
           fastMode: c.fastMode === true,
           fastModeAvailable: modelSupportsFastMode(c.model),
           todoPlan: c.todoPlan,
@@ -2184,7 +2191,7 @@ export function App(): JSX.Element {
       })
       freezeSection('celular', publishStartedAt)
     }, Math.max(0, pubLastAt.current + REMOTE_PUBLISH_MIN_MS - Date.now()))
-  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, usageLimits, storageStatus?.installationId])
+  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, usageLimits, storageStatus?.installationId, remoteNudge])
   useEffect(() => () => clearTimeout(pubTimer.current), [])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
@@ -2664,6 +2671,8 @@ export function App(): JSX.Element {
   const planningModel = usePlanningModel()
   const planningConfigRef = useRef(planningModel.config)
   planningConfigRef.current = planningModel.config
+  // O celular mostra a config do Manager na conversa dele: trocou (aqui ou nas Configurações), republica.
+  useEffect(() => setRemoteNudge((n) => n + 1), [planningModel.config.model, planningModel.config.effort])
   const changeManagerModel = useCallback(
     (id: string, model: string): void => {
       planningModel.setModel(model)
@@ -3347,18 +3356,26 @@ export function App(): JSX.Element {
     return off
   }, [toggleSkipPerms])
 
-  // A phone changed a conversation's model/effort — apply with the same rules as
-  // the PC pickers (restart-on-idle; ignored while the conversation is busy).
+  // A phone changed a conversation's model/effort — apply with the SAME rules as the
+  // PC picker (modelControls: the Agent Manager edits its config; busy = the change
+  // waits for the next queued message, via restartForSessionConfig). Refused (Auto
+  // without TypeSafe): the main already echoed the request, so republish the real value.
+  const modelControlsRef = useRef<((conv: Conversation | null) => RemoteModelControls) | null>(null)
   useEffect(() => {
     const off = window.api.onRemoteSetModel(({ convId, model, effort }) => {
       const conv = convsRef.current.find((c) => c.id === convId)
+      const controls = modelControlsRef.current
       // A Central não tem modelo próprio: quem roda é a conversa de destino.
-      if (!conv || isCentralConversation(conv) || busyRef.current.has(convId)) return
-      if (model && model !== conv.model) changeModel(convId, model)
-      if (effort && effort !== conv.effort) changeEffort(convId, effort)
+      if (!conv || isCentralConversation(conv) || !controls) return
+      const res = applyRemoteModelChange({ model, effort }, controls(conv), remoteInputsRef.current.typesafeReady)
+      if (res.refused) {
+        notify('aviso', res.refused)
+        remoteDiff.current.invalidate(convId)
+        setRemoteNudge((n) => n + 1)
+      }
     })
     return off
-  }, [changeModel, changeEffort])
+  }, [notify])
 
   useEffect(() => {
     return window.api.onRemoteRecoveryAction(({ convId, action }) => {
@@ -3817,8 +3834,19 @@ export function App(): JSX.Element {
             send: (conv, text) => void dispatchRef.current?.(conv, text, text, [], [], []),
             notify
           })
+        // "Enviar para implementação"/"Gerar prompts" do celular: o mesmo startHandoff
+        // e o mesmo pedido ao Manager da Tela de Planejamento (planning/remoteHandoff.ts).
+        else
+          runRemotePlanningAction(action, {
+            api: window.api,
+            startHandoff,
+            projectFastMode: (cwd) => inheritedFastMode(convsRef.current, cwd, null),
+            managerOf: (cwd, slug) => findManagerConversation(convsRef.current, cwd, slug)?.id ?? null,
+            ask: askPlanningManager,
+            notify
+          })
       }),
-    [renameConversation, deleteConversation]
+    [renameConversation, deleteConversation, startHandoff, askPlanningManager, notify]
   )
 
   // Open a preview tab from the modal. newTab returns a status string, so we can
@@ -4386,6 +4414,7 @@ export function App(): JSX.Element {
       }
     }
   }
+  modelControlsRef.current = modelControls
   const activeModelControls = modelControls(active)
 
   // O painel de conversa, montado UMA vez: o workspace normal o põe à esquerda

@@ -9,6 +9,11 @@
 import { PLANNING_BRIDGE_CONV, type PlanningChangedEvent, type RemotePlanningErrorCode } from '@shared/planningRemote'
 import type { RemoteClient } from './client'
 import { errorText, HttpError, statusOf } from './net'
+import type {
+  RemoteHandoffDiscardResponse,
+  RemotePlanHandoffs,
+  RemotePlanOkResponse
+} from '@shared/planningRemote'
 import type { BridgeEvent, RemotePlan, RemotePlanCreateResponse, RemotePlanListResponse, RemotePlanResponse, RemotePlanSummary } from './types'
 
 export type PlanningErrorKind = 'old-pc' | 'failure' | 'net'
@@ -67,7 +72,19 @@ export async function listPlans(c: RemoteClient, cwd: string): Promise<RemotePla
 export async function getPlan(c: RemoteClient, cwd: string, slug: string): Promise<RemotePlan> {
   const r = await call(() => c.request<RemotePlanResponse>(`/api/planning/plan?cwd=${encodeURIComponent(cwd)}&slug=${encodeURIComponent(slug)}`))
   const plan = unwrap(r).plan
-  return { ...plan, cards: plan.cards ?? [], invalid: plan.invalid ?? [], media: plan.media ?? [], roteiro: { ...plan.roteiro, etapas: plan.roteiro?.etapas ?? [] } }
+  // `handoffs` ausente = PC antigo, sem o envio pelo celular (a folha avisa).
+  const h = plan.handoffs
+  const handoffs: RemotePlanHandoffs | undefined = h
+    ? { pendentes: Array.isArray(h.pendentes) ? h.pendentes : [], enviados: Array.isArray(h.enviados) ? h.enviados : [], ...(h.erro ? { erro: h.erro } : {}) }
+    : undefined
+  return {
+    ...plan,
+    cards: plan.cards ?? [],
+    invalid: plan.invalid ?? [],
+    media: plan.media ?? [],
+    roteiro: { ...plan.roteiro, etapas: plan.roteiro?.etapas ?? [] },
+    ...(handoffs ? { handoffs } : {})
+  }
 }
 
 /** URL da imagem anexa (a ponte só serve imagens; com token, como o /api/file). */
@@ -80,6 +97,24 @@ export async function createPlan(c: RemoteClient, cwd: string, pedido: string): 
   const body = pedido.trim() ? { cwd, pedido: pedido.trim() } : { cwd }
   const r = await call(() => c.post<RemotePlanCreateResponse>('/api/planning/create', body))
   return unwrap(r).convId
+}
+
+/** "Enviar" da folha: o PC roda o mesmo envio da Tela de Planejamento com estes prompts (na ordem de _handoff/). */
+export async function sendHandoff(c: RemoteClient, cwd: string, slug: string, names: string[], override: boolean): Promise<void> {
+  const body = override ? { cwd, slug, names, override: true } : { cwd, slug, names }
+  unwrap(await call(() => c.post<RemotePlanOkResponse>('/api/planning/handoff', body)))
+}
+
+/** "Gerar prompts": o PC manda ao Agent Manager o mesmo pedido do botão do PC. */
+export async function generateHandoff(c: RemoteClient, cwd: string, slug: string, override: boolean): Promise<void> {
+  const body = override ? { cwd, slug, override: true } : { cwd, slug }
+  unwrap(await call(() => c.post<RemotePlanOkResponse>('/api/planning/handoff-generate', body)))
+}
+
+/** "Descartar os antigos" (já confirmado): devolve os nomes movidos para _handoff/_descartados/. */
+export async function discardOldHandoffs(c: RemoteClient, cwd: string, slug: string): Promise<string[]> {
+  const r = unwrap(await call(() => c.post<RemoteHandoffDiscardResponse>('/api/planning/handoff-discard', { cwd, slug })))
+  return Array.isArray(r.discarded) ? r.discarded : []
 }
 
 /** O aviso `planning-changed` do SSE (envelope com convId 'planning'), validado. */

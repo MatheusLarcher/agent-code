@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { client } from '../app/runtime'
 import { HttpError } from './net'
-import { createPlan, getPlan, listPlans, OLD_PC_TEXT, planMediaUrl, planningChange, toPlanningError } from './planning'
+import { createPlan, discardOldHandoffs, generateHandoff, getPlan, listPlans, OLD_PC_TEXT, planMediaUrl, planningChange, sendHandoff, toPlanningError } from './planning'
 
 describe('core/planning', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -41,6 +41,27 @@ describe('core/planning', () => {
     expect(post).toHaveBeenCalledWith('/api/planning/create', { cwd: 'C:\\p', pedido: 'login' })
     await createPlan(client, 'C:\\p', '   ')
     expect(post).toHaveBeenLastCalledWith('/api/planning/create', { cwd: 'C:\\p' })
+  })
+
+  it('handoff: enviar, gerar e descartar fazem o POST certo (override só quando marcado); 404 = PC antigo', async () => {
+    const post = vi.spyOn(client, 'post').mockResolvedValue({ ok: true, discarded: ['a.md'] } as never)
+    await sendHandoff(client, 'C:\\p', 's', ['a.md', 'b.md'], false)
+    expect(post).toHaveBeenLastCalledWith('/api/planning/handoff', { cwd: 'C:\\p', slug: 's', names: ['a.md', 'b.md'] })
+    await sendHandoff(client, 'C:\\p', 's', ['a.md'], true)
+    expect(post).toHaveBeenLastCalledWith('/api/planning/handoff', { cwd: 'C:\\p', slug: 's', names: ['a.md'], override: true })
+    await generateHandoff(client, 'C:\\p', 's', false)
+    expect(post).toHaveBeenLastCalledWith('/api/planning/handoff-generate', { cwd: 'C:\\p', slug: 's' })
+    expect(await discardOldHandoffs(client, 'C:\\p', 's')).toEqual(['a.md'])
+    expect(post).toHaveBeenLastCalledWith('/api/planning/handoff-discard', { cwd: 'C:\\p', slug: 's' })
+    post.mockRejectedValue(new HttpError(404, { error: 'rota desconhecida' }))
+    await expect(sendHandoff(client, 'C:\\p', 's', ['a.md'], false)).rejects.toMatchObject({ kind: 'old-pc' })
+  })
+
+  it('plano sem `handoffs` (PC antigo) fica sem; com, normaliza as listas', async () => {
+    const req = vi.spyOn(client, 'request').mockResolvedValue({ ok: true, plan: { slug: 'a', roteiro: { titulo: 'A', etapas: [] }, cards: [] } } as never)
+    expect((await getPlan(client, 'C:\\p', 'a')).handoffs).toBeUndefined()
+    req.mockResolvedValue({ ok: true, plan: { slug: 'a', roteiro: { titulo: 'A', etapas: [] }, cards: [], handoffs: { pendentes: null } } } as never)
+    expect((await getPlan(client, 'C:\\p', 'a')).handoffs).toEqual({ pendentes: [], enviados: [] })
   })
 
   it('URL da mídia leva token e os parâmetros codificados', () => {

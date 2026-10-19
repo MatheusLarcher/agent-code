@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_CONFIG, modelSupportsFastMode } from '@shared/ipc'
+import { DEFAULT_CONFIG, modelSupportsFastMode, type AppConfig } from '@shared/ipc'
+
+/**
+ * A opção como o diálogo a abre: null sem "Leitura guiada" (o envio é o de antes,
+ * sem fast mode); com ela, disponível só se o modelo do Manager tiver fast mode,
+ * e ligada pelo padrão do projeto. O envio pelo celular (sem a opção na tela) usa esta.
+ */
+export function handoffFastModeChoice(
+  config: Pick<Partial<AppConfig>, 'handoff' | 'planning'> | null | undefined,
+  projectDefault: boolean
+): { available: boolean; on: boolean } | null {
+  const leituraGuiada = config?.handoff?.leituraGuiada ?? DEFAULT_CONFIG.handoff.leituraGuiada
+  if (!leituraGuiada) return null
+  const available = modelSupportsFastMode(config?.planning?.model ?? DEFAULT_CONFIG.planning.model)
+  return { available, on: available && projectDefault }
+}
 
 /** A opção de Fast mode do envio para implementação, como o passo 3 a mostra. */
 export interface HandoffFastModeOption {
@@ -28,10 +43,8 @@ export function useHandoffFastMode(projectDefault: boolean): {
     void Promise.resolve()
       .then(() => window.api?.getConfig?.())
       .then((config) => {
-        const leituraGuiada = config?.handoff?.leituraGuiada ?? DEFAULT_CONFIG.handoff.leituraGuiada
-        if (!alive || !leituraGuiada) return
-        const available = modelSupportsFastMode(config?.planning?.model ?? DEFAULT_CONFIG.planning.model)
-        setState({ available, on: available && projectDefault })
+        const choice = handoffFastModeChoice(config, projectDefault)
+        if (alive && choice) setState(choice)
       })
       .catch(() => undefined)
     return () => {

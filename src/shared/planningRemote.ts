@@ -1,14 +1,18 @@
 /**
  * Contrato da aba Planos do celular com a ponte do PC
- * (src/main/remote/planningBridge.ts). Só leitura do plano + "Novo
- * planejamento"; editar card, marcar etapa e handoff ficam no PC — no celular
- * quem mexe nos cards é o Agent Manager, pela conversa.
+ * (src/main/remote/planningBridge.ts). Só leitura do plano, "Novo
+ * planejamento" e o "Enviar para implementação" (gerar, enviar e descartar os
+ * antigos); editar card, marcar etapa e editar o texto do prompt ficam no PC —
+ * no celular quem mexe nos cards é o Agent Manager, pela conversa.
  *
  * Rotas (todas com `?token=` e `&dev=` como o resto de /api/):
  *  - GET  /api/planning/list?cwd=           → RemotePlanListResponse
  *  - GET  /api/planning/plan?cwd=&slug=     → RemotePlanResponse
  *  - GET  /api/planning/media?cwd=&slug=&name= → bytes da imagem (Content-Type dela)
  *  - POST /api/planning/create {cwd, pedido} → RemotePlanCreateResponse
+ *  - POST /api/planning/handoff RemoteHandoffSendRequest → RemotePlanOkResponse
+ *  - POST /api/planning/handoff-generate RemoteHandoffGenerateRequest → RemotePlanOkResponse
+ *  - POST /api/planning/handoff-discard {cwd, slug} → RemoteHandoffDiscardResponse
  * PC antigo sem as rotas: 404 `{ error: 'rota desconhecida' }`.
  *
  * Aviso de mudança: no SSE /api/events, envelope
@@ -42,6 +46,9 @@ export interface RemotePlanSummary {
   etapas: { total: number; concluidas: number; fonte?: RemotePlanEtapasFonte }
   cards: number
   ambiguidadesAbertas: number
+  /** Última modificação do plano (roteiro e cards), em ms — a ordem da lista.
+   *  Ausente = PC antigo (o celular cai no updatedAt do Manager ou na data do slug). */
+  atualizadoEm?: number
   /** O plano não abriu (arquivo quebrado): o resto vem zerado e `titulo` = slug. */
   erro?: string
 }
@@ -54,6 +61,33 @@ export interface RemotePlanMedia {
   mediaType: string
 }
 
+/** Um prompt de _handoff/ ainda a enviar (fora de enviados.json). */
+export interface RemotePlanHandoff {
+  /** Arquivo (AAAA-MM-DD-NN.md): a ordem de envio. */
+  name: string
+  createdAt: number
+  content: string
+  /** Etapas do roteiro que o prompt cobre (ausente = prompt antigo, sem etapas declaradas). */
+  etapas?: string[]
+  /** Gravado antes da última mudança do plano: não entra no envio sem o usuário decidir. */
+  antigo?: boolean
+}
+
+/** Um prompt já enviado a uma conversa de implementação. */
+export interface RemotePlanHandoffSent {
+  nome: string
+  enviadoEm: string
+  conversaId: string
+  conversaTitulo?: string
+}
+
+export interface RemotePlanHandoffs {
+  pendentes: RemotePlanHandoff[]
+  enviados: RemotePlanHandoffSent[]
+  /** _handoff/ não pôde ser lido: o envio fica só no PC. */
+  erro?: string
+}
+
 /** Plano aberto: roteiro + cards (sem layout do canvas nem pastas do PC). */
 export interface RemotePlan {
   slug: string
@@ -62,6 +96,8 @@ export interface RemotePlan {
   /** Cards que não carregaram (arquivo relativo à pasta + motivo). */
   invalid: { file: string; error: string }[]
   media: RemotePlanMedia[]
+  /** Os prompts de _handoff/. Ausente = PC antigo, sem o envio pelo celular. */
+  handoffs?: RemotePlanHandoffs
 }
 
 /**
@@ -88,3 +124,29 @@ export interface RemotePlanCreateRequest {
 /** `convId` da conversa do Agent Manager que o PC vai criar; o slug aparece
  *  depois em /api/state (`mode: 'planning'`, `planningSlug`). */
 export type RemotePlanCreateResponse = { ok: true; convId: string } | RemotePlanningFailure
+
+/**
+ * "Enviar" da folha: os prompts pendentes, pelo nome e na ordem de envio. O PC
+ * roda o MESMO envio da Tela de Planejamento (conversa de implementação nova
+ * com o modelo/esforço do Manager, fila do quadro, registro em enviados.json).
+ * `override`: o usuário marcou "enviar mesmo assim" com ambiguidade aberta.
+ */
+export interface RemoteHandoffSendRequest {
+  cwd: string
+  slug: string
+  names: string[]
+  override?: boolean
+}
+
+/** "Gerar prompts": o PC manda ao Agent Manager o mesmo pedido do botão do PC. */
+export interface RemoteHandoffGenerateRequest {
+  cwd: string
+  slug: string
+  override?: boolean
+}
+
+/** Teto de prompts num envio pelo celular. */
+export const MAX_REMOTE_HANDOFF_PROMPTS = 50
+
+export type RemotePlanOkResponse = { ok: true } | RemotePlanningFailure
+export type RemoteHandoffDiscardResponse = { ok: true; discarded: string[] } | RemotePlanningFailure

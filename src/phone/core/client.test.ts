@@ -257,6 +257,36 @@ describe('RemoteClient', () => {
     expect(client.state.messages).toHaveLength(1)
   })
 
+  it('modelo/esforço com a conversa ocupada: o POST sai, e um retrato velho não desfaz a escolha', async () => {
+    const busy = { conversations: [{ ...STATE.conversations[0], busy: true, model: 'opus', effort: 'high' }, STATE.conversations[1]] }
+    let echo = false
+    const posts: unknown[] = []
+    mockFetch((u, init) => {
+      if (u.pathname === '/api/set-model') {
+        posts.push(JSON.parse(String(init?.body)))
+        return { status: 200, body: { ok: true } }
+      }
+      if (u.pathname === '/api/state') {
+        // O 1º retrato depois da troca ainda é o velho; o seguinte já traz o eco do PC.
+        const c = { ...busy.conversations[0], effort: echo ? 'max' : 'high' }
+        echo = true
+        return { status: 200, body: { conversations: [c, busy.conversations[1]] } }
+      }
+      return { status: 200, body: { messages: [] } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    echo = false
+    client.setModel({ effort: 'max' })
+    expect(client.current()?.effort).toBe('max')
+    await flush()
+    expect(posts).toEqual([{ convId: 'c1', effort: 'max' }])
+    expect(client.current()?.effort).toBe('max')
+    await client.fetchState()
+    expect(client.current()?.effort).toBe('max')
+  })
+
   it('handoff-aviso da ponte vira toast (com o nome da conversa) e não mexe no chat', async () => {
     mockFetch((u) => ({ status: 200, body: u.pathname === '/api/state' ? STATE : { messages: [] } }))
     const notify = vi.fn()

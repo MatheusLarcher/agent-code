@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { PlanningCardDto } from '@shared/ipc'
+import { managerQuestionnaireRequest } from '@shared/managerRequests'
 import { client, nav, toasts } from '../app/runtime'
 import { resetApp } from '../app/testSupport'
 import { HttpError } from '../core/net'
@@ -122,6 +123,35 @@ describe('Aba Planos', () => {
     expect(screen.getByText('2/5 prontas')).toBeTruthy()
     expect(screen.getByText('3/4 especificadas')).toBeTruthy()
     expect(screen.getByText('sem etapas')).toBeTruthy()
+  })
+
+  it('lista: do mais recente ao mais antigo, só 5 visíveis + "Ver mais (2)" e "Ver menos"', async () => {
+    const plans = Array.from({ length: 7 }, (_, i) => ({ ...SUMMARY, slug: `p${i}`, titulo: `Plano ${i}`, atualizadoEm: 1000 + ((i * 3) % 7) }))
+    routes[LIST_ALFA] = () => ({ ok: true, plans })
+    render(<PlanningTab />)
+    await flush()
+    fireEvent.click(groupHeader('alfa')!)
+    const titles = (): string[] => Array.from(document.querySelectorAll('.pl-row-title')).map((t) => t.textContent ?? '')
+    // atualizadoEm: p0=1000 p1=1003 p2=1006 p3=1002 p4=1005 p5=1001 p6=1004
+    expect(titles()).toEqual(['Plano 2', 'Plano 4', 'Plano 6', 'Plano 1', 'Plano 3'])
+    expect(groupHeader('alfa')!.querySelector('.coll-count')?.textContent).toBe('7')
+    fireEvent.click(screen.getByText('Ver mais (2)'))
+    expect(titles()).toEqual(['Plano 2', 'Plano 4', 'Plano 6', 'Plano 1', 'Plano 3', 'Plano 5', 'Plano 0'])
+    fireEvent.click(screen.getByText('Ver menos'))
+    expect(titles()).toHaveLength(5)
+  })
+
+  it('lista: PC antigo (sem atualizadoEm) ordena pela conversa do Manager e, sem ela, pela data do slug; projetos pelo mais recente', async () => {
+    const old = (slug: string): RemotePlanSummary => ({ ...SUMMARY, slug, titulo: slug })
+    client.store.set({ conversations: [{ ...MANAGER, planningSlug: 'plano-20200101-0000', updatedAt: new Date(2031, 0, 1).getTime() }] })
+    routes[LIST_ALFA] = () => ({ ok: true, plans: [old('plano-20240101-0900'), old('plano-20200101-0000'), old('plano-20250101-0900'), old('sem-data')] })
+    routes[LIST_BETA] = () => ({ ok: true, plans: [{ ...old('beta-x'), atualizadoEm: new Date(2032, 0, 1).getTime() }] })
+    render(<PlanningTab />)
+    await flush()
+    expect(Array.from(document.querySelectorAll('.coll-title')).map((t) => t.textContent)).toEqual(['beta', 'alfa'])
+    fireEvent.click(groupHeader('alfa')!)
+    const titles = Array.from(document.querySelectorAll('.pl-row-title')).map((t) => t.textContent)
+    expect(titles).toEqual(['plano-20200101-0000', 'plano-20250101-0900', 'plano-20240101-0900', 'sem-data'])
   })
 
   it('sem planos: o aviso de lista vazia', async () => {
@@ -244,6 +274,127 @@ describe('Aba Planos', () => {
     })
     expect(reads()).toBe(before + 1)
     expect(screen.getByText('Card novo')).toBeTruthy()
+  })
+
+  describe('Chat do plano: "Iniciar questionário" e "Enviar para implementação"', () => {
+    const P1 = { name: '2026-10-19-01.md', createdAt: 1, content: '# Implementação 1 de 2 — Base\ntexto', etapas: ['base'] }
+    const P2 = { name: '2026-10-19-02.md', createdAt: 2, content: 'Sem título markdown', etapas: ['zap'] }
+    let posts: Array<[string, unknown]>
+    let postReply: (path: string) => unknown
+
+    async function openChat(plan: RemotePlan): Promise<void> {
+      routes['/api/planning/plan'] = () => ({ ok: true, plan })
+      await openSite()
+      fireEvent.click(screen.getByRole('tab', { name: 'Chat' }))
+      await flush()
+    }
+
+    beforeEach(() => {
+      posts = []
+      postReply = () => ({ ok: true })
+      vi.spyOn(client, 'post').mockImplementation((async (path: string, body: unknown) => {
+        posts.push([path, body])
+        const r = postReply(path)
+        if (r instanceof Error) throw r
+        return r
+      }) as never)
+    })
+
+    it('"Iniciar questionário" manda ao Manager EXATAMENTE o texto do PC pelo envio normal', async () => {
+      await openChat(PLAN)
+      fireEvent.click(screen.getByText('Iniciar questionário'))
+      await flush()
+      expect(posts[0][0]).toBe('/api/send')
+      expect((posts[0][1] as { convId: string; text: string }).convId).toBe('pm')
+      expect((posts[0][1] as { text: string }).text).toBe(managerQuestionnaireRequest())
+    })
+
+    it('ambiguidade aberta bloqueia até "enviar mesmo assim"; Enviar manda os nomes e o override, fecha e esconde os enviados', async () => {
+      await openChat({ ...PLAN, handoffs: { pendentes: [P1, P2], enviados: [] } })
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      const sheet = screen.getByRole('dialog', { name: 'Enviar para implementação' })
+      expect(sheet.textContent).toContain('1 ambiguidade aberta')
+      expect(sheet.textContent).toContain('Cor do botão')
+      expect(sheet.textContent).toContain('Implementação 1 de 2 — Base')
+      expect(sheet.textContent).toContain('Total estimado: 30 min · 1 etapa')
+      const enviar = (): HTMLButtonElement => screen.getByText(/^Enviar/, { selector: '.pl-sheet-actions button' }) as HTMLButtonElement
+      expect(enviar().disabled).toBe(true)
+      fireEvent.click(screen.getByLabelText(/Enviar mesmo assim/))
+      expect(enviar().disabled).toBe(false)
+      fireEvent.click(enviar())
+      await flush()
+      expect(posts).toContainEqual(['/api/planning/handoff', { cwd: ALFA, slug: 'site', names: [P1.name, P2.name], override: true }])
+      expect(screen.queryByRole('dialog', { name: 'Enviar para implementação' })).toBeNull()
+      expect(planUi.get().justSent).toEqual([P1.name, P2.name])
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      expect(screen.getByRole('dialog', { name: 'Enviar para implementação' }).textContent).toContain('Nenhum prompt a enviar')
+    })
+
+    it('tocar no prompt abre o texto só leitura; voltar do Android volta à lista e depois fecha a folha', async () => {
+      await openChat({ ...PLAN, cards: PLAN.cards.filter((c) => c.tipo !== 'ambiguidade'), handoffs: { pendentes: [P1], enviados: [] } })
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      fireEvent.click(screen.getByText('Implementação 1 de 2 — Base'))
+      expect(document.querySelector('.pl-handoff-text')?.textContent).toBe(P1.content)
+      expect(document.querySelector('.pl-handoff-text textarea, textarea.pl-handoff-text')).toBeNull()
+      act(() => void handleBack())
+      expect(document.querySelector('.pl-handoff-text')).toBeNull()
+      act(() => void handleBack())
+      expect(screen.queryByRole('dialog', { name: 'Enviar para implementação' })).toBeNull()
+    })
+
+    it('sem prompt: "Gerar prompts" pede ao PC e espera; o planning-changed traz o prompt novo e a lista aparece', async () => {
+      const plan = { ...PLAN, cards: PLAN.cards.filter((c) => c.tipo !== 'ambiguidade'), handoffs: { pendentes: [], enviados: [] } }
+      await openChat(plan)
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      fireEvent.click(screen.getByText('Gerar prompts'))
+      await flush()
+      expect(posts).toContainEqual(['/api/planning/handoff-generate', { cwd: ALFA, slug: 'site' }])
+      expect(screen.getByRole('status').textContent).toContain('Pedi os prompts ao Agent Manager')
+      routes['/api/planning/plan'] = () => ({ ok: true, plan: { ...plan, handoffs: { pendentes: [P1], enviados: [] } } })
+      vi.useFakeTimers()
+      act(() => {
+        for (const tap of client.eventTaps) tap({ convId: 'planning', event: { kind: 'planning-changed', projectCwd: ALFA, slug: 'site' } })
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RELOAD_DEBOUNCE_MS + 10)
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getByText('Implementação 1 de 2 — Base')).toBeTruthy()
+    })
+
+    it('antigos: não entram no envio; "Descartar os antigos" pergunta num modal próprio (Manter cancela)', async () => {
+      const old = { ...P2, antigo: true }
+      await openChat({ ...PLAN, cards: PLAN.cards.filter((c) => c.tipo !== 'ambiguidade'), handoffs: { pendentes: [P1, old], enviados: [] } })
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      expect(screen.getByText(/1 prompt antigo/)).toBeTruthy()
+      fireEvent.click(screen.getByText('Descartar os antigos', { selector: '.pl-handoff-old button' }))
+      expect(screen.getByRole('alertdialog')).toBeTruthy()
+      fireEvent.click(screen.getByText('Manter'))
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Enviar para implementação' })).toBeTruthy()
+      fireEvent.click(screen.getByText('Descartar os antigos', { selector: '.pl-handoff-old button' }))
+      postReply = () => ({ ok: true, discarded: [old.name] })
+      fireEvent.click(screen.getByText('Descartar os antigos', { selector: '.pl-confirm-actions button' }))
+      await flush()
+      expect(posts).toContainEqual(['/api/planning/handoff-discard', { cwd: ALFA, slug: 'site' }])
+      expect(toasts.get().list.some((t) => t.text.includes('_descartados'))).toBe(true)
+      fireEvent.click(screen.getByText(/^Enviar/, { selector: '.pl-sheet-actions button' }))
+      await flush()
+      expect(posts).toContainEqual(['/api/planning/handoff', { cwd: ALFA, slug: 'site', names: [P1.name] }])
+    })
+
+    it('PC antigo: sem `handoffs` no plano, ou a rota 404, a folha diz "Atualize o app do PC"', async () => {
+      await openChat(PLAN)
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      expect(screen.getByRole('dialog', { name: 'Enviar para implementação' }).textContent).toContain('Atualize o app do PC')
+      act(() => void handleBack())
+      planUi.set({ plan: { ...PLAN, cards: [], handoffs: { pendentes: [], enviados: [] } } })
+      postReply = () => new HttpError(404, { error: 'rota desconhecida' })
+      fireEvent.click(screen.getByText('Enviar para implementação'))
+      fireEvent.click(screen.getByText('Gerar prompts'))
+      await flush()
+      expect(screen.getByRole('dialog', { name: 'Enviar para implementação' }).textContent).toContain('Atualize o app do PC')
+    })
   })
 
   it('voltar do Android: fecha a folha, depois volta à lista, depois é a raiz', async () => {

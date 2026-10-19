@@ -104,6 +104,15 @@ describe('ConversationList — projetos recolhidos', () => {
     expect(action).toHaveBeenCalledWith({ type: 'create', sandbox: true })
   })
 
+  it('a conversa do Agent Manager (planejamento) não aparece: abre pelo plano, na aba Planos', () => {
+    client.store.set({ conversations: [...CONVS, conv('pm', 'C:/proj/alfa', { title: 'Planejamento: Site', mode: 'planning', planningSlug: 'site', busy: true })] })
+    render(<ConversationList />)
+    expect(header('alfa').querySelector('.coll-count')?.textContent).toBe('2')
+    fireEvent.click(header('alfa'))
+    expect(screen.queryByText('Planejamento: Site')).toBeNull()
+    expect(screen.getByText('Conversa a1')).toBeTruthy()
+  })
+
   it('a busca mostra os resultados soltos, sem grupos', async () => {
     vi.useFakeTimers()
     vi.spyOn(client, 'search').mockResolvedValue([

@@ -4,6 +4,8 @@
  * título, o "N/M" das etapas — "prontas" (implementação) ou "especificadas"
  * (roteiro; PC antigo, sem `fonte`, só sabia esta) — e as ambiguidades abertas;
  * o "?" do cabeçalho recolhido avisa que há ambiguidade esperando resposta.
+ * Em cada projeto, do plano mais recente para o mais antigo, só os PLANS_VISIBLE
+ * primeiros e o resto atrás de "Ver mais (N)"; os projetos, pelo plano mais recente.
  * "+ Novo planejamento" no topo (e o "+" de cada projeto, com ele já escolhido).
  */
 import { useEffect, useMemo } from 'react'
@@ -15,7 +17,8 @@ import { ReconnectBar } from '../chat/ChatBars'
 import { StatusPill } from '../shell/StatusMenu'
 import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
-import { knownProjects, loadLists, openPlan, planUi, startCreate, toggleProject } from './planState'
+import { PLANS_VISIBLE, sortPlans, sortProjects } from './planModel'
+import { knownProjects, loadLists, openPlan, planUi, startCreate, toggleProject, toggleShowAll } from './planState'
 
 /** "2/5 prontas" (implementação) ou "3/4 especificadas" (roteiro); "sem etapas" sem nenhuma. */
 function etapasLabel({ total, concluidas, fonte }: RemotePlanSummary['etapas']): string {
@@ -51,6 +54,7 @@ export function PlanList(): JSX.Element {
   const loaded = useStore(client.store, (s) => s.loaded)
   const lists = useStore(planUi, (s) => s.lists)
   const expanded = useStore(planUi, (s) => s.expanded)
+  const showAll = useStore(planUi, (s) => s.showAll)
   const cwds = useMemo(() => knownProjects(projects, conversations), [projects, conversations])
   const key = cwds.join('\n')
 
@@ -59,11 +63,12 @@ export function PlanList(): JSX.Element {
     if (key) void loadLists(key.split('\n'))
   }, [key])
 
-  const groups = cwds.filter((cwd) => {
+  const visible = cwds.filter((cwd) => {
     const l = lists[cwd]
     if (l?.hidden) return false
     return !l || l.loading || !!l.error || (l.plans?.length ?? 0) > 0
   })
+  const groups = sortProjects(visible, (cwd) => lists[cwd]?.plans ?? [], conversations)
   const settled = cwds.length > 0 && cwds.every((cwd) => lists[cwd] && !lists[cwd].loading)
   const empty = loaded && (cwds.length === 0 || (settled && groups.length === 0))
 
@@ -89,7 +94,9 @@ export function PlanList(): JSX.Element {
         ) : (
           groups.map((cwd) => {
             const l = lists[cwd]
-            const plans = l?.plans ?? []
+            const plans = sortPlans(l?.plans ?? [], cwd, conversations)
+            const all = !!showAll[cwd]
+            const hiddenCount = Math.max(0, plans.length - PLANS_VISIBLE)
             const busy = conversations.some((c) => c.mode === 'planning' && c.cwd === cwd && c.busy)
             return (
               <CollapsibleGroup
@@ -112,7 +119,14 @@ export function PlanList(): JSX.Element {
                 ) : l?.error ? (
                   <div className="hist-empty pl-row-err">{l.error}</div>
                 ) : (
-                  plans.map((p) => <PlanRow key={p.slug} cwd={cwd} p={p} />)
+                  <>
+                    {(all ? plans : plans.slice(0, PLANS_VISIBLE)).map((p) => <PlanRow key={p.slug} cwd={cwd} p={p} />)}
+                    {hiddenCount > 0 && (
+                      <button type="button" className="pl-more" aria-expanded={all} onClick={() => toggleShowAll(cwd)}>
+                        {all ? 'Ver menos' : `Ver mais (${hiddenCount})`}
+                      </button>
+                    )}
+                  </>
                 )}
               </CollapsibleGroup>
             )

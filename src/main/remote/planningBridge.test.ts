@@ -9,7 +9,8 @@ import { PLANNING_BRIDGE_CONV } from '../../shared/planningRemote'
 import { notifyPlanningChanged } from '../planning/planningEvents'
 import { registerPlanningIpc } from '../planning/planningIpc'
 import { importMedia } from '../planning/planningMedia'
-import { createPlan, openPlan, saveCard, saveRoteiro } from '../planning/planningStore'
+import { markHandoffsSent } from '../planning/handoffSent'
+import { createPlan, openPlan, saveCard, saveRoteiro, writeHandoff } from '../planning/planningStore'
 import { attachPlanningEvents } from './planningBridge'
 import { RemoteServer } from './remoteServer'
 
@@ -92,10 +93,19 @@ describe('GET /api/planning/list', () => {
     expect(res.json()).toEqual({
       ok: true,
       plans: [
-        { slug: 'plano-a', titulo: 'Checkout novo', etapas: { total: 2, concluidas: 1, fonte: 'especificacao' }, cards: 2, ambiguidadesAbertas: 1 },
-        { slug: 'plano-b', titulo: 'Vazio', etapas: { total: 0, concluidas: 0, fonte: 'especificacao' }, cards: 0, ambiguidadesAbertas: 0 }
+        { slug: 'plano-a', titulo: 'Checkout novo', etapas: { total: 2, concluidas: 1, fonte: 'especificacao' }, cards: 2, ambiguidadesAbertas: 1, atualizadoEm: expect.any(Number) },
+        { slug: 'plano-b', titulo: 'Vazio', etapas: { total: 0, concluidas: 0, fonte: 'especificacao' }, cards: 0, ambiguidadesAbertas: 0, atualizadoEm: expect.any(Number) }
       ]
     })
+  })
+
+  it('atualizadoEm = a última modificação do roteiro e dos cards (ms)', async () => {
+    const card = path.join(cwd, 'docs', 'spec', 'plano-a', 'cards', 'req-1.md')
+    const when = new Date('2030-01-02T03:04:05Z')
+    await fs.utimes(card, when, when)
+    const plans = (await call('/api/planning/list', { cwd })).json().plans as { slug: string; atualizadoEm: number }[]
+    expect(plans.find((p) => p.slug === 'plano-a')?.atualizadoEm).toBe(when.getTime())
+    expect(plans.find((p) => p.slug === 'plano-b')!.atualizadoEm).toBeLessThan(when.getTime())
   })
 
   it('recusa projeto que o PC não conhece (403) e cwd inválido (400)', async () => {
@@ -122,7 +132,8 @@ describe('GET /api/planning/plan', () => {
     const res = await call('/api/planning/plan', { cwd, slug: 'plano-a' })
     expect(res.status).toBe(200)
     const { plan } = res.json()
-    expect(Object.keys(plan).sort()).toEqual(['cards', 'invalid', 'media', 'roteiro', 'slug'])
+    expect(Object.keys(plan).sort()).toEqual(['cards', 'handoffs', 'invalid', 'media', 'roteiro', 'slug'])
+    expect(plan.handoffs).toEqual({ pendentes: [], enviados: [] })
     expect(plan.roteiro.etapas).toHaveLength(2)
     expect(plan.cards.map((c: { id: string }) => c.id).sort()).toEqual(['amb-1', 'req-1'])
     expect(plan.cards.find((c: { id: string }) => c.id === 'req-1')).toMatchObject({ corpo: 'Ver [[amb-1]].\n', etapa: 'e1' })
@@ -183,6 +194,79 @@ describe('POST /api/planning/create', () => {
     expect((await call('/api/planning/create', {}, { cwd, extra: 1 })).status).toBe(400)
     expect((await call('/api/planning/create')).status).toBe(404)
     expect(actions).toEqual([])
+  })
+})
+
+describe('handoff pelo celular', () => {
+  const resolve = async (): Promise<void> => {
+    const rev = (await openPlan(cwd, 'plano-a')).cards.find((c) => c.id === 'amb-1')!.rev
+    await saveCard(cwd, 'plano-a', { id: 'amb-1', tipo: 'ambiguidade', titulo: 'Qual banco?', status: 'resolvida', links: [], rev, corpo: 'A.\n' }, rev)
+  }
+
+  it('o plano traz os prompts de _handoff/: pendentes (com etapas e o selo de antigo) e os enviados a uma conversa', async () => {
+    const a = path.basename(await writeHandoff(cwd, 'plano-a', '# Prompt 1\ntexto 1', new Date('2026-10-01T10:00:00Z'), ['e1']))
+    const b = path.basename(await writeHandoff(cwd, 'plano-a', '# Prompt 2\ntexto 2', new Date('2026-10-01T10:00:00Z')))
+    const c = path.basename(await writeHandoff(cwd, 'plano-a', '# Prompt 3', new Date('2026-10-01T10:00:00Z')))
+    await markHandoffsSent(cwd, 'plano-a', [{ nome: c, conversaId: 'impl-1', conversaTitulo: 'Implementação: Checkout' }])
+    const { plan } = (await call('/api/planning/plan', { cwd, slug: 'plano-a' })).json()
+    expect(plan.handoffs.pendentes.map((h: { name: string }) => h.name)).toEqual([a, b])
+    expect(plan.handoffs.pendentes[0]).toMatchObject({ content: '# Prompt 1\ntexto 1', etapas: ['e1'] })
+    expect(plan.handoffs.pendentes[1].etapas).toBeUndefined()
+    expect(plan.handoffs.enviados).toEqual([{ nome: c, enviadoEm: expect.any(String), conversaId: 'impl-1', conversaTitulo: 'Implementação: Checkout' }])
+  })
+
+  it('POST handoff: ambiguidade aberta bloqueia sem override; com override vira a ação `handoff` com os textos na ordem de _handoff/', async () => {
+    const a = path.basename(await writeHandoff(cwd, 'plano-a', 'um', new Date(), ['e1']))
+    const b = path.basename(await writeHandoff(cwd, 'plano-a', 'dois', new Date(), ['e2']))
+    const blocked = await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: [a, b] })
+    expect(blocked.status).toBe(400)
+    expect(blocked.json().message).toContain('ambiguidade aberta')
+    expect(actions).toEqual([])
+    const res = await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: [b, a], override: true })
+    expect(res.json()).toEqual({ ok: true })
+    expect(actions).toEqual([
+      { type: 'handoff', cwd, slug: 'plano-a', titulo: 'Checkout novo', prompts: [{ name: a, text: 'um' }, { name: b, text: 'dois' }] }
+    ])
+  })
+
+  it('POST handoff: recusa prompt já enviado ou inexistente, nome com caminho, repetido, projeto desconhecido e plano inexistente', async () => {
+    await resolve()
+    const a = path.basename(await writeHandoff(cwd, 'plano-a', 'um', new Date()))
+    await markHandoffsSent(cwd, 'plano-a', [{ nome: a, conversaId: 'impl-1', conversaTitulo: 'Impl' }])
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: [a] })).json()).toMatchObject({ ok: false, code: 'invalid' })
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: ['nao-existe.md'] })).status).toBe(400)
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: ['../x.md'] })).status).toBe(400)
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: [] })).status).toBe(400)
+    const b = path.basename(await writeHandoff(cwd, 'plano-a', 'dois', new Date()))
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'plano-a', names: [b, b] })).status).toBe(400)
+    expect((await call('/api/planning/handoff', {}, { cwd, slug: 'nao-existe', names: [b] })).status).toBe(404)
+    expect((await call('/api/planning/handoff', {}, { cwd: path.join(outside, 'x'), slug: 'plano-a', names: [b] })).status).toBe(403)
+    expect(actions).toEqual([])
+  })
+
+  it('POST handoff-generate: vira `handoff-generate` com a pasta do plano, ambiguidades (só com override) e mídias', async () => {
+    await importMedia(cwd, 'plano-a', { name: 'Tela.png', data: PNG }, { randomPrefix: () => 'abc123' })
+    expect((await call('/api/planning/handoff-generate', {}, { cwd, slug: 'plano-a' })).status).toBe(400)
+    expect((await call('/api/planning/handoff-generate', {}, { cwd, slug: 'plano-a', override: true })).json()).toEqual({ ok: true })
+    const dir = (await openPlan(cwd, 'plano-a')).dir
+    expect(actions).toEqual([{ type: 'handoff-generate', cwd, slug: 'plano-a', planDir: dir, openAmbiguities: 1, mediaCount: 1 }])
+    await resolve()
+    actions.length = 0
+    await call('/api/planning/handoff-generate', {}, { cwd, slug: 'plano-a', override: true })
+    expect(actions[0]).toMatchObject({ openAmbiguities: 0 })
+    expect((await call('/api/planning/handoff-generate', {}, { cwd, slug: 'plano-a', extra: 1 })).status).toBe(400)
+  })
+
+  it('POST handoff-discard: move só os antigos não enviados', async () => {
+    const old = path.basename(await writeHandoff(cwd, 'plano-a', 'velho', new Date()))
+    const card = path.join(cwd, 'docs', 'spec', 'plano-a', 'cards', 'req-1.md')
+    const later = new Date(Date.now() + 60_000)
+    await fs.utimes(card, later, later)
+    expect((await call('/api/planning/plan', { cwd, slug: 'plano-a' })).json().plan.handoffs.pendentes[0]).toMatchObject({ name: old, antigo: true })
+    const res = await call('/api/planning/handoff-discard', {}, { cwd, slug: 'plano-a' })
+    expect(res.json()).toEqual({ ok: true, discarded: [old] })
+    expect((await call('/api/planning/plan', { cwd, slug: 'plano-a' })).json().plan.handoffs.pendentes).toEqual([])
+    expect((await call('/api/planning/handoff-discard', {}, { cwd, slug: 'nao-existe' })).status).toBe(404)
   })
 })
 

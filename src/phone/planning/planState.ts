@@ -33,6 +33,8 @@ export interface PlanningUi {
   lists: Record<string, ProjectPlans>
   /** Projetos abertos na lista (tudo começa recolhido). */
   expanded: Record<string, boolean>
+  /** Projetos com "Ver mais" aberto (todos os planos, não só os PLANS_VISIBLE mais recentes). */
+  showAll: Record<string, boolean>
   /** O PC não tem as rotas /api/planning: "atualize o app do PC". */
   oldPc: boolean
   open: PlanRef | null
@@ -48,13 +50,18 @@ export interface PlanningUi {
   stage: number
   /** Folha "+ Novo planejamento" aberta (com o projeto já escolhido, se veio do "+" do grupo). */
   creating: { cwd: string } | null
+  /** Folha "Enviar para implementação" aberta (plano aberto). */
+  handoffOpen: boolean
+  /** Prompts do plano aberto que o celular acabou de mandar: somem da folha até o
+   *  PC registrar o envio (sem isto, um 2º toque antes da releitura os mandaria de novo). */
+  justSent: string[]
 }
 
 export const RELOAD_DEBOUNCE_MS = 350
 
 const INITIAL: PlanningUi = {
-  lists: {}, expanded: {}, oldPc: false, open: null, plan: null, planLoading: false, planError: null,
-  view: 'etapas', card: null, draft: null, stage: 0, creating: null
+  lists: {}, expanded: {}, showAll: {}, oldPc: false, open: null, plan: null, planLoading: false, planError: null,
+  view: 'etapas', card: null, draft: null, stage: 0, creating: null, handoffOpen: false, justSent: []
 }
 
 export const planUi = createStore<PlanningUi>({ ...INITIAL })
@@ -118,20 +125,42 @@ export function toggleProject(cwd: string): void {
   planUi.set((s) => ({ expanded: { ...s.expanded, [cwd]: !s.expanded[cwd] } }))
 }
 
+/** "Ver mais (N)" / "Ver menos" de um projeto. */
+export function toggleShowAll(cwd: string): void {
+  planUi.set((s) => ({ showAll: { ...s.showAll, [cwd]: !s.showAll[cwd] } }))
+}
+
 // ---- plano aberto ------------------------------------------------------------------
 
 let planReq = 0
 let reloadTimer: ReturnType<typeof setTimeout> | null = null
 
 export function openPlan(ref: PlanRef): void {
-  planUi.set({ open: ref, plan: null, planError: null, view: 'etapas', card: null, draft: null, stage: 0 })
+  planUi.set({ open: ref, plan: null, planError: null, view: 'etapas', card: null, draft: null, stage: 0, handoffOpen: false, justSent: [] })
   void loadPlan(false)
 }
 
 export function closePlan(): void {
   planReq++
-  planUi.set({ open: null, plan: null, planError: null, planLoading: false, card: null, draft: null })
+  planUi.set({ open: null, plan: null, planError: null, planLoading: false, card: null, draft: null, handoffOpen: false, justSent: [] })
 }
+
+export function openHandoff(): void {
+  planUi.set({ handoffOpen: true })
+}
+
+export function closeHandoff(): void {
+  planUi.set({ handoffOpen: false })
+}
+
+/** O PC aceitou o envio: fecha a folha e relê o plano quando o registro em enviados.json já deve ter saído. */
+export function noteHandoffSent(names: string[]): void {
+  planUi.set((s) => ({ handoffOpen: false, justSent: [...s.justSent, ...names] }))
+  setTimeout(() => void loadPlan(true), HANDOFF_RELOAD_MS)
+  setTimeout(() => void client.fetchState().catch(() => undefined), 800)
+}
+
+export const HANDOFF_RELOAD_MS = 2500
 
 /** Relê o plano aberto. `silent`: atualização ao vivo, sem tirar a tela. Plano apagado: volta à lista com aviso. */
 export async function loadPlan(silent = true): Promise<void> {

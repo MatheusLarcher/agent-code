@@ -17,10 +17,13 @@ export interface RemoteLightInputs<C extends { id: string }> {
   compacting?: number
   /** O retrato da Central (só nela; null nas outras). */
   central: unknown
+  /** Modelo/esforço que valem fora da conversa (no Agent Manager, a config dele). */
+  modelKey?: string
 }
 
 const same = <C extends { id: string }>(a: RemoteLightInputs<C>, b: RemoteLightInputs<C>): boolean =>
   a.conv === b.conv &&
+  a.modelKey === b.modelKey &&
   a.busy === b.busy &&
   a.connected === b.connected &&
   a.queued === b.queued &&
@@ -49,5 +52,11 @@ export class RemoteLightDiff<C extends { id: string }> {
       removed.push(id)
     }
     return { changed, removed: all ? [] : removed }
+  }
+
+  /** A próxima publicação manda esta conversa de novo, mesmo sem mudança (o celular
+   *  pediu algo que foi recusado e o main já ecoou o pedido no instantâneo dele). */
+  invalidate(id: string): void {
+    this.last.delete(id)
   }
 }

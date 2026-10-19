@@ -16,6 +16,7 @@ import type { ChatEvent, PermissionResponse, RateLimitStatus } from '@shared/ipc
 import { isProjectColor, type ProjectColorMap } from '@shared/projectColor'
 import { HANDOFF_NOTICE_EVENT, handoffNoticeText, isHandoffNotice } from '@shared/handoffNotice'
 import { deviceId, deviceName, configFromLocation, type PairConfig } from './config'
+import { ModelHold } from './modelHold'
 import { apiUrl, errorText, fetchJson, pickBestBase, statusOf, HttpError, type FetchOpts } from './net'
 import { activePc, loadPcs, namePcIfUnnamed, otherPcs, pcConfig, pcLabel, removePc, saveLastConv, setActivePc, setPendingSwitch, takePendingSwitch, upsertPc, type PendingNotice } from './pcs'
 import { isSubagentEvent, keepDetails, mergeDetails, reduce, STATE_ONLY, syncQueued } from './reducer'
@@ -240,7 +241,7 @@ export class RemoteClient {
     this.failures = 0
     // PC antigo não manda a lista: o celular segue com a última que guardou.
     if (Array.isArray(data.vocabulary)) setVocabulary(data.vocabulary)
-    const conversations = Array.isArray(data.conversations) ? data.conversations : []
+    const conversations = this.modelHold.apply(Array.isArray(data.conversations) ? data.conversations : [])
     this.store.set((s) => {
       const cur = conversations.find((c) => c.id === s.convId) ?? null
       return {
@@ -670,17 +671,30 @@ export class RemoteClient {
       .catch(() => this.fetchState().catch(() => undefined))
   }
 
-  /** Modelo/esforço da conversa aberta (otimista; travado com a conversa ocupada). */
+  /**
+   * Modelo/esforço da conversa aberta (otimista). Com a conversa ocupada também:
+   * o PC guarda a troca e ela entra na próxima mensagem da fila, como no seletor
+   * dele. Até o retrato do PC trazer o valor novo (ou MODEL_HOLD_MS), um retrato
+   * que já estava a caminho não desfaz a escolha na tela.
+   */
   setModel(patch: { model?: string; effort?: string }): void {
     const cur = this.current()
-    if (!cur || cur.busy) return
+    if (!cur || (!patch.model && !patch.effort)) return
     const next: Partial<ConvSummary> = patch.model ? { model: patch.model, effort: undefined } : {}
     if (patch.effort) next.effort = patch.effort
     this.patchConv(cur.id, next)
+    this.modelHold.set(cur.id, patch)
     void this.post('/api/set-model', { convId: cur.id, model: patch.model, effort: patch.effort })
       .then(() => this.fetchState())
-      .catch(() => undefined)
+      .catch(() => {
+        // O PC não recebeu: a tela volta ao que ele tem.
+        this.modelHold.clear()
+        return this.fetchState().catch(() => undefined)
+      })
   }
+
+  /** A troca de modelo/esforço ainda não confirmada pelo retrato do PC (core/modelHold). */
+  private readonly modelHold = new ModelHold()
 
   setSkipPerms(on: boolean): void {
     this.store.set({ skipPerms: on })

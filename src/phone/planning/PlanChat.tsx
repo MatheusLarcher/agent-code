@@ -3,16 +3,46 @@
  * 'planning'` com o mesmo projeto e slug), com o chat resumido do celular
  * (MessageList com os [[Nome]] de card na cor do tipo), as faixas, o Composer e o
  * pedido pendente de sempre. "Comentar no chat" chega aqui com `[[Título]] ` no campo.
+ * Acima do Composer, os dois botões da Tela de Planejamento do PC: "Iniciar
+ * questionário" (o mesmo texto, pelo envio normal — fila se ocupado; as perguntas
+ * chegam no PermissionModal) e "Enviar para implementação" (a folha HandoffSheet).
  */
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { managerQuestionnaireRequest } from '@shared/managerRequests'
 import { makeRefResolver } from '@renderer/planning/cardRefs'
-import { client } from '../app/runtime'
+import { client, toast } from '../app/runtime'
+import { errorText } from '../core/net'
 import { useStore } from '../core/store'
 import { TodoPlan, TurnRecovery } from '../chat/ChatBars'
 import { MessageList } from '../chat/MessageList'
 import { PermissionModal } from '../chat/PermissionModal'
 import { Composer } from '../composer/Composer'
-import { clearDraft, managerConv, planUi } from './planState'
+import { Icon } from '../ui/icons'
+import { clearDraft, managerConv, openHandoff, planUi } from './planState'
+
+/** "Iniciar questionário" e "Enviar para implementação". */
+function PlanChatActions(): JSX.Element {
+  const [asking, setAsking] = useState(false)
+  const questionnaire = (): void => {
+    if (asking) return
+    setAsking(true)
+    client
+      .send({ text: managerQuestionnaireRequest(), images: [], files: [] })
+      .then(() => toast('Questionário pedido ao Agent Manager: as perguntas aparecem aqui.', 'sucesso'))
+      .catch((err) => toast(`Não consegui pedir o questionário: ${errorText(err)}`, 'erro'))
+      .finally(() => setAsking(false))
+  }
+  return (
+    <div className="pl-chat-actions">
+      <button type="button" className="pl-chat-btn" disabled={asking} onClick={questionnaire}>
+        {asking ? <span className="spinner" /> : <Icon name="help" size={16} />} Iniciar questionário
+      </button>
+      <button type="button" className="pl-chat-btn primary" onClick={openHandoff}>
+        <Icon name="rocket" size={16} /> Enviar para implementação
+      </button>
+    </div>
+  )
+}
 
 export function PlanChat(): JSX.Element {
   const open = useStore(planUi, (s) => s.open)
@@ -48,6 +78,7 @@ export function PlanChat(): JSX.Element {
       <TurnRecovery conv={conv} />
       {ready ? <MessageList onRefresh={refresh} resolveRef={resolveRef} /> : <div className="messages-loading"><span className="spinner" /> Abrindo a conversa…</div>}
       <TodoPlan conv={conv} />
+      {ready && <PlanChatActions />}
       {ready && <Composer draft={draft} />}
       {ready && <PermissionModal />}
     </div>

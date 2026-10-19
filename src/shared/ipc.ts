@@ -2783,10 +2783,17 @@ export interface RemoteConversation {
     maxAttempts: number
     errorText: string
   }
-  /** Current model id of this conversation (phone shows/changes it). */
+  /** Current model id of this conversation (phone shows/changes it). In the
+   *  Agent Manager's conversation, the Manager's config (what the PC picker shows). */
   model?: string
-  /** Current reasoning effort of this conversation. */
+  /** Current reasoning effort of this conversation (same rule as `model`). */
   effort?: string
+  /** Com o esforço em Automático, o nível que o decisor escolheu no último turno
+   *  ("Auto · Alto" no seletor). */
+  runningEffort?: string
+  /** A lista do seletor de modelo DESTA conversa, quando difere do catálogo global
+   *  (`RemoteStatePayload.models`): no Agent Manager, PLANNING_MODELS. */
+  models?: { id: string; label: string }[]
   /** Per-conversation execution modes mirrored from the desktop. */
   fastMode?: boolean
   /** Whether the current model can run in fast mode (gates the phone toggle). */
@@ -2898,6 +2905,12 @@ export type RemoteConversationAction =
   /** "+ Novo planejamento" do celular (POST /api/planning/create): o renderer roda o
    *  startOfficePlan com a conversa do Manager no `convId` já escolhido pela ponte. */
   | { type: 'plan'; cwd: string; convId: string; pedido: string }
+  /** "Enviar" da folha de handoff do celular (POST /api/planning/handoff): o renderer
+   *  roda o MESMO startHandoff da Tela de Planejamento com estes prompts, na ordem. */
+  | { type: 'handoff'; cwd: string; slug: string; titulo: string; prompts: { name: string; text: string }[] }
+  /** "Gerar prompts" do celular (POST /api/planning/handoff-generate): o renderer manda
+   *  ao Agent Manager o managerHandoffRequest, com o que a ponte leu do plano. */
+  | { type: 'handoff-generate'; cwd: string; slug: string; planDir: string; openAmbiguities: number; mediaCount: number }
 
 /** A model/effort change requested from a phone, forwarded to the renderer
  *  (which applies it with the same rules as the PC's own pickers). */

@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { resetStepOpen } from '@renderer/components/useStepOpen'
-import { client } from '../app/runtime'
+import { client, toasts } from '../app/runtime'
 import { resetApp } from '../app/testSupport'
 import { ModelBar } from '../composer/ModelBar'
 import type { ChatMsg, ConvSummary } from '../core/types'
@@ -126,5 +126,27 @@ describe('composer do celular — modos', () => {
     const { container } = render(<ModelBar />)
     const chips = [...container.querySelectorAll('.mode-chip')].map((b) => b.textContent?.trim())
     expect(chips).toEqual(['↯ Rápido'])
+  })
+
+  it('com a conversa ocupada os seletores ficam livres: a troca sai e o toast diz que entra na próxima rodada', () => {
+    const setModel = vi.spyOn(client, 'setModel').mockResolvedValue(undefined)
+    client.store.set({
+      conversations: [{ ...conv(true), effort: 'auto', runningEffort: 'high', models: [{ id: 'opus-5.5', label: 'Opus 5.5' }, { id: 'sonnet-5.5', label: 'Sonnet 5.5' }] }],
+      convId: 'c1',
+      models: [{ id: 'outro', label: 'Outro' }],
+      modelEffort: { 'opus-5.5': ['auto', 'high', 'max'] },
+      effortLabels: { auto: 'Automático', high: 'Alto', max: 'Máximo' }
+    } as never)
+    const { getByLabelText } = render(<ModelBar />)
+    const model = getByLabelText('Modelo') as HTMLSelectElement
+    const effort = getByLabelText('Esforço') as HTMLSelectElement
+    expect(model.disabled).toBe(false)
+    expect(effort.disabled).toBe(false)
+    // A lista do Agent Manager (conv.models) vale sobre a geral; o "Auto · X" do último turno.
+    expect([...model.options].map((o) => o.value)).toEqual(['opus-5.5', 'sonnet-5.5'])
+    expect(effort.selectedOptions[0].textContent).toBe('Automático · Alto')
+    fireEvent.change(effort, { target: { value: 'max' } })
+    expect(setModel).toHaveBeenCalledWith({ effort: 'max' })
+    expect(toasts.get().list.some((t) => t.text === 'Esforço trocado — entra na próxima rodada')).toBe(true)
   })
 })

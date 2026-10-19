@@ -12,6 +12,7 @@ import { BACK, useBackHandler } from '../shell/backButton'
 import { StatusPill } from '../shell/StatusMenu'
 import { Icon } from '../ui/icons'
 import { CardSheet } from './CardSheet'
+import { HandoffSheet } from './HandoffSheet'
 import { NewPlanSheet } from './NewPlanSheet'
 import { PlanList } from './PlanList'
 import { PlanView } from './PlanView'
@@ -46,6 +47,7 @@ export function PlanningTab(): JSX.Element {
   const card = useStore(planUi, (s) => s.card)
   const creating = useStore(planUi, (s) => s.creating)
   const oldPc = useStore(planUi, (s) => s.oldPc)
+  const handoffOpen = useStore(planUi, (s) => s.handoffOpen)
   useBackHandler(BACK.screen, () => closePlan(), !!open)
   useBackHandler(BACK.modal, () => closeCard(), !!card)
   useBackHandler(BACK.modal, () => cancelCreate(), !!creating)
@@ -55,6 +57,7 @@ export function PlanningTab(): JSX.Element {
     <>
       {open ? <PlanView /> : <PlanList />}
       {open && card && <CardSheet key={card} />}
+      {open && handoffOpen && <HandoffSheet />}
       {creating && <NewPlanSheet />}
     </>
   )

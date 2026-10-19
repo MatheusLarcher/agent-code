@@ -23,7 +23,8 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { RemoteServer } from '../../src/main/remote/remoteServer'
 import { readOfficeAgentFile } from '../../src/main/officeAgents'
-import { createPlan, planDirPath, saveCard, saveRoteiro } from '../../src/main/planning/planningStore'
+import { markHandoffsSent } from '../../src/main/planning/handoffSent'
+import { createPlan, planDirPath, saveCard, saveRoteiro, writeHandoff } from '../../src/main/planning/planningStore'
 import type { ChatEvent, RemoteConversation, RemoteStatePayload } from '../../src/shared/ipc'
 import { PLANNING_BRIDGE_CONV, type PlanningChangedEvent } from '../../src/shared/planningRemote'
 
@@ -303,6 +304,21 @@ const server = new RemoteServer({
           void agentReply(a.convId, a.pedido)
         }
       })
+      return
+    }
+    if (a.type === 'handoff-generate') {
+      // O Manager grava um prompt com plan_handoff_write (2 s depois) e o PC avisa.
+      setTimeout(() => {
+        void writeHandoff(a.cwd, a.slug, `# Implementação 1 de 1 — ${a.slug}\n\nGerado pelo Agent Manager simulado (${a.openAmbiguities} ambiguidade(s), ${a.mediaCount} mídia(s)).\nPasta: ${a.planDir}`, new Date(), ['estrutura', 'cardapio']).then(() => planChanged(a.slug))
+      }, 2000)
+      return
+    }
+    if (a.type === 'handoff') {
+      // O startHandoff: conversa de implementação nova + o registro em enviados.json.
+      const cid = id('impl')
+      state.conversations.push({ id: cid, title: `Implementação: ${a.titulo}`, cwd: a.cwd, busy: true, connected: true, updatedAt: Date.now(), messages: [], queued: [], model: 'claude-opus-5-5' })
+      void markHandoffsSent(a.cwd, a.slug, a.prompts.map((p) => ({ nome: p.name, conversaId: cid, conversaTitulo: `Implementação: ${a.titulo}` })))
+      publish()
       return
     }
     publish()

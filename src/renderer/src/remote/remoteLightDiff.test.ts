@@ -43,4 +43,15 @@ describe('RemoteLightDiff — só o que mudou vai para o celular', () => {
     expect(diff.diff([item(a, { busy: true, compacting: 1000 })], false).changed).toHaveLength(0)
     expect(diff.diff([item(a, { busy: true })], false).changed).toHaveLength(1)
   })
+
+  it('a config do Agent Manager trocada (modelKey) e o invalidate (pedido recusado) mandam a conversa de novo', () => {
+    const diff = new RemoteLightDiff<C>()
+    const a = { id: 'a', title: 'A' }
+    diff.diff([item(a, { modelKey: 'opus|high' })], true)
+    expect(diff.diff([item(a, { modelKey: 'opus|high' })], false).changed).toHaveLength(0)
+    expect(diff.diff([item(a, { modelKey: 'opus|max' })], false).changed).toHaveLength(1)
+    diff.invalidate('a')
+    expect(diff.diff([item(a, { modelKey: 'opus|max' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { modelKey: 'opus|max' })], false).changed).toHaveLength(0)
+  })
 })

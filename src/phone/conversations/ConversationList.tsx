@@ -29,7 +29,10 @@ interface Group {
 
 const SANDBOX_KEY = 'sandbox:'
 
-/** Agrupa por pasta como a barra do PC: as subpastas do sandbox viram UM grupo "Sandbox", no topo. */
+/**
+ * Agrupa por pasta como a barra do PC: as subpastas do sandbox viram UM grupo "Sandbox", no topo.
+ * As conversas do Agent Manager (`mode: 'planning'`) ficam fora: abrem pelo plano, na aba Planos.
+ */
 export function groupByProject(conversations: ConvSummary[], projects: string[]): Group[] {
   const groups = new Map<string, Group>()
   const keyOf = (cwd: string): string => (isSandboxProjectPath(cwd) ? SANDBOX_KEY : cwd)
@@ -39,7 +42,7 @@ export function groupByProject(conversations: ConvSummary[], projects: string[])
     if (!g) groups.set(key, (g = { key, cwd, convs: [], sandbox: key === SANDBOX_KEY }))
     return g
   }
-  const sorted = conversations.filter((c) => c.id !== CENTRAL_CONV_ID).sort((a, b) => b.updatedAt - a.updatedAt)
+  const sorted = conversations.filter((c) => c.id !== CENTRAL_CONV_ID && c.mode !== 'planning').sort((a, b) => b.updatedAt - a.updatedAt)
   for (const c of sorted) add(c.cwd || '').convs.push(c)
   // Projetos que o PC conhece sem conversa carregada ainda ganham o "+".
   for (const p of projects) if (p) add(p)

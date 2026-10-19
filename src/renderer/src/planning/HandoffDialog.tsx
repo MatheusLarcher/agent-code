@@ -40,6 +40,7 @@ import {
   errText,
   failureText,
   handoffPartialMessage,
+  handoffSentMessage,
   loadHandoffSession,
   managerHandoffRequest,
   newHandoffsSince,
@@ -362,14 +363,7 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
       }
     }
     if (outcome.status === 'sent') {
-      notify(
-        'sucesso',
-        outcome.queued
-          ? `Plano enviado na conversa "Implementação: ${titulo}": ${outcome.queued === 1 ? 'o prompt sai' : `os ${outcome.queued} prompts saem`} pela fila do projeto, um por vez. A conversa mostra se ele espera a vez de outro plano ou a pasta limpa.`
-          : prompts.length === 1
-            ? `Plano enviado para implementação na conversa "Implementação: ${titulo}".`
-            : `Plano enviado para implementação: 1º prompt enviado e ${prompts.length - 1} na fila da conversa nova.`
-      )
+      notify('sucesso', handoffSentMessage(titulo, outcome, prompts.length))
       onClose()
     } else if (outcome.status === 'created-failed') {
       // A conversa existe: ficar aberto com "Enviar" habilitado criaria outra.

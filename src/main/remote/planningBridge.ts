@@ -7,17 +7,22 @@ import type { HandoffEnvio } from '../../shared/handoffTracking'
 import type { ChatEvent, RemoteConversationAction, RemoteStatePayload } from '../../shared/ipc'
 import { isValidMediaName, mediaKindOf } from '../../shared/planningMedia'
 import {
+  MAX_REMOTE_HANDOFF_PROMPTS,
   MAX_REMOTE_PLAN_PEDIDO,
   PLANNING_BRIDGE_CONV,
   type PlanningChangedEvent,
   type RemotePlan,
+  type RemotePlanHandoffs,
   type RemotePlanningErrorCode,
   type RemotePlanningFailure,
   type RemotePlanSummary
 } from '../../shared/planningRemote'
 import { planEnviosOf, planProgress, roteiroProgress } from '../../shared/stepProgress'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
-import { onPlanningChanged } from '../planning/planningEvents'
+import { listHandoffs } from '../planning/handoffFiles'
+import { HandoffFileName, readHandoffsSent } from '../planning/handoffSent'
+import { discardStaleHandoffs, findStaleHandoffs, planLastChange } from '../planning/handoffStale'
+import { notifyPlanningChanged, onPlanningChanged } from '../planning/planningEvents'
 import { toPlanningFailure } from '../planning/planningIpc'
 import * as realMedia from '../planning/planningMedia'
 import { isValidName, type RoteiroStage } from '../planning/planningModel'
@@ -29,9 +34,12 @@ import * as realStore from '../planning/planningStore'
  * serve planos de projetos que o PC conhece (os do retrato publicado pelo
  * renderer). Não há rota de escrita de card: no celular quem mexe nos cards é
  * o Agent Manager. "Novo planejamento" vira uma RemoteConversationAction
- * `plan`, que o renderer executa com o startOfficePlan. Na lista, as etapas de
- * um plano já enviado contam a implementação, lida dos envios no banco
- * (planEtapasProgress).
+ * `plan`, que o renderer executa com o startOfficePlan; "Enviar para
+ * implementação" vira `handoff` (o startHandoff da Tela de Planejamento) e
+ * "Gerar prompts", `handoff-generate` (o managerHandoffRequest ao Manager).
+ * "Descartar os antigos" chama o mesmo discardStaleHandoffs do planningIpc.
+ * Na lista, as etapas de um plano já enviado contam a implementação, lida dos
+ * envios no banco (planEtapasProgress).
  */
 
 export interface PlanningBridgeStore {
@@ -39,6 +47,11 @@ export interface PlanningBridgeStore {
   openPlan: typeof realStore.openPlan
   listMedia: typeof realMedia.listMedia
   readMedia: typeof realMedia.readMedia
+  /** Última modificação do plano (roteiro e cards), em ms: a ordem da lista do celular. */
+  planLastChange?: typeof planLastChange
+  /** Os prompts de _handoff/ (pendentes e enviados). Padrão: readRemoteHandoffs. */
+  handoffs?: (cwd: string, slug: string) => Promise<RemotePlanHandoffs>
+  discardHandoffs?: typeof discardStaleHandoffs
 }
 
 export interface PlanningBridgeCtx {
@@ -64,7 +77,8 @@ const defaultStore: PlanningBridgeStore = {
   listPlans: realStore.listPlans,
   openPlan: realStore.openPlan,
   listMedia: realMedia.listMedia,
-  readMedia: realMedia.readMedia
+  readMedia: realMedia.readMedia,
+  planLastChange
 }
 
 const STATUS: Record<RemotePlanningErrorCode, number> = { invalid: 400, unknown_project: 403, not_found: 404, io: 500 }
@@ -80,6 +94,13 @@ const ListReq = z.strictObject({ cwd: Cwd })
 const PlanReq = z.strictObject({ cwd: Cwd, slug: Slug })
 const MediaReq = z.strictObject({ cwd: Cwd, slug: Slug, name: z.string().refine(isValidMediaName, 'nome de mídia inválido') })
 const CreateReq = z.strictObject({ cwd: Cwd, pedido: z.string().max(MAX_REMOTE_PLAN_PEDIDO).optional() })
+const HandoffSendReq = z.strictObject({
+  cwd: Cwd,
+  slug: Slug,
+  names: z.array(HandoffFileName).min(1).max(MAX_REMOTE_HANDOFF_PROMPTS),
+  override: z.boolean().optional()
+})
+const HandoffGenerateReq = z.strictObject({ cwd: Cwd, slug: Slug, override: z.boolean().optional() })
 
 class BridgeError extends Error {
   constructor(
@@ -155,12 +176,15 @@ export function planEtapasProgress(roteiro: readonly RoteiroStage[], planEnvios:
 async function summary(store: PlanningBridgeStore, cwd: string, slug: string, planEnvios: HandoffEnvio[]): Promise<RemotePlanSummary> {
   try {
     const p = await store.openPlan(cwd, slug)
+    // Sem a data (falha de stat), o celular ordena pelo fallback dele.
+    const atualizadoEm = await (store.planLastChange ?? planLastChange)(cwd, slug).catch(() => 0)
     return {
       slug,
       titulo: p.roteiro.titulo,
       etapas: planEtapasProgress(p.roteiro.etapas, planEnvios),
       cards: p.cards.length,
-      ambiguidadesAbertas: p.cards.filter((c) => c.tipo === 'ambiguidade' && c.status !== 'resolvida').length
+      ambiguidadesAbertas: openAmbiguities(p.cards),
+      ...(atualizadoEm > 0 ? { atualizadoEm } : {})
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -168,17 +192,54 @@ async function summary(store: PlanningBridgeStore, cwd: string, slug: string, pl
   }
 }
 
+/**
+ * Os prompts de _handoff/ como a folha do celular os usa — a mesma leitura do
+ * planningListHandoffs (listHandoffs + enviados.json + os antigos): "a enviar"
+ * é quem não tem registro em enviados.json; os enviados, só os que foram a
+ * uma conversa (substituído ou marcado à mão não interessa ao celular).
+ */
+export async function readRemoteHandoffs(cwd: string, slug: string): Promise<RemotePlanHandoffs> {
+  const [files, sent] = await Promise.all([listHandoffs(cwd, slug), readHandoffsSent(cwd, slug)])
+  const sentNames = sent.entries.map((e) => e.nome)
+  // Os antigos não derrubam a leitura: sem eles, nada sai marcado como antigo.
+  const old = await findStaleHandoffs(cwd, slug, { handoffs: files, sentNames }).catch(() => null)
+  const stale = new Set(old?.stale.map((h) => h.name) ?? [])
+  const done = new Set(sentNames)
+  return {
+    pendentes: files
+      .filter((h) => !done.has(h.name))
+      .map((h) => ({
+        name: h.name,
+        createdAt: h.createdAt,
+        content: h.content,
+        ...(h.etapas?.length ? { etapas: h.etapas } : {}),
+        ...(stale.has(h.name) ? { antigo: true } : {})
+      })),
+    enviados: sent.entries.flatMap((e) =>
+      e.conversaId ? [{ nome: e.nome, enviadoEm: e.enviadoEm, conversaId: e.conversaId, ...(e.conversaTitulo ? { conversaTitulo: e.conversaTitulo } : {}) }] : []
+    )
+  }
+}
+
 async function plan(store: PlanningBridgeStore, cwd: string, slug: string): Promise<RemotePlan> {
   const p = await store.openPlan(cwd, slug)
   const media = await store.listMedia(cwd, slug)
+  // _handoff/ ilegível não tira o plano da tela: a folha avisa que o envio fica no PC.
+  const handoffs = await (store.handoffs ?? readRemoteHandoffs)(cwd, slug).catch(
+    (err): RemotePlanHandoffs => ({ pendentes: [], enviados: [], erro: err instanceof Error ? err.message : String(err) })
+  )
   return {
     slug: p.slug,
     roteiro: p.roteiro,
     cards: p.cards,
     invalid: p.invalid,
-    media: media.map(({ name, kind, size, mediaType }) => ({ name, kind, size, mediaType }))
+    media: media.map(({ name, kind, size, mediaType }) => ({ name, kind, size, mediaType })),
+    handoffs
   }
 }
+
+const openAmbiguities = (cards: readonly { tipo: string; status?: string }[]): number =>
+  cards.filter((c) => c.tipo === 'ambiguidade' && c.status !== 'resolvida').length
 
 function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolve) => {
@@ -197,21 +258,71 @@ function readBody(req: IncomingMessage): Promise<string | null> {
   })
 }
 
-async function create(req: IncomingMessage, res: ServerResponse, ctx: PlanningBridgeCtx): Promise<void> {
+async function readJson(req: IncomingMessage): Promise<unknown> {
   const body = await readBody(req)
   if (body === null) throw new BridgeError('invalid', 'corpo grande demais')
-  let json: unknown
   try {
-    json = JSON.parse(body || 'null')
+    return JSON.parse(body || 'null')
   } catch {
     throw new BridgeError('invalid', 'JSON inválido')
   }
-  const { cwd, pedido } = parse(CreateReq, json)
+}
+
+function actionSink(ctx: PlanningBridgeCtx, what: string): (action: RemoteConversationAction) => void {
+  if (!ctx.onConversationAction) throw new BridgeError('io', `o PC não aceita ${what} agora`)
+  return ctx.onConversationAction
+}
+
+const AMBIGUITY_BLOCK = 'há ambiguidade aberta no plano: marque "enviar mesmo assim" para seguir'
+
+async function create(req: IncomingMessage, res: ServerResponse, ctx: PlanningBridgeCtx): Promise<void> {
+  const { cwd, pedido } = parse(CreateReq, await readJson(req))
   await assertProject(cwd, ctx)
-  if (!ctx.onConversationAction) throw new BridgeError('io', 'o PC não aceita criar planejamento agora')
+  const emit = actionSink(ctx, 'criar planejamento')
   const convId = `c-${randomBytes(6).toString('hex')}`
-  ctx.onConversationAction({ type: 'plan', cwd, convId, pedido: (pedido ?? '').trim() })
+  emit({ type: 'plan', cwd, convId, pedido: (pedido ?? '').trim() })
   sendJson(res, 200, { ok: true, convId })
+}
+
+/** "Enviar": só prompts a enviar, na ordem de _handoff/ (a de envio), com o texto lido do disco. */
+async function handoffSend(req: IncomingMessage, res: ServerResponse, ctx: PlanningBridgeCtx, store: PlanningBridgeStore): Promise<void> {
+  const { cwd, slug, names, override } = parse(HandoffSendReq, await readJson(req))
+  await assertProject(cwd, ctx)
+  const emit = actionSink(ctx, 'enviar para implementação')
+  const p = await store.openPlan(cwd, slug)
+  if (openAmbiguities(p.cards) > 0 && !override) throw new BridgeError('invalid', AMBIGUITY_BLOCK)
+  if (new Set(names).size !== names.length) throw new BridgeError('invalid', 'prompt repetido no envio')
+  const { pendentes } = await (store.handoffs ?? readRemoteHandoffs)(cwd, slug)
+  const wanted = new Set(names)
+  const missing = names.filter((n) => !pendentes.some((h) => h.name === n))
+  if (missing.length > 0) throw new BridgeError('invalid', `prompt que não está a enviar: ${missing.join(', ')}`)
+  const prompts = pendentes.filter((h) => wanted.has(h.name)).map((h) => ({ name: h.name, text: h.content }))
+  emit({ type: 'handoff', cwd, slug, titulo: p.roteiro.titulo.trim() || slug, prompts })
+  sendJson(res, 200, { ok: true })
+}
+
+/** "Gerar prompts": o que o pedido ao Manager precisa saber do plano (a pasta absoluta, ambiguidades, mídias). */
+async function handoffGenerate(req: IncomingMessage, res: ServerResponse, ctx: PlanningBridgeCtx, store: PlanningBridgeStore): Promise<void> {
+  const { cwd, slug, override } = parse(HandoffGenerateReq, await readJson(req))
+  await assertProject(cwd, ctx)
+  const emit = actionSink(ctx, 'gerar os prompts')
+  const p = await store.openPlan(cwd, slug)
+  const abertas = openAmbiguities(p.cards)
+  if (abertas > 0 && !override) throw new BridgeError('invalid', AMBIGUITY_BLOCK)
+  const media = await store.listMedia(cwd, slug)
+  emit({ type: 'handoff-generate', cwd, slug, planDir: p.dir, openAmbiguities: override ? abertas : 0, mediaCount: media.length })
+  sendJson(res, 200, { ok: true })
+}
+
+/** "Descartar os antigos" (o celular já perguntou): só MOVE os antigos não enviados para _handoff/_descartados/. */
+async function handoffDiscard(req: IncomingMessage, res: ServerResponse, ctx: PlanningBridgeCtx, store: PlanningBridgeStore): Promise<void> {
+  const { cwd, slug } = parse(PlanReq, await readJson(req))
+  await assertProject(cwd, ctx)
+  await store.openPlan(cwd, slug) // plano inexistente → not_found
+  const discarded = await (store.discardHandoffs ?? discardStaleHandoffs)(cwd, slug)
+  // A Tela do PC (e o celular, pelo SSE) relê _handoff/.
+  if (discarded.length > 0) notifyPlanningChanged({ projectCwd: cwd, slug })
+  sendJson(res, 200, { ok: true, discarded })
 }
 
 async function media(url: URL, res: ServerResponse, ctx: PlanningBridgeCtx, store: PlanningBridgeStore): Promise<void> {
@@ -259,7 +370,11 @@ export async function servePlanningRoute(
       return sendJson(res, 200, { ok: true, plan: await plan(store, cwd, slug) })
     }
     if (route === '/api/planning/media' && get) return await media(url, res, ctx, store)
-    if (route === '/api/planning/create' && req.method === 'POST') return await create(req, res, ctx)
+    const post = req.method === 'POST'
+    if (route === '/api/planning/create' && post) return await create(req, res, ctx)
+    if (route === '/api/planning/handoff' && post) return await handoffSend(req, res, ctx, store)
+    if (route === '/api/planning/handoff-generate' && post) return await handoffGenerate(req, res, ctx, store)
+    if (route === '/api/planning/handoff-discard' && post) return await handoffDiscard(req, res, ctx, store)
     return sendJson(res, 404, { error: 'rota desconhecida' })
   } catch (err) {
     if (err instanceof BridgeError) return fail(res, err.code, err.message)
