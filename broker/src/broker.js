@@ -14,6 +14,10 @@
 //   PC→broker:  {type:'head', rid, status, headers}
 //   PC→broker:  {type:'data', rid, b64} | {type:'end', rid} | {type:'error', rid, message}
 //   PC→broker:  {type:'ping'}  →  broker→PC: {type:'pong'}   (heartbeat de aplicação)
+//   PC→broker:  {type:'push', id, token, title, body, data?}   (aviso no celular pelo FCM)
+//   broker→PC:  {type:'push-result', id, ok, status, error?}
+//   O push só vale de um PC que já fez `hello` (o frame chega por onHostFrame) e
+//   respeita um limite de envios por minuto por PC; a chave do FCM fica só aqui.
 //
 // Regras de posse do token:
 //   - "O primeiro PC vence": um PC com `instanceId` DIFERENTE do dono atual recebe
@@ -45,6 +49,10 @@ export const HOST_DEAD_MS = 70_000
 export const HEAD_TIMEOUT_MS = 60_000
 /** Corpo máximo aceito do celular (imagens em base64 ficam bem abaixo disso). */
 export const MAX_BODY_BYTES = 32 * 1024 * 1024
+/** Pushes por minuto que um PC pode pedir (lembrete/monitor são poucos; isso barra laço). */
+export const PUSH_PER_MINUTE = 20
+
+const PUSH_TOKEN_RE = /^[A-Za-z0-9:_\-.]{20,4096}$/
 
 function filterHeaders(headers, drop = []) {
   const out = {}
@@ -82,7 +90,16 @@ function plain(res, status, text) {
  * real). `now` é injetável para os testes de heartbeat.
  * Retorna { server, wss, hosts, listen, close, stats, sweep }.
  */
-export function createBroker({ relayKey = '', pingIntervalMs = PING_INTERVAL_MS, hostDeadMs = HOST_DEAD_MS, headTimeoutMs = HEAD_TIMEOUT_MS } = {}) {
+export function createBroker({
+  relayKey = '',
+  pingIntervalMs = PING_INTERVAL_MS,
+  hostDeadMs = HOST_DEAD_MS,
+  headTimeoutMs = HEAD_TIMEOUT_MS,
+  fcm = null,
+  pushPerMinute = PUSH_PER_MINUTE,
+  now = Date.now,
+  log = () => {}
+} = {}) {
   /** token -> { ws, instanceId, reqs: Map(rid -> {res, timer}), lastSeen } */
   const hosts = new Map()
   let ridSeq = 0
@@ -123,7 +140,7 @@ export function createBroker({ relayKey = '', pingIntervalMs = PING_INTERVAL_MS,
         }
         dropHost(prev, token)
       }
-      host = { ws, instanceId, reqs: new Map(), lastSeen: Date.now() }
+      host = { ws, instanceId, reqs: new Map(), lastSeen: Date.now(), pushes: prev?.pushes ?? [] }
       hosts.set(token, host)
       send(ws, { type: 'ready' })
       ws.on('message', (d) => onHostFrame(host, d))
@@ -163,6 +180,10 @@ export function createBroker({ relayKey = '', pingIntervalMs = PING_INTERVAL_MS,
       send(host.ws, { type: 'pong' })
       return
     }
+    if (msg.type === 'push') {
+      void onPush(host, msg)
+      return
+    }
     const entry = host.reqs.get(msg.rid)
     if (!entry) return
     const { res } = entry
@@ -193,6 +214,32 @@ export function createBroker({ relayKey = '', pingIntervalMs = PING_INTERVAL_MS,
       host.reqs.delete(msg.rid)
       plain(res, 502, 'relay error')
     }
+  }
+
+  /** Pedido de push de um PC registrado: valida, aplica o limite, envia e responde. */
+  async function onPush(host, msg) {
+    const id = typeof msg.id === 'string' || typeof msg.id === 'number' ? msg.id : null
+    const reply = (result) => send(host.ws, { type: 'push-result', id, ...result })
+    if (id === null) return
+    if (typeof msg.token !== 'string' || !PUSH_TOKEN_RE.test(msg.token) || typeof msg.title !== 'string' || !msg.title.trim()) {
+      return reply({ ok: false, status: 400, error: 'pedido-invalido' })
+    }
+    const t = now()
+    host.pushes = host.pushes.filter((at) => t - at < 60_000)
+    if (host.pushes.length >= pushPerMinute) {
+      log('[broker] push recusado: limite por minuto')
+      return reply({ ok: false, status: 429, error: 'limite' })
+    }
+    if (!fcm) return reply({ ok: false, status: 503, error: 'fcm-desligado' })
+    host.pushes.push(t)
+    let result
+    try {
+      result = await fcm.send({ token: msg.token, title: msg.title, body: typeof msg.body === 'string' ? msg.body : '', data: msg.data })
+    } catch {
+      result = { ok: false, status: 0, error: 'fcm' }
+    }
+    log(`[broker] push FCM ${result.status}${result.ok ? '' : ` ${result.error || ''}`}`)
+    reply(result)
   }
 
   function handleHttp(req, res) {

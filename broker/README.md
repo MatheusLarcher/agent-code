@@ -34,6 +34,7 @@ npm test         # teste de integração (round-trip + isolamento + SSE)
 |-----|---------|-------|
 | `PORT` | `8099` | porta do broker (atrás do Nginx) |
 | `RELAY_KEY` | vazio | se definido, só aceita PCs que mandem a mesma chave (anti-abuso). O **token do app** continua sendo a auth real. |
+| `FCM_SERVICE_ACCOUNT_FILE` | vazio | caminho (dentro do container) do JSON da conta de serviço do Firebase `agent-code-c6c23`: liga o push no celular (frame `push`). Sem ela, o PC recebe `fcm-desligado` e o aviso fica no Windows. Alternativa: `FCM_SERVICE_ACCOUNT` com o JSON inteiro. |
 
 > `.env`/`.env-prod` não vão pro git (segredo fica no cofre). O relay é roteado por token; o
 > `RELAY_KEY` é só uma porta de entrada opcional.

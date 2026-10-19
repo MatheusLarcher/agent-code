@@ -191,6 +191,7 @@ import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, 
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import { setupTarefasApp } from './tarefas/appWiring'
+import { ligarAvisoCelular } from './tarefas/destinoCelular'
 import { tarefasServico } from './tarefas/runtime'
 import { executarRodadaMonitor } from './tarefas/rodadaMonitor'
 import { ferramentasDaRodada } from './tarefas/ferramentasRodada'
@@ -3228,6 +3229,8 @@ app.whenReady().then(async () => {
       send(Channels.agentEvent, { convId, event })
       remote.broadcast(convId, event)
     },
+    // PC em uso → Windows; parado ou bloqueado → push no celular pelo broker (tarefas/destinoCelular.ts).
+    ...ligarAvisoCelular({ pairing: remotePairing, push: (req) => relay.push(req), powerMonitor, handle: (channel, fn) => appIpc.handle(channel, fn), log: authLog }),
     log: authLog
   })
   // Avisos de handoff em tempo real (decisão sozinha, ATENÇÃO, fila): toast no

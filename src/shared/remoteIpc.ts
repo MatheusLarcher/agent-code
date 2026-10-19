@@ -28,7 +28,9 @@ export const REMOTE_IPC_INVOKE = [
   Channels.scrumDecideDeclaration,
   Channels.handoffQueueEdit,
   // Pausar/retomar/cancelar/visto da bolinha de tarefas (a lista vem no /api/state).
-  Channels.tarefasAcao
+  Channels.tarefasAcao,
+  // O token FCM do celular pareado (push com o app fechado; tarefas/destinoCelular.ts).
+  Channels.celularPushToken
 ] as const
 
 /** Os avisos do main que seguem para o celular (o `send` do main). */

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "384582923107",
+    "project_id": "agent-code-c6c23",
+    "storage_bucket": "agent-code-c6c23.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:384582923107:android:4385bf8e36ed5394ced956",
+        "android_client_info": {
+          "package_name": "com.matheus.agentremote"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPa1l11aAcUkMh_GW46jhqIMkFJAKwT6o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

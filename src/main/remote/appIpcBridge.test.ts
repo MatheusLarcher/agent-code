@@ -47,11 +47,12 @@ describe('AppIpcBridge', () => {
     await expect(bridge.invoke(Channels.boardMove, [])).rejects.toThrow('quebrou')
   })
 
-  it('aceita os 15 canais da lista do celular (com as ações da bolinha de tarefas)', () => {
+  it('aceita os 16 canais da lista do celular (com as ações da bolinha de tarefas e o token do push)', () => {
     const bridge = new AppIpcBridge(() => {})
     for (const ch of REMOTE_IPC_INVOKE) bridge.handle(ch, () => null)
-    expect(bridge.channels()).toHaveLength(15)
+    expect(bridge.channels()).toHaveLength(16)
     expect(bridge.has(Channels.tarefasAcao)).toBe(true)
+    expect(bridge.has(Channels.celularPushToken)).toBe(true)
   })
 })
 

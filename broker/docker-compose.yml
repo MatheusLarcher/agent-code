@@ -12,3 +12,7 @@ services:
         required: false
       - path: .env-prod
         required: false
+    # Conta de serviço do Firebase (push): só na VPS, em ./secrets (fora do git),
+    # lida via FCM_SERVICE_ACCOUNT_FILE=/run/secrets/fcm-service-account.json.
+    volumes:
+      - ./secrets:/run/secrets:ro

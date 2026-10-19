@@ -67,7 +67,20 @@ function pickInitialConv(conversations: ConvSummary[]): string | null {
   return id
 }
 
-export const client = new RemoteClient({ pickInitialConv, notify: (text, tipo) => toast(text, tipo) })
+const aoConectar: Array<() => void> = []
+
+/** Roda `fn` a cada conexão com o PC (o push registra o token por aqui, app/push.ts). */
+export function quandoConectar(fn: () => void): void {
+  aoConectar.push(fn)
+}
+
+export const client = new RemoteClient({
+  pickInitialConv,
+  notify: (text, tipo) => toast(text, tipo),
+  onConnected: () => {
+    for (const fn of aoConectar) fn()
+  }
+})
 
 export function openTab(tab: Tab): void {
   nav.set({ tab, statusMenuOpen: false })

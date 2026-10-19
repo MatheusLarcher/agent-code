@@ -14,6 +14,15 @@ interface PairingFile {
   version: 1
   instanceId: string
   pairedDevice: RemotePairedDevice | null
+  /** Token FCM do celular pareado (push com o app fechado); some ao trocar de celular. */
+  pushToken?: string | null
+}
+
+const PUSH_TOKEN_RE = /^[A-Za-z0-9:_\-.]{20,4096}$/
+
+/** Token FCM válido (o formato que o Firebase devolve) ou null. */
+export function validPushToken(raw: unknown): string | null {
+  return typeof raw === 'string' && PUSH_TOKEN_RE.test(raw) ? raw : null
 }
 
 export class RemotePairingStore {
@@ -34,7 +43,22 @@ export class RemotePairingStore {
   }
 
   setPairedDevice(device: RemotePairedDevice | null): void {
-    this.write({ ...this.load(), pairedDevice: device })
+    const cur = this.load()
+    // Outro celular (ou nenhum): o token do anterior não vale mais para este PC.
+    const same = !!device && cur.pairedDevice?.id === device.id
+    this.write({ ...cur, pairedDevice: device, pushToken: same ? cur.pushToken ?? null : null })
+  }
+
+  pushToken(): string | null {
+    return this.load().pairedDevice ? this.load().pushToken ?? null : null
+  }
+
+  /** Grava o token do celular pareado; sem celular pareado, recusa (`false`). */
+  setPushToken(token: string | null): boolean {
+    const cur = this.load()
+    if (!cur.pairedDevice) return false
+    this.write({ ...cur, pushToken: token })
+    return true
   }
 
   private load(): PairingFile {
@@ -49,7 +73,8 @@ export class RemotePairingStore {
           pairedDevice:
             device && typeof device.id === 'string' && device.id
               ? { id: device.id, name: String(device.name || 'celular'), pairedAt: Number(device.pairedAt) || 0 }
-              : null
+              : null,
+          pushToken: validPushToken(parsed.pushToken)
         }
         return this.data
       }

@@ -51,6 +51,22 @@ export const DEAD_AFTER_MS = 65_000
 export const HELLO_TIMEOUT_MS = 15_000
 /** Enquanto outro PC é o dono do token, espera-se mais entre tentativas. */
 export const BUSY_RETRY_MS = 30_000
+/** Pedido de push sem `push-result` neste prazo = falhou (o aviso cai no Windows). */
+export const PUSH_TIMEOUT_MS = 15_000
+
+/** Aviso no celular pelo FCM, enviado pelo broker (a chave do Firebase só existe lá). */
+export interface PushRequest {
+  token: string
+  title: string
+  body: string
+  data?: Record<string, string>
+}
+
+export interface PushResult {
+  ok: boolean
+  status: number
+  error?: string
+}
 
 export class RelayClient {
   private ws: WebSocket | null = null
@@ -63,8 +79,34 @@ export class RelayClient {
   private lastSeen = 0
   /** rid -> request HTTP local em andamento. */
   private reqs = new Map<number, ClientRequest>()
+  /** id -> espera do `push-result`. */
+  private pushes = new Map<string, { done: (r: PushResult) => void; timer: ReturnType<typeof setTimeout> }>()
+  private pushSeq = 0
 
   constructor(private readonly deps: RelayClientDeps) {}
+
+  /** Pede ao broker um push no celular. Nunca lança: sem broker ou sem resposta volta `ok: false`. */
+  push(req: PushRequest): Promise<PushResult> {
+    const ws = this.ws
+    if (!ws || this.state !== 'connected' || ws.readyState !== WebSocket.OPEN) {
+      return Promise.resolve({ ok: false, status: 0, error: 'broker-desconectado' })
+    }
+    const id = `p${++this.pushSeq}`
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => this.settlePush(id, { ok: false, status: 0, error: 'sem-resposta' }), PUSH_TIMEOUT_MS)
+      timer.unref?.()
+      this.pushes.set(id, { done: resolve, timer })
+      this.sendTo(ws, { type: 'push', id, ...req })
+    })
+  }
+
+  private settlePush(id: string, result: PushResult): void {
+    const wait = this.pushes.get(id)
+    if (!wait) return
+    this.pushes.delete(id)
+    clearTimeout(wait.timer)
+    wait.done(result)
+  }
 
   start(): void {
     if (!this.stopped) return
@@ -128,6 +170,9 @@ export class RelayClient {
     this.helloTimer = null
     if (!ws) return
     ws.removeAllListeners()
+    // terminate() num socket ainda conectando emite 'error' no próximo tick; sem
+    // ouvinte isso vira exceção não tratada no processo principal.
+    ws.on('error', () => undefined)
     try {
       ws.terminate()
     } catch {
@@ -144,6 +189,7 @@ export class RelayClient {
       }
     }
     this.reqs.clear()
+    for (const id of [...this.pushes.keys()]) this.settlePush(id, { ok: false, status: 0, error: 'broker-desconectado' })
   }
 
   private connect(): void {
@@ -235,7 +281,10 @@ export class RelayClient {
   }
 
   private onFrame(ws: WebSocket, raw: string): void {
-    let msg: { type?: string; rid?: number; b64?: string; method?: string; url?: string; headers?: Record<string, string> }
+    let msg: {
+      type?: string; rid?: number; b64?: string; method?: string; url?: string; headers?: Record<string, string>
+      id?: string; ok?: boolean; status?: number; error?: string
+    }
     try {
       msg = JSON.parse(raw)
     } catch {
@@ -250,6 +299,11 @@ export class RelayClient {
         this.startHeartbeat(ws)
         return
       case 'pong':
+        return
+      case 'push-result':
+        if (typeof msg.id === 'string') {
+          this.settlePush(msg.id, { ok: msg.ok === true, status: Number(msg.status) || 0, ...(msg.error ? { error: String(msg.error) } : {}) })
+        }
         return
       case 'denied':
         // relayKey errado — não adianta martelar; para até reiniciar a ponte.

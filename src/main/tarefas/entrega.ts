@@ -23,8 +23,9 @@ export interface EntregaDeps {
   abrir(convId: string): void
   /** A escolha do destino (padrão: Windows). */
   destino?(aviso: AvisoTarefa): DestinoAviso
-  /** O envio ao celular, quando o destino o inclui. */
-  celular?(aviso: AvisoTarefa): void
+  /** O envio ao celular, quando o destino o inclui. `false` (ou erro) = não chegou:
+   *  com destino só 'celular', o aviso cai no Windows para não se perder. */
+  celular?(aviso: AvisoTarefa): void | Promise<boolean>
   log?(line: string): void
 }
 
@@ -55,12 +56,26 @@ export class EntregaAvisos {
       this.deps.log?.(`[avisos] escolha do destino falhou (vai ao Windows): ${message(error)}`)
     }
     if (destino !== 'celular') this.windows(aviso)
-    if (destino !== 'windows') {
-      try {
-        this.deps.celular?.(aviso)
-      } catch (error) {
-        this.deps.log?.(`[avisos] envio ao celular falhou: ${message(error)}`)
-      }
+    if (destino === 'windows') return
+    const caiNoWindows = destino === 'celular'
+    const falhou = (motivo: string): void => {
+      this.deps.log?.(`[avisos] envio ao celular falhou${caiNoWindows ? ' (vai ao Windows)' : ''}: ${motivo}`)
+      if (caiNoWindows) this.windows(aviso)
+    }
+    if (!this.deps.celular) return falhou('sem envio ao celular')
+    let enviado: void | Promise<boolean>
+    try {
+      enviado = this.deps.celular(aviso)
+    } catch (error) {
+      return falhou(message(error))
+    }
+    if (enviado && typeof enviado.then === 'function') {
+      enviado.then(
+        (ok) => {
+          if (!ok) falhou('não chegou')
+        },
+        (error: unknown) => falhou(message(error))
+      )
     }
   }
 

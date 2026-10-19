@@ -2655,6 +2655,9 @@ export const Channels = {
   tarefasChanged: 'tarefas:changed',
   tarefasAcao: 'tarefas:acao',
   tarefaAbrirConversa: 'tarefas:abrir-conversa',
+  /** celular → main (só pelo POST /api/ipc): o token FCM do aparelho pareado, para o
+   *  aviso chegar com o app fechado ({ token: string | null }). */
+  celularPushToken: 'celular:push-token',
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',

@@ -80,6 +80,8 @@ export interface ClientOptions {
   reload?: () => void
   /** Aviso curto com tipo (o toast do app). */
   notify?: (text: string, tipo?: ToastTipo) => void
+  /** Cada vez que conecta ao PC (abrir o app, parear, voltar a conexão): o push registra o token. */
+  onConnected?: () => void
 }
 
 export interface SendInput {
@@ -351,6 +353,11 @@ export class RemoteClient {
       for (const n of this.announce) this.opts.notify?.(n.text, n.tipo)
       if (pc) this.opts.notify?.(`Filial ${pcLabel(pc, list)} conectada`, 'sucesso')
       this.announce = null // uma vez só
+    }
+    try {
+      this.opts.onConnected?.()
+    } catch {
+      /* o gancho não derruba a conexão */
     }
   }
 

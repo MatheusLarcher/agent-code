@@ -10,6 +10,7 @@ import {
   type ApkToolchain,
   type Progress
 } from '../android/androidEnv'
+import { applyFirebaseConfig } from './apkFirebase'
 
 /**
  * Build the Android remote APK (the `smartfone-remote` Capacitor project),
@@ -472,6 +473,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   await run('npx', ['--yes', 'cap', 'sync', 'android'], { cwd: rootDir, env, onLine })
   await ensureManifestPermissions(androidDir, onLine)
   await ensureDownloadSupport(androidDir, onLine)
+  await applyFirebaseConfig(rootDir, androidDir, onLine)
 
   // Brand the launcher/splash with the SAME art as the desktop app
   // (resources/ generated from build/icon.svg). Non-fatal: a failure here just
