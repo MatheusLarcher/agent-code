@@ -97,3 +97,26 @@ describe('trava de época: cartão anterior ao registro do lote é de outro plan
     expect(syncEntregas(e, [antigo], ctx).map((p) => p.patch.status)).toEqual(['concluida'])
   })
 })
+
+describe('cartão excluído pelo usuário no Quadro', () => {
+  const excluido = card({ id: 'x', sourceStatus: 'pending', dismissedAt: iso(T0 + 1_000) })
+
+  it('tira a etapa da conta: a entrega vira correção do usuário e o envio incompleto conclui', () => {
+    const e = envio({ enviadoEm: iso(T0), status: 'incompleta', entregas: [entrega({ boardItemId: 'x', status: 'incompleta' })] })
+    const patches = syncEntregas(e, [excluido], ctx)
+    expect(patches).toEqual([{ id: 'hn-etapa-a', patch: expect.objectContaining({ status: 'concluida', corrigidoPor: 'usuario', motivo: expect.stringContaining('excluído') }) }])
+    const synced = { ...e, entregas: e.entregas.map((en) => ({ ...en, ...patches[0].patch })) }
+    expect(describeMissing(synced, [excluido])).toBe('')
+    // Já corrigida: nada a regravar.
+    expect(syncEntregas(synced, [excluido], ctx)).toEqual([])
+  })
+
+  it('o card:<id> excluído também conta; cartão ativo ou concluído-expirado segue a regra normal', () => {
+    const e = envio({ enviadoEm: iso(T0), entregas: [entrega({ etapaId: `${CARD_ETAPA_PREFIX}x` })] })
+    expect(syncEntregas(e, [excluido], ctx).map((p) => p.patch.corrigidoPor)).toEqual(['usuario'])
+    const ligado = envio({ enviadoEm: iso(T0), entregas: [entrega({ boardItemId: 'x' })] })
+    expect(syncEntregas(ligado, [{ ...excluido, dismissedAt: null }], ctx)).toEqual([])
+    const expirado = { ...excluido, sourceStatus: 'completed' as const }
+    expect(syncEntregas(ligado, [expirado], ctx).map((p) => [p.patch.status, p.patch.corrigidoPor])).toEqual([['concluida', undefined]])
+  })
+})

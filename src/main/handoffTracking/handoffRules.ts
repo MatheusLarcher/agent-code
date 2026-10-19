@@ -154,11 +154,31 @@ export function entregaCard(envio: HandoffEnvio, entrega: HandoffEntrega, cards:
   return cardForEtapa(cards, entrega.etapaId, { conversationId: envio.conversationId, boardItemId: entrega.boardItemId, since: envio.criadoEm })
 }
 
-/** As entregas do envio acompanhando os cartões do projeto. */
+export const CARD_DELETED_BY_USER = 'cartão excluído por você no Quadro'
+
+/**
+ * O cartão ligado à entrega que o usuário excluiu no Quadro (dispensado sem
+ * estar concluído — a expiração automática só dispensa concluído). `null` sem
+ * cartão ligado ou com ele ativo.
+ */
+export function deletedCardOf(entrega: HandoffEntrega, cards: readonly BoardItem[]): BoardItem | null {
+  const id = entrega.boardItemId ?? (entrega.etapaId.startsWith(CARD_ETAPA_PREFIX) ? entrega.etapaId.slice(CARD_ETAPA_PREFIX.length) : null)
+  if (!id) return null
+  const card = cards.find((c) => c.id === id)
+  return card && card.dismissedAt !== null && boardItemStatus(card) !== 'completed' ? card : null
+}
+
+/** As entregas do envio acompanhando os cartões do projeto. Cartão excluído pelo
+ *  usuário tira a etapa da conta: vira correção dele ("concluir"), senão o envio
+ *  e o plano ficariam pendentes para sempre. */
 export function syncEntregas(envio: HandoffEnvio, cards: readonly BoardItem[], ctx: EntregaSyncContext): EntregaPatchFor[] {
   const out: EntregaPatchFor[] = []
   for (const entrega of envio.entregas) {
-    const patch = entregaCardPatch(entrega, entregaCard(envio, entrega, cards), ctx)
+    const card = entregaCard(envio, entrega, cards)
+    const patch =
+      !card && entrega.status !== 'concluida' && entrega.corrigidoPor !== 'usuario' && deletedCardOf(entrega, cards)
+        ? correctionPatch(entrega, 'concluir', CARD_DELETED_BY_USER, ctx.now)
+        : entregaCardPatch(entrega, card, ctx)
     if (patch) out.push({ id: entrega.id, patch })
   }
   return out
