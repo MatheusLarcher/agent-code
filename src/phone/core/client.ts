@@ -15,6 +15,7 @@
 import type { ChatEvent, PermissionResponse, RateLimitStatus } from '@shared/ipc'
 import { isProjectColor, type ProjectColorMap } from '@shared/projectColor'
 import { HANDOFF_NOTICE_EVENT, handoffNoticeText, isHandoffNotice } from '@shared/handoffNotice'
+import type { TarefaVista } from '@shared/tarefas'
 import { deviceId, deviceName, configFromLocation, type PairConfig } from './config'
 import { ModelHold } from './modelHold'
 import { apiUrl, errorText, fetchJson, pickBestBase, statusOf, HttpError, type FetchOpts } from './net'
@@ -51,6 +52,8 @@ export interface AppState {
   usage: Record<string, RateLimitStatus>
   /** Cor fixa de cada projeto por cwd (`/api/state`): acumula, a ponte só manda as já resolvidas. */
   projectColors?: ProjectColorMap
+  /** Tarefas agendadas visíveis (`/api/state`; o aviso `tarefasChanged` do SSE adianta). */
+  tarefas: TarefaVista[]
   voiceReady: boolean
   skipPerms: boolean
   models: ModelOption[]
@@ -101,7 +104,7 @@ export function mergeProjectColors(prev: ProjectColorMap | undefined, next: unkn
 
 const INITIAL: AppState = {
   screen: 'boot', pairingDetail: '', pairingStatus: '', blockedName: '', online: false, reconnectText: null,
-  base: '', token: '', loaded: false, conversations: [], projects: [], usage: {}, voiceReady: false, skipPerms: false,
+  base: '', token: '', loaded: false, conversations: [], projects: [], usage: {}, tarefas: [], voiceReady: false, skipPerms: false,
   models: [], modelEffort: {}, effortLabels: {}, convId: null, messages: [], historyLoading: false,
   hasOlder: false, olderLoading: false, hasNewer: false, detailsFailed: new Set<string>(), scrollToMsg: null
 }
@@ -250,6 +253,7 @@ export class RemoteClient {
         projects: data.projects ?? [],
         usage: data.usage ?? {},
         projectColors: mergeProjectColors(s.projectColors, data.projectColors),
+        tarefas: Array.isArray(data.tarefas) ? data.tarefas : [],
         voiceReady: !!data.voiceReady,
         skipPerms: !!data.skipPerms,
         models: data.models ?? [],

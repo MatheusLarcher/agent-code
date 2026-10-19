@@ -28,7 +28,5 @@
 /* O escritório falhou (OfficeBoundary): o aviso com "Voltar" no lugar do 3D. */
 .office-error { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
 .office-error-msg { margin: 0; color: var(--muted); font-size: 14px; word-break: break-word; }
-/* A confirmação destrutiva do PhoneUiProvider (o vermelho de erro). */
-.perm-actions .ui-confirm-danger { background: var(--err); color: #fff; }
 /* A lista do Chat do monitor (ChatScreen) rola pelo `.message-list` do styles.css do PC, que o celular não carrega: a mesma regra aqui, com o dedo. */
 .office-host .message-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; touch-action: pan-y; }

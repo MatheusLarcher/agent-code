@@ -5,6 +5,7 @@
  */
 import type { ChatEvent, RateLimitStatus, RemoteConversation, RemotePairedDevice } from '@shared/ipc'
 import type { ProjectColorMap } from '@shared/projectColor'
+import type { TarefaVista } from '@shared/tarefas'
 
 /** Uma conversa no `/api/state` (sem a lista de mensagens). */
 export type ConvSummary = Omit<RemoteConversation, 'messages'> & { messageCount?: number }
@@ -32,6 +33,8 @@ export interface StateResponse {
   pcName?: string
   /** Cor fixa de cada projeto por cwd (só as já detectadas no PC). PCs antigos não mandam. */
   projectColors?: ProjectColorMap
+  /** Tarefas agendadas visíveis (a bolinha do chat e o selo da lista). PCs antigos não mandam. */
+  tarefas?: TarefaVista[]
 }
 
 /** A mensagem do usuário como o PC guarda (UserMessage do renderer) mais o eco local do celular. */

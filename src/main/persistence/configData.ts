@@ -122,6 +122,7 @@ const partialConfigSchema = z
     remoteToken: z.string().optional(),
     remoteEnabled: z.boolean().optional(),
     preventSleepWhileBusy: z.boolean().optional(),
+    manterAcordadoTarefas: z.boolean().optional(),
     vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
     memorista: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
     // Valores soltos de propósito: quem valida é `normalizePlanningConfig`, que

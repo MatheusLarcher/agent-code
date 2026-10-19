@@ -6,6 +6,9 @@ import { IconPlanning } from '../planning/PlanningIcon'
 import { isPlanningConversation } from '../planning/planningConversation'
 import { isBlankConversation } from '../blankConversation'
 import { CentralRowDot, CentralSidebarItem, type CentralSidebarItemProps } from '../central/CentralSidebarItem'
+import type { TarefaResumoConversa } from '@shared/tarefas'
+import { TarefaSelo } from './tarefas/TarefaSelo'
+import { useResumosDeTarefas } from './tarefas/useTarefas'
 
 export interface SidebarProject {
   path: string
@@ -172,6 +175,8 @@ interface ConvRowProps {
   snippet?: string
   /** Cor do destino da Central trabalhando agora (bolinha na linha). */
   centralColor?: string
+  /** Tarefas agendadas da conversa (o selo na linha). */
+  tarefas?: TarefaResumoConversa
   onSelect: (id: string) => void
   onStartEdit: () => void
   onEditChange: (v: string) => void
@@ -194,6 +199,7 @@ function ConvRow({
   editValue,
   snippet,
   centralColor,
+  tarefas,
   onSelect,
   onStartEdit,
   onEditChange,
@@ -245,6 +251,7 @@ function ConvRow({
         <span className="conv-title">{c.title}</span>
       )}
       {centralColor && <CentralRowDot color={centralColor} />}
+      {!editing && <TarefaSelo resumo={tarefas} />}
       <button
         className="conv-del"
         title="Excluir conversa"
@@ -262,6 +269,7 @@ function ConvRow({
 export function Sidebar(props: Props): JSX.Element {
   const { collapsed, projects, recents, activeId } = props
   const ui = useUI()
+  const tarefas = useResumosDeTarefas()
   // Project paths the user has manually collapsed (default: everything expanded).
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
   // Edit identity is per RENDERED ROW (`editing.key`), not per conversation id —
@@ -323,6 +331,7 @@ export function Sidebar(props: Props): JSX.Element {
         editValue={editValue}
         snippet={m && m.source === 'prompt' ? m.snippet : undefined}
         centralColor={props.centralColors?.[c.id]}
+        tarefas={tarefas.get(c.id)}
         onSelect={m ? (id) => props.onSelectResult(id, m.messageId) : props.onSelect}
         onStartEdit={() => startEdit(rowKey, c)}
         onEditChange={setEditValue}

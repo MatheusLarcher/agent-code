@@ -9,6 +9,7 @@
  *   todo?conv=c1           plano de tarefas;  recovery?conv=c1   recuperação de turno
  *   download?conv=c1       resposta com [[download:…]] (arquivo real em %TEMP%)
  *   central-ask | central-foreign | central-question | central-permission
+ *   tarefas | tarefas-limpar   as tarefas de exemplo na c1 (a bolinha) / nenhuma
  *   empty                  sem conversas;  reset   estado inicial
  *   plan-card?slug=cardapio-site   o Manager cria um card (e avisa planning-changed)
  *   plan-touch?slug=…      só o aviso planning-changed;  plan-delete?slug=…   apaga o plano
@@ -27,6 +28,7 @@ import { markHandoffsSent } from '../../src/main/planning/handoffSent'
 import { createPlan, planDirPath, saveCard, saveRoteiro, writeHandoff } from '../../src/main/planning/planningStore'
 import type { ChatEvent, RemoteConversation, RemoteStatePayload } from '../../src/shared/ipc'
 import { PLANNING_BRIDGE_CONV, type PlanningChangedEvent } from '../../src/shared/planningRemote'
+import { tarefasDaPonte } from './devBridgeTarefas'
 
 const TOKEN = process.env.PHONE_DEV_TOKEN || 'devtoken'
 const CTL_PORT = Number(process.env.PHONE_DEV_CTL || 8799)
@@ -223,7 +225,12 @@ async function agentReply(cid: string, prompt: string, withDownload = false): Pr
   publish()
 }
 
+// A bolinha de tarefas (c1): os casos do mockup; as ações chegam pelo POST /api/ipc.
+const tarefas = tarefasDaPonte(note, () => publish())
+
 const server = new RemoteServer({
+  tarefas: tarefas.lista,
+  appIpc: tarefas.appIpc,
   apkPath: () => resolve(process.cwd(), 'smartfone-remote', 'dist', 'agent-remote.apk'),
   wwwDir: () => WWW,
   loadToken: () => TOKEN,
@@ -381,6 +388,8 @@ async function control(action: string, q: URLSearchParams): Promise<unknown> {
       return `apagado ${slug}`
     }
     case 'plan-seed': await seedPlans(); return PROJ_PLAN
+    case 'tarefas': tarefas.semear(); break
+    case 'tarefas-limpar': tarefas.limpar(); break
     case 'empty': state.conversations = []; state.projects = []; break
     case 'reset': state = initialState(); break
     case 'stop': await server.stop(); return 'ponte desligada'

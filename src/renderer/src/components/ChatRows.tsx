@@ -21,6 +21,7 @@ import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
 import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { AccountSwitchNote } from './AccountSwitchNote'
+import { TarefaAvisoNote } from './TarefaAvisoNote'
 import { IconSpeaker, IconStopSmall } from './Icons'
 import { CardRefText, type CardRefResolver } from './Markdown'
 import { LazyMarkdown } from './lazyMarkdown'
@@ -272,6 +273,7 @@ export function rowKey(m: UIMessage, idx: number): string {
     case 'account-switch':
     case 'status':
     case 'error':
+    case 'tarefa-aviso':
       return `${m.kind}:${m.id}`
     default:
       return `${m.kind}:${idx}`
@@ -327,6 +329,8 @@ export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: Ch
       )
     case 'account-switch':
       return <AccountSwitchNote event={m} onUseAccount={ctx.onUseAccount} />
+    case 'tarefa-aviso':
+      return <TarefaAvisoNote m={m} />
     case 'result':
       // Not rendered: the answer is already in the chat and the cost is
       // shown in the token meter header.

@@ -44,6 +44,9 @@ import {
   listPostgresBoardItemPrints,
   prunePostgresBoardItemPrints
 } from './postgresBoardPrints'
+import * as pgTarefas from './postgresTarefas'
+import type { TarefaClaim, TarefaEstadoPatch, TarefaFimRodada, TarefaRegistro } from './tarefaTypes'
+import type { Tarefa, TarefaRodada } from '../../shared/tarefas'
 import { mergeDeviceState, splitDeviceFields } from './conversationScope'
 import {
   decodePostgresJson,
@@ -449,6 +452,8 @@ export class PostgresRepository implements PersistenceRepository {
   private boardReplyKind = false
   /** A tabela `board_item_prints` existe neste banco (ver postgresBoardPrints.ts). */
   private boardPrints = false
+  /** As tabelas `tarefas` e `tarefa_rodadas` existem neste banco (ver postgresTarefas.ts). */
+  private tarefas = false
 
   constructor(
     private readonly pool: Pool,
@@ -515,6 +520,7 @@ export class PostgresRepository implements PersistenceRepository {
     // O controle só existe junto da ação: sem a coluna da ação, nem tenta.
     this.boardReplyKind = this.boardUserAction && (await ensurePostgresBoardReplyKind(this.pool))
     this.boardPrints = await ensurePostgresBoardPrints(this.pool)
+    this.tarefas = await pgTarefas.ensurePostgresTarefas(this.pool)
     await this.feed.start()
     this.changeLogPruner.start()
     this.tokenUsagePruner.start()
@@ -1765,6 +1771,62 @@ export class PostgresRepository implements PersistenceRepository {
   async pruneBoardItemPrints(cutoffIso: string): Promise<number> {
     this.assertInitialized()
     return this.boardPrints ? prunePostgresBoardItemPrints(this.pool, cutoffIso) : 0
+  }
+
+  // Tarefas agendadas: SQL em postgresTarefas.ts (tabelas garantidas na abertura).
+  private tarefasProntas(): void {
+    this.assertInitialized()
+    if (!this.tarefas) throw new StorageError('STORAGE_OFFLINE', 'As tarefas agendadas não estão disponíveis neste PostgreSQL.', false)
+  }
+
+  async listTarefas(): Promise<TarefaRegistro[]> {
+    this.assertInitialized()
+    return this.tarefas ? pgTarefas.listPostgresTarefas(this.pool) : []
+  }
+
+  async listTarefaRodadas(tarefaIds: string[], porTarefa: number): Promise<TarefaRodada[]> {
+    this.assertInitialized()
+    return this.tarefas ? pgTarefas.listPostgresTarefaRodadas(this.pool, tarefaIds, porTarefa) : []
+  }
+
+  async insertTarefa(tarefa: Tarefa): Promise<void> {
+    this.tarefasProntas()
+    await pgTarefas.insertPostgresTarefa(this.pool, tarefa)
+  }
+
+  async updateTarefaEstado(patch: TarefaEstadoPatch): Promise<boolean> {
+    this.tarefasProntas()
+    return pgTarefas.updatePostgresTarefaEstado(this.pool, patch)
+  }
+
+  async marcarTarefaVista(id: string, atualizadaEm: string): Promise<void> {
+    this.tarefasProntas()
+    await pgTarefas.marcarPostgresTarefaVista(this.pool, id, atualizadaEm)
+  }
+
+  async cancelTarefasDaConversa(convId: string, atualizadaEm: string): Promise<number> {
+    this.assertInitialized()
+    return this.tarefas ? pgTarefas.cancelPostgresTarefasDaConversa(this.pool, convId, atualizadaEm) : 0
+  }
+
+  async claimTarefa(claim: TarefaClaim): Promise<boolean> {
+    this.assertInitialized()
+    return this.tarefas ? pgTarefas.claimPostgresTarefa(this.pool, claim) : false
+  }
+
+  async renewTarefaLease(id: string, token: string, ate: number): Promise<boolean> {
+    this.assertInitialized()
+    return this.tarefas ? pgTarefas.renewPostgresTarefaLease(this.pool, id, token, ate) : false
+  }
+
+  async releaseTarefaLease(id: string, token: string): Promise<void> {
+    this.assertInitialized()
+    if (this.tarefas) await pgTarefas.releasePostgresTarefaLease(this.pool, id, token)
+  }
+
+  async finishTarefaRodada(fim: TarefaFimRodada): Promise<boolean> {
+    this.tarefasProntas()
+    return pgTarefas.finishPostgresTarefaRodada(this.pool, fim)
   }
 
   // Registro dos envios de handoff: SQL em postgresHandoff.ts.

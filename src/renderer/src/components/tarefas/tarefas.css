@@ -1,0 +1,259 @@
+/* Bolinha de tarefas no canto do chat, o popover dela e o selo da lista (PC e celular).
+   Medidas do mockup aprovado (planejamento, midia/fcec57-tarefas.html). */
+
+.tdot {
+  --t-cor: var(--accent, #d97757);
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 6;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--t-cor) 45%, var(--line, #3a3836));
+  background: var(--bg-2, #262624);
+  color: var(--t-cor);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  font: inherit;
+  animation: tarefa-entra 0.16s ease-out;
+}
+.tdot svg { width: 16px; height: 16px; }
+.tdot:hover { background: color-mix(in srgb, var(--t-cor) 8%, var(--bg-2, #262624)); }
+.tdot .n {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--t-cor);
+  color: #1a1a1a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--bg, #1f1e1d);
+}
+/* checando: um arco girando em volta */
+.tdot.run::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--t-cor);
+  border-right-color: color-mix(in srgb, var(--t-cor) 40%, transparent);
+  animation: tarefa-gira 1.1s linear infinite;
+}
+/* bateu e não visto: verde, sino, halo pulsando */
+.tdot.hit { --t-cor: var(--ok, #7fae6f); background: color-mix(in srgb, var(--t-cor) 12%, var(--bg-2, #262624)); }
+.tdot.hit::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--t-cor);
+  opacity: 0;
+  animation: tarefa-halo 1.8s ease-out infinite;
+  pointer-events: none;
+}
+.tdot.rem { --t-cor: var(--warn, #e0a458); }
+.tdot.paused { --t-cor: var(--faint, #78756f); border-color: var(--line, #3a3836); }
+.tdot.paused .n { background: var(--bg-4, #3a3836); color: var(--muted, #a3a09b); }
+.tdot.celular { width: 42px; height: 42px; right: 12px; bottom: 12px; }
+.tdot.celular svg { width: 19px; height: 19px; }
+
+/* Com tarefa: o "ir para o final" sobe e fica em cima da bolinha; a lista ganha folga embaixo. */
+.message-list-wrap.com-tarefas .jump-bottom { bottom: 58px; }
+.message-list-wrap.com-tarefas .message-list { padding-bottom: 58px; }
+.messages-wrap.com-tarefas .jump-bottom { bottom: 66px; }
+.messages-wrap.com-tarefas .messages { padding-bottom: 64px; }
+
+/* ---- popover ---- */
+.tpop {
+  position: absolute;
+  right: 18px;
+  bottom: 58px;
+  z-index: 7;
+  width: 360px;
+  max-width: calc(100% - 36px);
+  max-height: 70%;
+  overflow: auto;
+  background: var(--bg-2, #262624);
+  border: 1px solid var(--line, #3a3836);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+  color: var(--text, #e8e6e3);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  animation: tarefa-entra 0.14s ease-out;
+}
+.tpop.celular { left: 10px; right: 10px; width: auto; max-width: none; bottom: 64px; }
+.tpop-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  color: var(--faint, #78756f);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.tpop-h .x {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.tpop-h .x:hover { background: var(--bg-3, #302e2c); color: var(--text, #e8e6e3); }
+.titem { border-radius: 9px; }
+.titem + .titem { border-top: 1px solid var(--line-soft, #2f2d2b); }
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.trow { cursor: pointer; }
+button.trow:hover { background: var(--bg-3, #302e2c); }
+.tico {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--accent, #d97757);
+  background: color-mix(in srgb, var(--accent, #d97757) 16%, transparent);
+}
+.tico svg { width: 16px; height: 16px; }
+.tico.run svg .arc { transform-origin: 12px 12px; animation: tarefa-gira 2.4s linear infinite; }
+.tico.hit { color: var(--ok, #7fae6f); background: color-mix(in srgb, var(--ok, #7fae6f) 16%, transparent); }
+.tico.rem { color: var(--warn, #e0a458); background: color-mix(in srgb, var(--warn, #e0a458) 14%, transparent); }
+.tico.paused { color: var(--faint, #78756f); background: var(--bg-4, #3a3836); }
+.tcopy { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ttitle { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmeta { font-size: 12px; color: var(--muted, #a3a09b); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmeta .ok { color: var(--ok, #7fae6f); }
+.tmeta .val { color: var(--text, #e8e6e3); }
+.trow .chev { flex: none; width: 16px; height: 16px; color: var(--faint, #78756f); transition: transform 0.15s; }
+.titem.open .chev { transform: rotate(180deg); }
+.tbody { padding: 0 10px 10px 46px; }
+.runs { list-style: none; padding: 0; margin: 2px 0 8px; font-size: 12px; color: var(--muted, #a3a09b); }
+.runs li { display: flex; gap: 8px; padding: 2px 0; }
+.runs .h { color: var(--faint, #78756f); min-width: 40px; flex: none; }
+.runs .st { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; }
+.runs .st.ok { background: var(--ok, #7fae6f); }
+.runs .st.no { border: 1px solid var(--faint, #78756f); }
+.runs .st.err { background: var(--err, #d97070); }
+.runs .rtxt { min-width: 0; overflow-wrap: anywhere; }
+.runs a { color: var(--accent, #d97757); }
+.runs-vazio { font-size: 12px; color: var(--faint, #78756f); margin: 2px 0 8px; }
+.combo { font-size: 11px; color: var(--faint, #78756f); margin-bottom: 8px; overflow-wrap: anywhere; }
+.acts { display: flex; gap: 6px; }
+.tbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  border: 1px solid var(--line, #3a3836);
+  background: var(--bg-3, #302e2c);
+  color: var(--text, #e8e6e3);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tbtn:hover:not(:disabled) { background: var(--bg-4, #3a3836); }
+.tbtn:disabled { opacity: 0.55; cursor: default; }
+.tbtn.danger { color: var(--err, #d97070); border-color: rgba(217, 112, 112, 0.4); }
+.tpop.celular .tbtn { padding: 8px 12px; font-size: 13px; }
+.tpop.celular .trow { padding: 11px 10px; }
+
+/* ---- selo da lista de conversas ---- */
+.tselo {
+  --t-cor: var(--accent, #d97757);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px 6px 1px 4px;
+  border-radius: 999px;
+  color: var(--t-cor);
+  background: color-mix(in srgb, var(--t-cor) 16%, transparent);
+}
+.tselo.hit { --t-cor: var(--ok, #7fae6f); }
+.tselo.rem { --t-cor: var(--warn, #e0a458); }
+.tselo.paused { --t-cor: var(--faint, #78756f); }
+.tselo .live {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #d97757);
+  box-shadow: 0 0 0 2px var(--bg-2, #262624);
+  animation: tarefa-pulsa 1.4s ease-in-out infinite;
+}
+.conv-row:hover .tselo .live,
+.conv-row.active .tselo .live { box-shadow: 0 0 0 2px var(--bg-3, #302e2c); }
+
+/* ---- a linha "bateu" no chat (TarefaAvisoNote no PC, MessageItem no celular): verde, com o sino ---- */
+.chat-chip.tarefa-aviso-chip {
+  color: var(--ok, #7fae6f);
+  border-color: color-mix(in srgb, var(--ok, #7fae6f) 45%, var(--line, #3a3836));
+  background: color-mix(in srgb, var(--ok, #7fae6f) 12%, var(--bg-2, #262624));
+}
+.chat-chip.tarefa-aviso-chip b { color: var(--ok, #7fae6f); font-weight: 600; }
+.chat-chip.tarefa-aviso-chip svg { flex: none; }
+.tarefa-aviso .tarefa-aviso-valor { color: var(--text, #e8e6e3); font-weight: 600; }
+.tarefa-aviso a { color: var(--accent, #d97757); }
+.msg.system.tarefa-aviso {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--ok, #7fae6f);
+  border: 1px solid color-mix(in srgb, var(--ok, #7fae6f) 45%, var(--line, #3a3836));
+  background: color-mix(in srgb, var(--ok, #7fae6f) 12%, transparent);
+}
+
+@keyframes tarefa-gira { to { transform: rotate(360deg); } }
+@keyframes tarefa-pulsa { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.75); } }
+@keyframes tarefa-halo { 0% { opacity: 0.7; transform: scale(0.85); } 100% { opacity: 0; transform: scale(1.35); } }
+@keyframes tarefa-entra { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tdot, .tpop, .tdot.run::before, .tdot.hit::after, .tico.run svg .arc, .tselo .live { animation: none; }
+  .tdot.hit::after { opacity: 0.5; }
+}

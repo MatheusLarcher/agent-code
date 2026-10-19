@@ -35,7 +35,8 @@ describe('SQLITE_MIGRATIONS — migration 19 (board_items.po_user_action)', () =
     const nineteen = SQLITE_MIGRATIONS.find((entry) => entry.version === 19)
     expect(nineteen).toMatchObject({ name: 'sqlite-v2-board-user-action', writeGuardSql: '' })
     expect(nineteen!.sql).toMatch(/ALTER TABLE board_items ADD COLUMN po_user_action TEXT/i)
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(20)
+    // A 19 não é a última: depois dela vêm as seguintes (21 = tarefas agendadas).
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(21)
     expect(SQLITE_SCHEMA).not.toMatch(/po_user_action/)
     expect(SQLITE_SCHEMA_FULL).toMatch(/ADD COLUMN po_user_action/)
   })

@@ -99,6 +99,7 @@ import type { TypeSafePauseStatus } from './typesafePause'
 import type { ChromeBridgeStatus } from './chromeBridge'
 import type { HandoffNotice } from './handoffNotice'
 import type { OfficeApi } from './officeApi'
+import type { TarefasApi } from './tarefasApi'
 import type { CentralCorrection, CentralRouteRequest, CentralRouteResult, RemoteCentralChoose } from './central'
 import type { HandoffEnvio, HandoffQueueDecision, HandoffQueueItem } from './handoffTracking'
 import type { HandoffProjectAction, HandoffProjectSnapshot } from './handoffProject'
@@ -236,7 +237,7 @@ export type PoAuthorizationListResult = { ok: true; authorizations: PoAuthorizat
 
 /** The surface exposed on `window.api` by the preload script. */
 /** A window.api; a parte do Escritório está em officeApi.ts e a do detector de travadas em FreezeLogApi. */
-export interface AgentCodeApi extends OfficeApi, FreezeLogApi {
+export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** App version from package.json (matches the installer/build). */
   getAppVersion(): Promise<string>
   /** Read the persisted app configuration. */

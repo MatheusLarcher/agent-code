@@ -34,6 +34,7 @@ import {
   IconMic,
   IconMonitor,
   IconMoon,
+  IconClock,
   IconShieldCheck,
   IconSettings,
   IconSliders,
@@ -381,6 +382,32 @@ export function SettingsModal({
                         const on = event.target.checked
                         setCfg((c) => ({ ...c, preventSleepWhileBusy: on }))
                         void patchConfig({ preventSleepWhileBusy: on })
+                      }}
+                    />
+                    <span className="switch-visual" aria-hidden="true" />
+                  </label>
+                </section>
+
+                <section className={`settings-section settings-switch-section ${cfg.manterAcordadoTarefas !== false ? 'on' : ''}`}>
+                  <label className="settings-switch-row">
+                    <span className="settings-switch-text">
+                      <strong>
+                        <IconClock size={15} /> Manter o PC acordado para as tarefas agendadas
+                      </strong>
+                      <span className="settings-desc">
+                        Com um lembrete ou monitor ativo e o PC na tomada, ele não entra em suspensão — longe do
+                        teclado, a tela fica no brilho mínimo. Na bateria, a tarefa atrasada roda uma vez quando o
+                        PC acordar. PC desligado não avisa.
+                      </span>
+                    </span>
+                    <input
+                      className="switch-input"
+                      type="checkbox"
+                      checked={cfg.manterAcordadoTarefas !== false}
+                      onChange={(event) => {
+                        const on = event.target.checked
+                        setCfg((c) => ({ ...c, manterAcordadoTarefas: on }))
+                        void patchConfig({ manterAcordadoTarefas: on })
                       }}
                     />
                     <span className="switch-visual" aria-hidden="true" />

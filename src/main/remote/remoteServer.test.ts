@@ -17,7 +17,8 @@ const server = new RemoteServer({
   wwwDir: () => 'C:/nonexistent/www',
   onPermissionResponse: (convId, res) => permissionResponses.push({ convId, res }),
   officeAgentFile: async (name) => (name === 'central.glb' ? new Uint8Array([1, 2, 3]) : null),
-  projectColors: (cwds) => Object.fromEntries(cwds.map((cwd) => [cwd, { hex: '#0fa3e0', source: 'marca' as const }]))
+  projectColors: (cwds) => Object.fromEntries(cwds.map((cwd) => [cwd, { hex: '#0fa3e0', source: 'marca' as const }])),
+  tarefas: () => [{ id: 't1', convId: 'c1', titulo: 'Dólar' }]
 })
 
 let base = ''
@@ -158,6 +159,11 @@ describe('RemoteServer — ponte LAN', () => {
   it('/api/state devolve projectColors pelos cwds das conversas', async () => {
     const r = await getJson(`/api/state?token=${token}`)
     expect((r.json as { projectColors?: unknown }).projectColors).toEqual({ '/proj': { hex: '#0fa3e0', source: 'marca' } })
+  })
+
+  it('/api/state devolve as tarefas do agendador (a bolinha do celular)', async () => {
+    const r = await getJson(`/api/state?token=${token}`)
+    expect((r.json as { tarefas?: unknown }).tarefas).toEqual([{ id: 't1', convId: 'c1', titulo: 'Dólar' }])
   })
 
   it('/api/history devolve as mensagens da conversa (conversa curta: todas)', async () => {

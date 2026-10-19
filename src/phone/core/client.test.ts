@@ -69,6 +69,21 @@ describe('RemoteClient', () => {
     expect(FakeEventSource.last?.url).toContain('/api/events?token=tok')
   })
 
+  it('as tarefas do /api/state vão para o estado; PC antigo (sem o campo) zera a lista', async () => {
+    let comTarefas = true
+    mockFetch((u) => {
+      if (u.pathname === '/api/state') return { status: 200, body: comTarefas ? { ...STATE, tarefas: [{ id: 't1', convId: 'c1' }] } : STATE }
+      return { status: 200, body: { messages: [] } }
+    })
+    const client = new RemoteClient({ pickInitialConv: () => 'c1' })
+    client.start()
+    await flush()
+    expect(client.state.tarefas.map((t) => t.id)).toEqual(['t1'])
+    comTarefas = false
+    await client.fetchState()
+    expect(client.state.tarefas).toEqual([])
+  })
+
   it('409 de outro celular → tela própria; "Usar este celular" faz POST /api/pair', async () => {
     let paired = false
     const calls: string[] = []

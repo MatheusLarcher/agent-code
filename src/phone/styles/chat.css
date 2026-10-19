@@ -231,3 +231,5 @@
 .perm-btn-allow { background: var(--accent-soft); color: var(--accent); }
 .perm-btn-always, .perm-btn-submit { background: var(--accent); color: var(--on-accent); }
 .perm-btn-submit:disabled { opacity: 0.5; }
+/* A confirmação destrutiva do PhoneUiProvider (o vermelho de erro): no chat também (bolinha de tarefas), não só no escritório. */
+.perm-actions .ui-confirm-danger { background: var(--err); color: #fff; }

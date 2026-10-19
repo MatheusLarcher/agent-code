@@ -33,6 +33,7 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.remoteToken': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
   'config.remoteEnabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.preventSleepWhileBusy': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.manterAcordadoTarefas': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.vigia.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.vigia.model': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.memorista.enabled': { scope: 'device', source: 'main-kv', store: 'local' },

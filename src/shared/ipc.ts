@@ -98,6 +98,9 @@ export type ChatEvent =
       usage?: TokenUsage
     } & TurnIds)
   | { kind: 'status'; id: string; text: string }
+  /** Um monitor agendado (main/tarefas) bateu: a linha compacta "Tarefa · bateu às
+   *  HH:MM" com o valor e o link. Só tela — fora do histórico mandado ao modelo. */
+  | { kind: 'tarefa-aviso'; id: string; tarefaId: string; titulo: string; hora: string; valor: string | null; resumo: string | null; fonte: string | null }
   /** `incomplete`: o turno morreu ANTES de terminar (stream do CLI acabou no meio,
    *  travamento sem sinal de vida além do prazo, sessão descartada com o turno
    *  aberto). Mesmo com texto já recebido, é falha a retomar "de onde parou" —
@@ -1889,6 +1892,8 @@ export interface AppConfig {
   remoteEnabled: boolean
   /** Keep the machine awake while an agent is mid-turn (display may still sleep). */
   preventSleepWhileBusy: boolean
+  /** Na tomada, com tarefa agendada ativa, o PC não dorme (tela no brilho mínimo com o usuário longe). */
+  manterAcordadoTarefas: boolean
   /** The parallel watcher that questions premises (see VigiaConfig). */
   vigia: VigiaConfig
   /** O observador que grava memória sozinho ao fim do turno (see MemoristaConfig). */
@@ -2163,6 +2168,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Ligado por padrão: o PC dormir no meio de um turno perde o trabalho, e o
   // bloqueio só vale enquanto o agente está ocupado (a tela apaga normalmente).
   preventSleepWhileBusy: true,
+  // Ligado por padrão: tarefa agendada com o PC dormindo não roda (main/tarefas/acordado.ts).
+  manterAcordadoTarefas: true,
   // Ligado por padrão: o estado inicial já tem que servir, e o custo é uma
   // chamada curta e sem ferramentas por turno, num modelo mais barato.
   vigia: { enabled: false, model: 'claude-sonnet-5-5' },
@@ -2641,6 +2648,13 @@ export const Channels = {
   /** Os chamados do agente: renderer → main (abertos, encerrados, se o usuário está olhando, títulos) e o clique na notificação (main → renderer). */
   officeCallsState: 'office:calls-state',
   officeCallOpen: 'office:call-open',
+  /** Tarefas agendadas (main/tarefas): a lista (renderer → main), a mudança ao vivo
+   *  (main → renderer, TarefaVista[]), pausar/retomar/cancelar/visto (renderer → main)
+   *  e o clique no aviso do Windows, que abre a conversa de origem (main → renderer). */
+  tarefasList: 'tarefas:list',
+  tarefasChanged: 'tarefas:changed',
+  tarefasAcao: 'tarefas:acao',
+  tarefaAbrirConversa: 'tarefas:abrir-conversa',
   /** main → renderer: the vigia raised a doubt about a premise of the work.
    *  Deliberately NOT a ChatEvent — it is for the user, not for the model. */
   vigiaAlert: 'vigia:alert',

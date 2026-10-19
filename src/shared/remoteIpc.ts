@@ -26,11 +26,13 @@ export const REMOTE_IPC_INVOKE = [
   Channels.scrumChatHistory,
   Channels.scrumAsk,
   Channels.scrumDecideDeclaration,
-  Channels.handoffQueueEdit
+  Channels.handoffQueueEdit,
+  // Pausar/retomar/cancelar/visto da bolinha de tarefas (a lista vem no /api/state).
+  Channels.tarefasAcao
 ] as const
 
 /** Os avisos do main que seguem para o celular (o `send` do main). */
-export const REMOTE_IPC_EVENTS = [Channels.boardChanged, Channels.scrumChanged] as const
+export const REMOTE_IPC_EVENTS = [Channels.boardChanged, Channels.scrumChanged, Channels.tarefasChanged] as const
 
 export type RemoteIpcChannel = (typeof REMOTE_IPC_INVOKE)[number]
 export type RemoteIpcEventChannel = (typeof REMOTE_IPC_EVENTS)[number]

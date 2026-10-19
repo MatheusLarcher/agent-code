@@ -19,6 +19,7 @@ export type {
 } from '../../shared/handoffTracking'
 import type { TransferRecords } from './transferRecords'
 import type { BoardPrintRepository } from './boardPrintTypes'
+import type { TarefaRepository } from './tarefaTypes'
 import type { TelemetryBatchRepository } from './telemetryBatch'
 import type { ConversationHashScope, PreparedConversation } from './writeQueue/conversationPrepare'
 import type {
@@ -964,7 +965,8 @@ export interface PersistenceRepository
     AgentInputQueueRepository,
     ConversationOutboxRepository,
     HandoffRepository,
-    BoardPrintRepository {
+    BoardPrintRepository,
+    TarefaRepository {
   readonly backend: StorageBackend
 
   initialize(): Promise<void>

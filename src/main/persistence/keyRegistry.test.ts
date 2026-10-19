@@ -34,6 +34,7 @@ const EXPECTED_KEYS = [
   'config.deepseek.enabled',
   'config.handoff.leituraGuiada',
   'config.localSpeech.model',
+  'config.manterAcordadoTarefas',
   'config.memorista.enabled',
   'config.memorista.model',
   'config.memorySelector',

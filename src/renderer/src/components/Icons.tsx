@@ -393,6 +393,45 @@ export const IconHammer = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Tarefa agendada: relógio com setas em volta (o grupo `.arc` gira quando checando). */
+export const IconTask = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="5.2" />
+    <path d="M12 9.6V12l1.6 1.2" />
+    <g className="arc">
+      <path d="M20 12a8 8 0 0 1-13.7 5.6" />
+      <path d="M4 12a8 8 0 0 1 13.7-5.6" />
+      <path d="M17.9 3.6v3h-3" />
+      <path d="M6.1 20.4v-3h3" />
+    </g>
+  </Svg>
+)
+export const IconBell = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+  </Svg>
+)
+export const IconAlarm = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="13" r="8" />
+    <path d="M12 9v4l2 2" />
+    <path d="M5 3 2 6" />
+    <path d="m22 6-3-3" />
+  </Svg>
+)
+export const IconPause = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="6" y="5" width="4" height="14" rx="1" />
+    <rect x="14" y="5" width="4" height="14" rx="1" />
+  </Svg>
+)
+export const IconPlay = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M7 4v16l13-8z" />
+  </Svg>
+)
+
 /** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
 export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>

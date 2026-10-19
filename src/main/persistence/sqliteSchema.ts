@@ -11,6 +11,7 @@ import { StorageError, type ConversationRecord, type KvScope } from './types'
 import { writeDbAtomically } from '../atomicDb'
 import { SQLITE_BOARD_PRINTS_SCHEMA } from './sqliteBoardPrints'
 import { SQLITE_TURN_TIME_SCHEMA } from './sqliteTurnTime'
+import { SQLITE_TAREFAS_SCHEMA } from './sqliteTarefas'
 
 const LEGACY_CONVERSATIONS_KEY = 'agentcode.conversations.v1'
 const DATA_DIRNAME = 'data'
@@ -675,7 +676,9 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   // Tabela nova com `IF NOT EXISTS` (sqliteTurnTime.ts): o mesmo SQL no guarda.
   migration(18, 'sqlite-v2-turn-time', SQLITE_TURN_TIME_SCHEMA),
   migration(19, 'sqlite-v2-board-user-action', SQLITE_BOARD_USER_ACTION_SCHEMA, ''),
-  migration(20, 'sqlite-v2-board-reply-kind', SQLITE_BOARD_REPLY_KIND_SCHEMA, '')
+  migration(20, 'sqlite-v2-board-reply-kind', SQLITE_BOARD_REPLY_KIND_SCHEMA, ''),
+  // Tabelas novas com `IF NOT EXISTS` (sqliteTarefas.ts): o mesmo SQL no guarda.
+  migration(21, 'sqlite-v2-tarefas', SQLITE_TAREFAS_SCHEMA)
 ]
 
 /** Guarda idempotente de `write()` (roda a cada escrita, para sempre). */

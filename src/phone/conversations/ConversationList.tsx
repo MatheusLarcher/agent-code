@@ -18,6 +18,8 @@ import { StatusPill } from '../shell/StatusMenu'
 import { CollapsibleGroup } from '../ui/Collapsible'
 import { Icon } from '../ui/icons'
 import { ProjectLogo, projectLabel } from '../ui/ProjectLogo'
+import { TarefaSelo } from '@renderer/components/tarefas/TarefaSelo'
+import { useResumosCelular } from '../chat/tarefasCelular'
 
 interface Group {
   /** Chave do grupo: a pasta, ou SANDBOX_KEY para todas as subpastas do sandbox. */
@@ -65,6 +67,7 @@ export function ConversationList(): JSX.Element {
   const projects = useStore(client.store, (s) => s.projects)
   const convId = useStore(client.store, (s) => s.convId)
   const loaded = useStore(client.store, (s) => s.loaded)
+  const tarefas = useResumosCelular()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
@@ -194,6 +197,7 @@ export function ConversationList(): JSX.Element {
                       <span className="hist-title">{c.title || 'Conversa'}</span>
                       {c.permission && <span className="hist-badge" title="Esperando sua resposta">?</span>}
                       {c.busy && <span className="hist-busy"><Icon name="clock" size={13} /></span>}
+                      <TarefaSelo resumo={tarefas.get(c.id)} />
                       <button
                         type="button"
                         className="hist-more"

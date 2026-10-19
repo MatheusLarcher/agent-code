@@ -190,6 +190,11 @@ import { startTaskReaper } from './tasks/taskReaper'
 import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
+import { setupTarefasApp } from './tarefas/appWiring'
+import { tarefasServico } from './tarefas/runtime'
+import { executarRodadaMonitor } from './tarefas/rodadaMonitor'
+import { ferramentasDaRodada } from './tarefas/ferramentasRodada'
+import { BrilhoDasTarefas, brilhoWmi, criarIsBusy } from './tarefas/acordado'
 import { windowsControl } from './windowsControl/service'
 import { chromeBridgeStatus, openInstall as openChromeInstall, startChromeBridge, stopChromeBridge } from './chromeBridge/runtime'
 import { discoverSkills } from './skillDiscovery'
@@ -249,6 +254,8 @@ let stopTaskReaper: (() => void) | null = null
 let stopHandoffSweep: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
 let stopSleepGuard: (() => void) | null = null
+/** O brilho mínimo enquanto o PC fica acordado só pelas tarefas (tarefas/acordado.ts). */
+const brilhoDasTarefas = new BrilhoDasTarefas(brilhoWmi, (line) => authLog(line))
 let stopMemoryWatch: (() => void) | null = null
 /** Handlers planning:* e os vigias de pasta deles (fechados ao sair). */
 let planningIpc: PlanningIpcHandle | null = null
@@ -805,11 +812,14 @@ async function closeStorageForQuit(): Promise<void> {
     // Backup diário (ou cópia de uma troca) em curso: o processo morre, o arquivo
     // pela metade não entra na lista, e o diário é refeito na próxima abertura.
     databaseBackups.dispose()
+    // Tarefas agendadas: para o timer e aborta a rodada em andamento (o CLI dela morre junto).
+    tarefasServico()?.parar()
     const [drained] = await Promise.all([
       conversationQueue.flush(null, CLOSE_DRAIN_MS),
       telemetryQueue.flush(CLOSE_DRAIN_MS),
       contextHistoryQueue.flush(CLOSE_DRAIN_MS),
-      outboxQueue.flush(CLOSE_DRAIN_MS)
+      outboxQueue.flush(CLOSE_DRAIN_MS),
+      tarefasServico()?.flush(CLOSE_DRAIN_MS)
     ])
     const journaled = await conversationQueue.journalPending()
     const outboxJournaled = await outboxQueue.journalPending()
@@ -1348,6 +1358,8 @@ const remote = new RemoteServer({
   officeAgentFile: (name) => readOfficeAgentFile(name, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() }),
   // `projectColors` no /api/state: só as cores já resolvidas; o resto é detectado em segundo plano.
   projectColors: (cwds) => projectColors.peek(cwds),
+  // `tarefas` no /api/state: a bolinha e o selo do celular (o main é a fonte da verdade).
+  tarefas: () => tarefasServico()?.vistas() ?? [],
   // `etapas` no /api/state: o placar do plano da conversa de handoff, do cache do main
   // (a lista de tarefas do agente nunca é o contador).
   etapasOf: (convId) => etapasCache.get(convId),
@@ -2025,7 +2037,11 @@ export function registerIpc(): void {
   // envios de handoff abertos dela param e o plano sai da fila do projeto — o
   // despachante exige a conversa existir, e o plano ficaria "rodando" para sempre.
   ipcMain.on(Channels.conversationsSync, (_event, raw) => {
-    for (const change of parseConversationChanges(raw)) if (change.deleted) handoffTracker.conversationDeleted(change.id)
+    for (const change of parseConversationChanges(raw)) {
+      if (change.deleted) handoffTracker.conversationDeleted(change.id)
+      // As tarefas agendadas dela também param (tarefas/servico.ts).
+      if (change.deleted) tarefasServico()?.conversaApagada(change.id)
+    }
   })
   ipcMain.handle(Channels.conversationsCountByProject, () =>
     storageLifecycle.repository().countConversationsByProject()
@@ -2975,13 +2991,16 @@ export function registerIpc(): void {
   // morto sem o SO avisar — reconecta na hora em vez de esperar o heartbeat.
   // Mesma razão para o PostgreSQL: se ele caiu enquanto o PC dormia, reabre já
   // em vez de esperar o próximo passo do backoff da reconexão automática.
+  // As tarefas agendadas vencidas no sono rodam uma vez cada (tarefas/agendador.ts).
   powerMonitor.on('resume', () => {
     relay.kick()
     storageLifecycle.resumeReconnect()
+    tarefasServico()?.acordar()
   })
   powerMonitor.on('unlock-screen', () => {
     relay.kick()
     storageLifecycle.resumeReconnect()
+    tarefasServico()?.acordar()
   })
   ipcMain.handle(Channels.remotePublishState, (_e, state: RemoteStatePayload) => {
     remote.setState(state)
@@ -3124,12 +3143,21 @@ app.whenReady().then(async () => {
   // turno vivo, o sistema não entra em suspensão por ociosidade — o Windows não
   // conta o trabalho do agente como atividade e dormia no meio da tarefa. Sai
   // do ar assim que o turno termina, e a tela continua apagando normalmente.
+  // Também com tarefa agendada ativa na tomada (tarefas/acordado.ts): cada
+  // interruptor vale para o seu motivo, e o brilho cai com o usuário longe.
   if (appRestart) {
     const coordinator = appRestart
     stopSleepGuard = startSleepGuard({
       blocker: powerSaveBlocker,
-      isBusy: () => coordinator.busyNow(),
-      isEnabled: () => loadConfig().preventSleepWhileBusy !== false
+      isBusy: criarIsBusy({
+        turnoOcupado: () => coordinator.busyNow(),
+        config: () => loadConfig(),
+        tarefaAtiva: () => tarefasServico()?.temAtiva() ?? false,
+        naBateria: () => powerMonitor.isOnBatteryPower(),
+        ociosoSegundos: () => powerMonitor.getSystemIdleTime(),
+        brilho: brilhoDasTarefas
+      }),
+      isEnabled: () => true
     })
   }
   authLog('=== main started (new build) ===')
@@ -3183,6 +3211,25 @@ app.whenReady().then(async () => {
   // Fora do registerIpc (que os testes chamam sem Electron): protocolo exige o app pronto.
   officeMockup = setupOfficeMockup({ handle: (channel, handler) => ipcMain.handle(channel, handler) })
   setupOfficeCalls()
+  // Tarefas agendadas e avisos (tarefas/appWiring.ts): agendador, aviso no Windows, MCP `avisos`.
+  setupTarefasApp({
+    repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
+    instalacao: () => storageLifecycle.status().installationId,
+    executarMonitor: (t, ctx) => executarRodadaMonitor(t, ctx, { ferramentas: ferramentasDaRodada, log: authLog }),
+    notificacao: { isSupported: () => Notification.isSupported(), create: (opcoes) => new Notification(opcoes) },
+    revelarJanela: revealMainWindow,
+    send,
+    // Pela ponte do app: o celular pede as mesmas ações (POST /api/ipc, shared/remoteIpc.ts).
+    handle: (channel, fn) => appIpc.handle(channel, fn),
+    // O monitor bateu: UMA linha compacta na conversa (tela e celular), fora do histórico do modelo.
+    mensagem: (m) => {
+      const { convId, ...resto } = m
+      const event: ChatEvent = { kind: 'tarefa-aviso', id: randomUUID(), ...resto }
+      send(Channels.agentEvent, { convId, event })
+      remote.broadcast(convId, event)
+    },
+    log: authLog
+  })
   // Avisos de handoff em tempo real (decisão sozinha, ATENÇÃO, fila): toast no
   // app e, pela ponte, no celular pareado (handoffTracking/handoffNotices.ts).
   onHandoffNotice((notice) => {
@@ -3225,6 +3272,8 @@ app.whenReady().then(async () => {
       telemetryQueue.kick()
       contextHistoryQueue.kick()
       outboxQueue.kick()
+      // Releitura das tarefas agendadas (as vencidas rodam uma vez).
+      tarefasServico()?.acordar()
     }
     // Abriu sem banco na 1ª vez depois da atualização: a cópia única para o
     // SQLite local acontece agora, e a config é relida dela.
@@ -3442,6 +3491,8 @@ app.on('before-quit', (event) => {
   stopRestartGuardFile = null
   stopSleepGuard?.()
   stopSleepGuard = null
+  // A tela volta ao brilho de antes das tarefas.
+  brilhoDasTarefas.restaurarAoSair()
   stopMemoryWatch?.()
   stopMemoryWatch = null
   planningIpc?.close()

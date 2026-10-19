@@ -37,6 +37,8 @@ import { memoryWriteDenial } from './memory/memoryPaths'
 import { createMemoryMcpServer } from './memory/memoryTools'
 import { createTaskMcpServer } from './tasks/taskTools'
 import { taskLedger } from './tasks/taskRuntime'
+import { tarefasServico } from './tarefas/runtime'
+import { createAvisosMcpServer } from './tarefas/avisosMcp'
 import { entregaMcpServerFor, entregaToolAutoAllowed } from './handoffTracking/entregaTools'
 import { sessionDeadlineNotice } from './handoffTracking/handoffDeadlineHook'
 import { activeScrumMaster } from './scrum/scrumRuntime'
@@ -1078,6 +1080,10 @@ export class AgentSession {
     // REA embutido (reaMcp.ts); o planejamento o filtra (planningSession.ts).
     const rea = reaMcpConfig()
     if (rea) mcpServers.rea = rea
+    // Tarefas agendadas e avisos (tarefas/avisosMcp.ts): da conversa normal, com o
+    // convId dela — a tarefa pertence à conversa onde foi pedida. O Agent Manager não tem.
+    const tarefas = tarefasServico()
+    if (tarefas && !this.opts.planning) mcpServers.avisos = createAvisosMcpServer({ servico: tarefas, convId: this.opts.convId, cwd: this.opts.cwd })
     // Tarefa do MCP de entrada: os servidores do chamador (ex.: o do Forgia), só
     // nesta sessão. Nome reservado já foi recusado na validação; aqui não
     // sobrescreve nada por garantia.
@@ -2433,7 +2439,8 @@ ${lines}
     // de estados são impostos pelo repositório, não por um clique do usuário —
     // um modal aqui só ensinaria a clicar sem ler. As entrega_* da conversa de
     // handoff, pelo mesmo motivo: só gravam a estimativa do agente no banco.
-    if (toolName.startsWith('mcp__tasks__') || entregaToolAutoAllowed(this.opts, toolName)) {
+    // As aviso_* idem: só gravam a tarefa da própria conversa no banco do app.
+    if (toolName.startsWith('mcp__tasks__') || toolName.startsWith('mcp__avisos__') || entregaToolAutoAllowed(this.opts, toolName)) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     // As plan_* do Agent Manager só gravam pelo planningStore (validação, rev,

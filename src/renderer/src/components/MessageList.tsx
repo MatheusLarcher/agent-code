@@ -13,6 +13,8 @@ import { AnimGateProvider, useAnimGate } from '../chatAnim'
 import { LazyMarkdownProvider, useLazyAnswers } from './lazyMarkdown'
 import { buildChatRows, rowIndexOfUser } from './chatSteps'
 import { loadMoreText, useScrollWindow, WINDOW_PAGE } from './useScrollWindow'
+import { TarefasBolinha } from './tarefas/TarefasBolinha'
+import { acaoNoPc, useTarefasDaConversa } from './tarefas/useTarefas'
 
 export type { TtsControls } from './ChatRows'
 
@@ -52,6 +54,8 @@ export function MessageList({
   quote?: QuoteListApi
 }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Tarefas agendadas desta conversa: a bolinha no canto (o "ir para o final" sobe).
+  const tarefas = useTarefasDaConversa(convId)
   const endRef = useRef<HTMLDivElement>(null)
   // Whether the "jump to bottom" button is shown (user scrolled up from the end).
   const [showJump, setShowJump] = useState(false)
@@ -193,7 +197,7 @@ export function MessageList({
   }
 
   return (
-    <div className="message-list-wrap">
+    <div className={`message-list-wrap${tarefas.length ? ' com-tarefas' : ''}`}>
     <QuestionMap messages={messages} scrollRatio={scrollRatio} activeId={activeMid} onSelect={(id) => setMapScroll({ id, seq: Date.now() })} />
     <div className="message-list" ref={scrollRef} onScroll={onScroll}>
       {hasOlder && <div className="load-more-hint">{loadMoreText(startIdx)}</div>}
@@ -219,6 +223,7 @@ export function MessageList({
           </svg>
         </button>
       )}
+      {tarefas.length > 0 && <TarefasBolinha key={convId ?? ''} tarefas={tarefas} acao={acaoNoPc} />}
     </div>
   )
 }

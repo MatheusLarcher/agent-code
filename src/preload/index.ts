@@ -48,6 +48,7 @@ import type { TypeSafePauseStatus } from '../shared/typesafePause'
 import type { ChromeBridgeStatus } from '../shared/chromeBridge'
 import type { MockupCaptureResult, MockupRequest, MockupUrlResult } from '../shared/officeMockup'
 import type { OfficeCallOpen, OfficeCallsState } from '../shared/officeCall'
+import type { TarefaAcaoPedido, TarefaVista, Validado } from '../shared/tarefas'
 import type { PlanningPeekDto } from '../shared/officeApi'
 import type { MemoryListItem, MemoryReadResult } from '../shared/memoryPanel'
 import type {
@@ -511,6 +512,10 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   officeAgentFile: (name: string): Promise<Uint8Array | null> => ipcRenderer.invoke(Channels.officeAgentFile, name),
   officeCallsState: (state: OfficeCallsState): Promise<void> => ipcRenderer.invoke(Channels.officeCallsState, state),
   onOfficeCallOpen: (cb: (e: OfficeCallOpen) => void): (() => void) => on(Channels.officeCallOpen, cb),
+  tarefasList: (): Promise<TarefaVista[]> => ipcRenderer.invoke(Channels.tarefasList),
+  onTarefasChanged: (cb: (tarefas: TarefaVista[]) => void): (() => void) => on(Channels.tarefasChanged, cb),
+  tarefasAcao: (pedido: TarefaAcaoPedido): Promise<Validado<TarefaVista | null>> => ipcRenderer.invoke(Channels.tarefasAcao, pedido),
+  onTarefaAbrirConversa: (cb: (e: { convId: string }) => void): (() => void) => on(Channels.tarefaAbrirConversa, cb),
   onAgentEvent: (cb: (e: AgentEventMsg) => void): (() => void) => on(Channels.agentEvent, cb),
   onPermissionRequest: (cb: (m: PermissionRequestMsg) => void): (() => void) =>
     on(Channels.agentPermissionRequest, cb),

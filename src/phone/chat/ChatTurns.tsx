@@ -23,7 +23,7 @@ export type Block = { kind: 'row'; key: string; row: Row } | { kind: 'turn'; key
 function standsAlone(r: Row): boolean {
   if (r.type !== 'msg') return false
   const k = r.msg.kind
-  return k === 'user' || k === 'system' || k === 'status' || k === 'provider-switch' || k === 'account-switch'
+  return k === 'user' || k === 'system' || k === 'status' || k === 'provider-switch' || k === 'account-switch' || k === 'tarefa-aviso'
 }
 
 /**

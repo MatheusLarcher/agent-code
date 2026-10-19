@@ -3313,6 +3313,16 @@ export function App(): JSX.Element {
       }),
     [setMainTab]
   )
+  // Clique no aviso de uma tarefa agendada (main/tarefas/entrega.ts): a conversa onde ela foi pedida.
+  useEffect(
+    () =>
+      window.api.onTarefaAbrirConversa?.(({ convId }) => {
+        if (!convsRef.current.some((c) => c.id === convId)) return
+        setMainTab('chat')
+        selectConversation(convId)
+      }),
+    [setMainTab, selectConversation]
+  )
 
   // Commands arriving from a phone (phone → PC → Claude Code): route into the
   // matching conversation via the same dispatch path the composer uses.

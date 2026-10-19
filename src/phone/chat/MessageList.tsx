@@ -17,6 +17,9 @@ import { groupTurns, liveText, Turn, turnStart, type Row } from './ChatTurns'
 import { MessageItem } from './MessageItem'
 import { QuestionMap } from './QuestionMap'
 import { StepItem } from './StepItem'
+import { TarefasBolinha } from '@renderer/components/tarefas/TarefasBolinha'
+import { PhoneUiProvider } from '../office/PhoneUiProvider'
+import { acaoNoCelular, useTarefasDaConversaCelular } from './tarefasCelular'
 
 const PULL_THRESHOLD = 64
 const NEAR_BOTTOM = 80
@@ -32,6 +35,8 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   const olderLoading = useStore(client.store, (s) => s.olderLoading)
   const hasNewer = useStore(client.store, (s) => s.hasNewer)
   const convId = useStore(client.store, (s) => s.convId)
+  // Tarefas agendadas desta conversa: a bolinha no canto (o "ir para o final" sobe).
+  const tarefas = useTarefasDaConversaCelular(convId)
   const scrollTo = useStore(client.store, (s) => s.scrollToMsg)
   const voiceReady = useStore(client.store, (s) => s.voiceReady)
   const speakingId = useStore(tts, (s) => s.speakingId)
@@ -182,7 +187,7 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   }, [])
 
   return (
-    <div className="messages-wrap">
+    <div className={`messages-wrap${tarefas.length ? ' com-tarefas' : ''}`}>
       {pull !== 'hidden' && (
         <div className="bar reconnect pull-bar">
           <span className="spinner" />
@@ -231,6 +236,11 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
         <button type="button" className="jump-bottom" title="Ir para o final" aria-label="Ir para o final" onClick={toBottom}>
           <Icon name="down" size={22} strokeWidth={2} />
         </button>
+      )}
+      {tarefas.length > 0 && (
+        <PhoneUiProvider>
+          <TarefasBolinha key={convId ?? ''} tarefas={tarefas} acao={acaoNoCelular} celular />
+        </PhoneUiProvider>
       )}
     </div>
   )

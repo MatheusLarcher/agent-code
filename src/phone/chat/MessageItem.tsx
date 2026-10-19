@@ -9,6 +9,8 @@ import { triggerDownload } from '../core/download'
 import { basename, clipText, fmtBytes, fmtClock, fmtMsgTime, parseDownloads, readableMedia } from '../core/format'
 import type { ChatMsg, UserMsg } from '../core/types'
 import { Icon } from '../ui/icons'
+import { IconBell } from '@renderer/components/Icons'
+import '@renderer/components/tarefas/tarefas.css'
 import { CENTRAL_QUOTE_MAX } from '../central/centralActions'
 import type { CentralQuote } from '../central/centralStore'
 import { Swipeable } from '../central/Swipeable'
@@ -149,6 +151,18 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
     case 'provider-switch':
     case 'account-switch':
       return <div className="msg system">{m.text}</div>
+    case 'tarefa-aviso':
+      // Um monitor agendado bateu (main/tarefas): a linha compacta, com o valor e o link.
+      return (
+        <div className="msg system tarefa-aviso">
+          <IconBell size={13} />
+          <b>{m.titulo} · bateu às {m.hora}</b>
+          {m.valor && <span className="tarefa-aviso-valor"> · {m.valor}</span>}
+          {m.fonte && /^https?:\/\//i.test(m.fonte) && (
+            <a href={m.fonte} target="_blank" rel="noreferrer"> · fonte</a>
+          )}
+        </div>
+      )
     case 'tool-use':
       return <ToolCard m={m} />
     default:

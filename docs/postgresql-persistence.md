@@ -1,7 +1,9 @@
 # Persistência PostgreSQL opcional
 
-O Agent Code inicia em SQLite e só troca de backend por uma ação explícita em
-**Configurações → PostgreSQL**. O banco alvo é sempre `agent-code`; host, porta,
+Instalação nova (e quem vinha do SQLite) importa tudo para o PostgreSQL embutido
+na primeira abertura (`pendingLocalImport` em `bootstrapStore.ts`, executado por
+`lifecycle.ts`). Se a importação falha, abre o SQLite intacto e tenta de novo na
+próxima abertura. A troca local ↔ nuvem é feita em **Configurações → PostgreSQL**. O banco alvo é sempre `agent-code`; host, porta,
 usuário, maintenance database e TLS são editáveis. A senha fica apenas no
 bootstrap local criptografado pelo `safeStorage` do Electron e nunca retorna ao
 renderer.

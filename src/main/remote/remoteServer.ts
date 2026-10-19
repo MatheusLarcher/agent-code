@@ -87,6 +87,8 @@ export interface RemoteServerDeps {
   officeAgentFile?: (name: string) => Promise<Uint8Array | null>
   /** Cor fixa dos projetos já resolvida (síncrono; o que falta é detectado em segundo plano). */
   projectColors?: (cwds: string[]) => ProjectColorMap
+  /** As tarefas agendadas visíveis (a bolinha e o selo do celular), em `tarefas` do /api/state. */
+  tarefas?: () => readonly unknown[]
   /** De onde vêm as mensagens (histórico, perguntas, downloads): o instantâneo da fila
    *  de gravação e o banco — a tela não manda mais mensagens (remoteConversations.ts). */
   messageSource?: RemoteMessageSource
@@ -568,12 +570,22 @@ export class RemoteServer {
         usage: this.store.global('usage') ?? {},
         projects: this.store.global('projects') ?? [],
         projectColors: this.projectColors(),
+        tarefas: this.tarefas(),
         pairedDevice: this.pairedDevice ?? null,
         relayState: this.relayState,
         // The phone's default name for this PC ("filial").
         pcName: hostname()
       })
     )
+  }
+
+  /** As tarefas do agendador; sem o gancho ou com erro, a lista vazia (o /api/state não cai por elas). */
+  private tarefas(): readonly unknown[] {
+    try {
+      return this.deps.tarefas?.() ?? []
+    } catch {
+      return []
+    }
   }
 
   /** Phone → PC: explicit pairing (QR scan / manual connect). Takes over from any

@@ -20,6 +20,18 @@ import {
   pruneSqliteBoardItemPrints
 } from './sqliteBoardPrints'
 import { insertSqliteTurnTime, sqliteTurnTimeTotals } from './sqliteTurnTime'
+import {
+  cancelSqliteTarefasDaConversa,
+  finishSqliteTarefaRodada,
+  insertSqliteTarefa,
+  listSqliteTarefaRodadas,
+  listSqliteTarefas,
+  marcarSqliteTarefaVista,
+  sqliteTarefaVencida,
+  updateSqliteTarefaEstado
+} from './sqliteTarefas'
+import type { TarefaClaim, TarefaEstadoPatch, TarefaFimRodada, TarefaRegistro } from './tarefaTypes'
+import type { Tarefa, TarefaRodada } from '../../shared/tarefas'
 import { writeSqliteTelemetryBatch } from './sqliteTelemetryBatch'
 import type { TelemetryBatch } from './telemetryBatch'
 import type { TurnTimeTotals } from '../../shared/ipc'
@@ -1855,6 +1867,65 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
     // Cada `write()` copia o arquivo inteiro: só escreve se houver print vencido.
     if (this.read((db) => countSqliteExpiredBoardItemPrints(db, cutoffIso)) === 0) return 0
     return this.write((db) => pruneSqliteBoardItemPrints(db, cutoffIso))
+  }
+
+  // Tarefas agendadas: SQL em sqliteTarefas.ts. A trava fica na memória (PC único;
+  // ver `sqliteTarefaVencida`); só a rodada terminada escreve no arquivo.
+  private readonly tarefaLeases = new Map<string, { dono: string; token: string; ate: number }>()
+
+  async listTarefas(): Promise<TarefaRegistro[]> {
+    const now = Date.now()
+    return this.read(listSqliteTarefas).map((t) => {
+      const held = this.tarefaLeases.get(t.id)
+      return held && held.ate >= now ? { ...t, leaseDono: held.dono, leaseToken: held.token, leaseAte: held.ate } : t
+    })
+  }
+
+  async listTarefaRodadas(tarefaIds: string[], porTarefa: number): Promise<TarefaRodada[]> {
+    return this.read((db) => listSqliteTarefaRodadas(db, tarefaIds, porTarefa))
+  }
+
+  async insertTarefa(tarefa: Tarefa): Promise<void> {
+    this.write((db) => insertSqliteTarefa(db, tarefa))
+  }
+
+  async updateTarefaEstado(patch: TarefaEstadoPatch): Promise<boolean> {
+    return this.write((db) => updateSqliteTarefaEstado(db, patch))
+  }
+
+  async marcarTarefaVista(id: string, atualizadaEm: string): Promise<void> {
+    this.write((db) => marcarSqliteTarefaVista(db, id, atualizadaEm))
+  }
+
+  async cancelTarefasDaConversa(convId: string, atualizadaEm: string): Promise<number> {
+    return this.write((db) => cancelSqliteTarefasDaConversa(db, convId, atualizadaEm))
+  }
+
+  async claimTarefa(claim: TarefaClaim): Promise<boolean> {
+    const held = this.tarefaLeases.get(claim.id)
+    if (held && held.ate >= claim.agora && held.dono !== claim.dono) return false
+    if (!this.read((db) => sqliteTarefaVencida(db, claim))) return false
+    this.tarefaLeases.set(claim.id, { dono: claim.dono, token: claim.token, ate: claim.agora + claim.ttlMs })
+    return true
+  }
+
+  async renewTarefaLease(id: string, token: string, ate: number): Promise<boolean> {
+    const held = this.tarefaLeases.get(id)
+    if (!held || held.token !== token) return false
+    held.ate = ate
+    return true
+  }
+
+  async releaseTarefaLease(id: string, token: string): Promise<void> {
+    if (this.tarefaLeases.get(id)?.token === token) this.tarefaLeases.delete(id)
+  }
+
+  async finishTarefaRodada(fim: TarefaFimRodada): Promise<boolean> {
+    const held = this.tarefaLeases.get(fim.id)
+    if (held && held.token !== fim.token && held.ate >= fim.agora) return false
+    const gravou = this.write((db) => finishSqliteTarefaRodada(db, fim))
+    if (this.tarefaLeases.get(fim.id)?.token === fim.token) this.tarefaLeases.delete(fim.id)
+    return gravou
   }
 
   // Registro dos envios de handoff: SQL em sqliteHandoff.ts.
