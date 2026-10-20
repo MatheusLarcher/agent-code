@@ -18,8 +18,21 @@ const SECRET_PATTERNS = [
   /\bsk-(?:ant-)?[A-Za-z0-9_-]{24,}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\bgh[pousr]_[A-Za-z0-9]{30,}/,
-  /\bAKIA[0-9A-Z]{16}\b/
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bAIza[0-9A-Za-z_-]{30,}/,
+  /\bGOCSPX-[0-9A-Za-z_-]{20,}/,
+  /\bmsy_[0-9A-Za-z]{20,}/,
+  /\bpk\.eyJ[0-9A-Za-z_-]{30,}/,
+  /\bxox[abpr]-[0-9A-Za-z-]{20,}/,
+  /\b(?:senha|password|passwd)\s*[:=]\s*["']?(?=[^\s"']*\d)(?=[^\s"']*[A-Za-z])[^\s"'<>{}]{8,}/i
 ]
+// Skills de projeto de cliente (regras de negócio, nomes) ficam só nesta máquina:
+// sem segredo, mas confidenciais. Também sai qualquer skill com `private: true`
+// no cabeçalho do SKILL.md.
+const PRIVATE_SKILLS = new Set(['financeiro-rules', 'matricula-flow', 'relatorios'])
+const isPrivate = (root, name) =>
+  PRIVATE_SKILLS.has(name) ||
+  /^---[\s\S]*?^private:\s*true\s*$[\s\S]*?^---/m.test(readFileSync(join(root, name, 'SKILL.md'), 'utf8'))
 const TEXT_FILE = /\.(md|txt|json|ya?ml|js|mjs|cjs|ts|py|sh|ps1|bat|toml|ini|env)$/i
 
 function skillNames(root) {
@@ -97,7 +110,7 @@ if (!source || !existsSync(source)) {
 // As do repositório já vão por .agents/skills e pelos kits; aqui entra só o que o
 // usuário instalou. Skill de kit na semente vazaria com o interruptor do kit desligado.
 const bundled = new Set(bundledDirs().flatMap((dir) => skillNames(join(REPO, '.agents', dir))))
-const names = skillNames(source).filter((name) => !bundled.has(name))
+const names = skillNames(source).filter((name) => !bundled.has(name) && !isPrivate(source, name))
 rmSync(STAGED, { recursive: true, force: true })
 mkdirSync(STAGED, { recursive: true })
 
