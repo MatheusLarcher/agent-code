@@ -1,4 +1,4 @@
-import type { FileAttachment, FileRefAttachment, ImageAttachment, PickedElement } from '@shared/ipc'
+import { FOLDER_MEDIA_TYPE, type FileAttachment, type FileRefAttachment, type ImageAttachment, type PickedElement } from '@shared/ipc'
 import { mediaLabel, mediaMarker, mediaLabelNumber } from '@shared/inlineMedia'
 import { fileMeta, fmtSize } from '../files'
 import { TOKEN } from './editorModel'
@@ -34,7 +34,7 @@ export function newAttId(): string {
 // ---------- imagem do item no campo ----------
 
 const BADGE: Record<string, string> = {
-  pdf: '#df5048', doc: '#4a82e0', xls: '#3aa162', ppt: '#e0863a', txt: '#7d828c', zip: '#9a6fd0', code: '#2fb0a6', file: '#6b7280'
+  pdf: '#df5048', doc: '#4a82e0', xls: '#3aa162', ppt: '#e0863a', txt: '#7d828c', zip: '#9a6fd0', code: '#2fb0a6', file: '#6b7280', folder: '#c8962e'
 }
 const CHIP_FONT = "12px 'Segoe UI', system-ui, sans-serif"
 const MAX_CHIP_NAME = 28
@@ -63,8 +63,8 @@ function textWidth(text: string): number {
 }
 
 /** Chip "badge da extensão + nome" como SVG (vira o src de um <img>, que é atômico no campo). */
-export function chipSvg(name: string, opts: { pending?: boolean } = {}): string {
-  const meta = fileMeta(name)
+export function chipSvg(name: string, opts: { pending?: boolean; folder?: boolean } = {}): string {
+  const meta = opts.folder ? { ext: 'PASTA', kind: 'folder' } : fileMeta(name)
   const label = opts.pending ? `resolvendo ${shortName(name)}` : shortName(name)
   const badgeW = opts.pending ? 18 : Math.max(22, meta.ext.length * 6 + 8)
   const w = badgeW + 6 + textWidth(label) + 8
@@ -103,7 +103,7 @@ export function makeFileAtt(file: FileAttachment): InlineAtt {
   return { id: newAttId(), kind: 'file', name: file.name, file, src: chipSvg(file.name) }
 }
 export function makeRefAtt(ref: FileRefAttachment): InlineAtt {
-  return { id: newAttId(), kind: 'ref', name: ref.name, ref, src: chipSvg(ref.name) }
+  return { id: newAttId(), kind: 'ref', name: ref.name, ref, src: chipSvg(ref.name, { folder: ref.mediaType === FOLDER_MEDIA_TYPE }) }
 }
 /** Item resolvendo. `line` só para caminho/URL colado (arquivo lido do disco não tem como refazer). */
 export function makePendingAtt(label: string, line?: string, id: string = newAttId()): InlineAtt {

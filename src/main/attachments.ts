@@ -3,7 +3,7 @@ import { constants, copyFileSync, createWriteStream, existsSync, renameSync, unl
 import { mkdir, writeFile, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { FileAttachment, ImageAttachment, ResolvedPastedRef } from '../shared/ipc'
+import { FOLDER_MEDIA_TYPE, type FileAttachment, type ImageAttachment, type ResolvedPastedRef } from '../shared/ipc'
 import { extOf, isImageExt, mimeForExt } from '../shared/mime'
 import { orderByMediaLabel, sanitizeMediaLabel } from '../shared/inlineMedia'
 
@@ -303,20 +303,21 @@ export async function discardDraftAttachments(convId: unknown, paths: unknown): 
 }
 
 /**
- * Resolve a pasted line that looks like a local file path. Only stats the
- * path — never reads its bytes — so there's no size cap: the agent opens the
- * ORIGINAL path itself with its own tools.
+ * Resolve a pasted line that looks like a local file or folder path. Only
+ * stats the path — never reads its bytes — so there's no size cap: the agent
+ * opens the ORIGINAL path itself with its own tools.
  */
 export async function resolvePastedPath(rawPath: string): Promise<ResolvedPastedRef> {
   const p = rawPath.trim()
   try {
     const s = await stat(p)
-    if (!s.isFile()) return { ok: false, error: 'O caminho não é um arquivo.' }
-    const name = p.split(/[\\/]+/).pop() || p
+    const name = p.split(/[\\/]+/).filter(Boolean).pop() || p
+    if (s.isDirectory()) return { ok: true, name, path: p, mediaType: FOLDER_MEDIA_TYPE, size: 0, isImage: false }
+    if (!s.isFile()) return { ok: false, error: 'O caminho não é um arquivo nem uma pasta.' }
     const ext = extOf(name)
     return { ok: true, name, path: p, mediaType: mimeForExt(ext), size: s.size, isImage: isImageExt(ext) }
   } catch {
-    return { ok: false, error: 'Arquivo não encontrado nesse caminho.' }
+    return { ok: false, error: 'Nada encontrado nesse caminho.' }
   }
 }
 

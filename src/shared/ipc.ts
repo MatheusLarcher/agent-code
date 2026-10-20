@@ -621,6 +621,9 @@ export interface FileRefAttachment {
   label?: string
 }
 
+/** mediaType de uma PASTA colada como caminho: vai ao agente só como caminho, igual arquivo. */
+export const FOLDER_MEDIA_TYPE = 'inode/directory'
+
 /** Result of resolving a pasted local path or downloading a pasted URL. */
 export type ResolvedPastedRef =
   | { ok: true; name: string; path: string; mediaType: string; size: number; isImage: boolean }

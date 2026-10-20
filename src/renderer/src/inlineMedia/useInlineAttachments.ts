@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import type { FileAttachment, ImageAttachment } from '@shared/ipc'
+import { FOLDER_MEDIA_TYPE, type FileAttachment, type ImageAttachment } from '@shared/ipc'
 import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
 import type { EditorElement } from './InlineEditor'
 import {
@@ -171,6 +171,12 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
   // Imagem pequena: bytes para o modelo + caminho original. Grande: só o caminho
   // (print colado grande, sem caminho, vira arquivo que o main grava em disco).
   async function readFile(file: File): Promise<InlineAtt | string> {
+    // Pasta copiada no Explorer ou arrastada: chega como File sem tipo; vai pelo caminho.
+    if (!file.type) {
+      const dir = diskPath(file)
+      const r = dir ? await window.api.resolvePastedPath(dir) : null
+      if (r?.ok && r.mediaType === FOLDER_MEDIA_TYPE) return makeRefAtt({ name: r.name, path: r.path, mediaType: r.mediaType, size: 0 })
+    }
     const isImage = file.type.startsWith('image/')
     const path = isImage || file.size > MAX_FILE_BYTES ? diskPath(file) : ''
     if (file.size > MAX_FILE_BYTES || (isImage && path && file.size > MAX_INLINE_IMAGE_BYTES)) return readLarge(path, file.name)
@@ -187,7 +193,7 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
     const resolved = isUrl
       ? await window.api.downloadPastedUrl(line, convIdRef.current ?? '')
       : await window.api.resolvePastedPath(line)
-    if (!resolved.ok) return `${isUrl ? 'Falha ao baixar' : 'Arquivo não encontrado'}: ${resolved.error}`
+    if (!resolved.ok) return `${isUrl ? 'Falha ao baixar' : 'Caminho não encontrado'}: ${resolved.error}`
     if (resolved.isImage && resolved.size <= MAX_INLINE_IMAGE_BYTES) {
       const bytes = await window.api.readFileBytes(resolved.path)
       if (!bytes.ok) return `Falha ao ler imagem: ${bytes.error}`

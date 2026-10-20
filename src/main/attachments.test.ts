@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
+import { FOLDER_MEDIA_TYPE } from '../shared/ipc'
 import { resolvePastedPath, downloadPastedUrl, buildAttachmentNote, imagesAsFiles } from './attachments'
 
 describe('imagesAsFiles — imagem colada vira arquivo para ganhar caminho', () => {
@@ -70,9 +71,16 @@ describe('resolvePastedPath — caminho local colado como texto', () => {
     expect(r.ok).toBe(false)
   })
 
-  it('falha quando o caminho é uma pasta, não um arquivo', async () => {
-    const r = await resolvePastedPath(dir)
-    expect(r.ok).toBe(false)
+  it('reconhece pasta (com ou sem barra no fim) como referência de pasta', async () => {
+    for (const p of [dir, `${dir}${sep}`]) {
+      const r = await resolvePastedPath(p)
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.mediaType).toBe(FOLDER_MEDIA_TYPE)
+      expect(r.name).toBe(basename(dir))
+      expect(r.size).toBe(0)
+      expect(r.isImage).toBe(false)
+    }
   })
 })
 
