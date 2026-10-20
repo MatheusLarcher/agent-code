@@ -266,6 +266,9 @@ function ConvRow({
   )
 }
 
+/** Quantas conversas do sandbox aparecem por vez. */
+export const SANDBOX_PAGE = 5
+
 export function Sidebar(props: Props): JSX.Element {
   const { collapsed, projects, recents, activeId } = props
   const ui = useUI()
@@ -283,6 +286,10 @@ export function Sidebar(props: Props): JSX.Element {
   // Index of the project marker currently under the pointer in the collapsed rail.
   // Keeping this local means the expanded sidebar and navigation remain unchanged.
   const [hoveredRailProject, setHoveredRailProject] = useState<number | null>(null)
+
+  // Sandbox: começa recolhido e mostra as conversas de 5 em 5.
+  const [sandboxOpen, setSandboxOpen] = useState(false)
+  const [sandboxShown, setSandboxShown] = useState(SANDBOX_PAGE)
 
   const toggleProject = (path: string): void =>
     setCollapsedProjects((prev) => {
@@ -411,9 +418,12 @@ export function Sidebar(props: Props): JSX.Element {
         .filter((x): x is FilteredConv => x.m != null)
     : recents.map((c) => ({ c, m: null }))
 
-  const allCollapsed = projects.length > 0 && projects.every((p) => collapsedProjects.has(p.path))
-  const toggleAllProjects = (): void =>
+  const isOpen = (p: SidebarProject): boolean => (p.sandbox ? sandboxOpen : !collapsedProjects.has(p.path))
+  const allCollapsed = projects.length > 0 && projects.every((p) => !isOpen(p))
+  const toggleAllProjects = (): void => {
     setCollapsedProjects(allCollapsed ? new Set() : new Set(projects.map((p) => p.path)))
+    setSandboxOpen(allCollapsed)
+  }
 
   return (
     <aside className="sidebar">
@@ -469,12 +479,20 @@ export function Sidebar(props: Props): JSX.Element {
           <div className="project-list">
             {visibleProjects.map(({ p, convs }) => {
               // While filtering, matching projects stay open so the hits are visible.
-              const open = q ? true : !collapsedProjects.has(p.path)
+              const open = q ? true : isOpen(p)
               const busy = convs.some((x) => props.busyIds.has(x.c.id))
+              const total = p.total ?? convs.length
+              // Sandbox: só as primeiras `sandboxShown`; "Mostrar mais 5" abre a próxima leva.
+              const shown = p.sandbox && !q ? convs.slice(0, sandboxShown) : convs
+              const sandboxRest = p.sandbox && !q ? total - shown.length : 0
               return (
                 <div className={`project-item ${open ? 'open' : ''}`} key={p.path}>
                   <div className={`project-row ${busy ? 'busy' : ''}`}>
-                    <button className="project-row-main" onClick={() => toggleProject(p.path)} title={p.path}>
+                    <button
+                      className="project-row-main"
+                      onClick={() => (p.sandbox ? setSandboxOpen((v) => !v) : toggleProject(p.path))}
+                      title={p.path}
+                    >
                       <IconChevron open={open} />
                       <span className="project-folder">
                         {busy ? (
@@ -511,11 +529,26 @@ export function Sidebar(props: Props): JSX.Element {
                   </div>
                   {open && (
                     <div className="project-convs">
-                      {convs.map(({ c, m }) => renderConv(c, true, `proj:${p.path}`, m))}
+                      {shown.map(({ c, m }) => renderConv(c, true, `proj:${p.path}`, m))}
+                      {sandboxRest > 0 && (
+                        <button
+                          type="button"
+                          className="project-more"
+                          disabled={p.loadingMore}
+                          title="Mostrar as próximas 5 conversas do sandbox"
+                          onClick={() => {
+                            const next = sandboxShown + SANDBOX_PAGE
+                            setSandboxShown(next)
+                            if (next > convs.length && p.hasMore) props.onLoadMore?.(p.path)
+                          }}
+                        >
+                          {p.loadingMore ? 'Carregando…' : `Mostrar mais ${Math.min(SANDBOX_PAGE, sandboxRest)}`}
+                        </button>
+                      )}
                       {/* Only the first page is loaded; the rest stays in the database
                           until asked for. Hidden while filtering — the filter only sees
                           what is loaded, and a "more" here would mislead. */}
-                      {!q && p.hasMore && (
+                      {!q && !p.sandbox && p.hasMore && (
                         <button
                           type="button"
                           className="project-more"

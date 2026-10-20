@@ -30,6 +30,8 @@ interface Group {
 }
 
 const SANDBOX_KEY = 'sandbox:'
+/** Conversas do sandbox mostradas por vez (de 5 em 5). */
+const SANDBOX_PAGE = 5
 
 /**
  * Agrupa por pasta como a barra do PC: as subpastas do sandbox viram UM grupo "Sandbox", no topo.
@@ -71,6 +73,7 @@ export function ConversationList(): JSX.Element {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[] | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
+  const [sandboxShown, setSandboxShown] = useState(SANDBOX_PAGE)
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null)
   const open = useStore(openProjects, (s) => s.open)
   const groups = useMemo(() => groupByProject(conversations, projects), [conversations, projects])
@@ -191,7 +194,7 @@ export function ConversationList(): JSX.Element {
                   </button>
                 }
               >
-                {g.convs.map((c) => (
+                {(g.sandbox ? g.convs.slice(0, sandboxShown) : g.convs).map((c) => (
                   <div key={c.id}>
                     <div className={`hist-row${c.id === convId ? ' active' : ''}`} role="button" onClick={() => openConversation(c.id)}>
                       <span className="hist-title">{c.title || 'Conversa'}</span>
@@ -234,6 +237,11 @@ export function ConversationList(): JSX.Element {
                     )}
                   </div>
                 ))}
+                {g.sandbox && g.convs.length > sandboxShown && (
+                  <button type="button" className="hist-row hist-more-convs" onClick={() => setSandboxShown((n) => n + SANDBOX_PAGE)}>
+                    Mostrar mais {Math.min(SANDBOX_PAGE, g.convs.length - sandboxShown)}
+                  </button>
+                )}
               </CollapsibleGroup>
             ))}
           </>

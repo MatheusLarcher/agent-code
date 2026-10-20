@@ -4,7 +4,7 @@ import { stat, readFile } from 'node:fs/promises'
 import { hostname, networkInterfaces } from 'node:os'
 import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
-import { extname, join, normalize, sep } from 'node:path'
+import { basename, extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
 import { OfficeCallsBridge } from './officeCallsBridge'
 import { HandoffNoticeBridge } from './handoffNoticeBridge'
@@ -434,7 +434,7 @@ export class RemoteServer {
       res.writeHead(200, {
         'Content-Type': 'application/vnd.android.package-archive',
         'Content-Length': String(s.size),
-        'Content-Disposition': 'attachment; filename="agent-remote.apk"'
+        'Content-Disposition': `attachment; filename="${basename(apk)}"`
       })
       createReadStream(apk).pipe(res)
     } catch {

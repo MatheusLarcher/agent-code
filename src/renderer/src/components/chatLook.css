@@ -345,3 +345,9 @@
   background: var(--ok);
   box-shadow: 0 0 0 3px #6fbf8e22;
 }
+
+/* Pensamento do agente: cartão recolhido com o cérebro; aberto mostra o texto. */
+.tool-thinking .thinking-icon { display: inline-flex; color: #b48cff; margin-right: 6px; }
+.tool-thinking .tool-name { color: #b48cff; }
+.tool-thinking .tool-detail { opacity: 0.65; font-style: italic; }
+.tool-thinking .thinking-text { white-space: pre-wrap; font-style: italic; opacity: 0.85; line-height: 1.5; padding: 8px 12px; }

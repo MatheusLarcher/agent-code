@@ -1293,6 +1293,9 @@ export class AgentSession {
       cwd: this.opts.cwd,
       model: this.opts.model,
       ...(effort ? { effort: effort as Options['effort'] } : {}),
+      // Pensamento visível: os modelos Claude novos mandam o bloco de pensamento
+      // vazio por padrão ("omitted"); pedindo o resumo, o chat consegue mostrá-lo.
+      ...(this.opts.model?.startsWith('claude-') ? { thinking: { type: 'adaptive', display: 'summarized' } as Options['thinking'] } : {}),
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.

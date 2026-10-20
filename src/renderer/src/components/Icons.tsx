@@ -198,6 +198,16 @@ export const IconMic = (p: IconProps): JSX.Element => (
   </Svg>
 )
 /** Speaker with sound waves — "read this aloud". */
+/** Cérebro (pensamento do agente) — duas metades com as dobras. */
+export const IconBrain = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0-.8 5.2A3.5 3.5 0 0 0 7 18a3 3 0 0 0 5 1.5z" />
+    <path d="M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1 .8 5.2A3.5 3.5 0 0 1 17 18a3 3 0 0 1-5 1.5z" />
+    <path d="M12 5v14.5" />
+    <path d="M8 9.5a2 2 0 0 1 2 2M16 9.5a2 2 0 0 0-2 2M8.5 15a2 2 0 0 0 1.5-1M15.5 15a2 2 0 0 1-1.5-1" />
+  </Svg>
+)
+
 export const IconSpeaker = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <path d="M4 9v6h3.5L13 19V5L7.5 9z" />

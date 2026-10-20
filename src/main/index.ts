@@ -32,6 +32,7 @@ import { AppRestartCoordinator } from './appRestart'
 import { configureAppRestart, appRestart } from './appRestartRuntime'
 import { armAppRelauncher } from './appRelauncher'
 import { RemoteServer } from './remote/remoteServer'
+import { newestApk } from './remote/newestApk'
 import { attachPlanningEvents } from './remote/planningBridge'
 import { AppIpcBridge } from './remote/appIpcBridge'
 import { isRemoteIpcEventChannel } from '../shared/remoteIpc'
@@ -1379,7 +1380,8 @@ const remote = new RemoteServer({
   search: (q) => requestRendererSearch(q),
   // Instância isolada com os ganchos de teste: só o loopback (sem aviso do firewall).
   host: () => (devDataDir() && process.env['AGENT_CODE_DEV_HOOKS'] === '1' ? '127.0.0.1' : '0.0.0.0'),
-  apkPath: () => join(REMOTE_ROOT, 'dist', 'agent-remote.apk'),
+  // O mais novo da pasta dist (release com versão no nome ou o do "Gerar APK").
+  apkPath: () => newestApk(join(REMOTE_ROOT, 'dist')),
   wwwDir: () => join(REMOTE_ROOT, 'www'),
   onClientsChanged: (info) => send(Channels.remoteClients, info),
   // Fixed pairing token, persisted in settings.json so phones stay paired.

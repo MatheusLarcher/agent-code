@@ -5,6 +5,7 @@ const PATHS: Record<string, ReactNode> = {
   download: (<><path d="M12 4v10" /><polyline points="7 11 12 16 17 11" /><line x1="5" y1="20" x2="19" y2="20" /></>),
   folder: <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   clock: (<><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15.5 14" /></>),
+  brain: (<><path d="M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0-.8 5.2A3.5 3.5 0 0 0 7 18a3 3 0 0 0 5 1.5z" /><path d="M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1 .8 5.2A3.5 3.5 0 0 1 17 18a3 3 0 0 1-5 1.5z" /><path d="M12 5v14.5" /></>),
   speaker: (<><path d="M4 9v6h3.5L13 19V5L7.5 9z" /><path d="M16.5 8.5a5 5 0 0 1 0 7" /><path d="M19 6a8 8 0 0 1 0 12" /></>),
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   sandbox: (<><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z" /><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" /></>),

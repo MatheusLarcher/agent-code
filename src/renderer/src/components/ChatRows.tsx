@@ -22,7 +22,7 @@ import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { AccountSwitchNote } from './AccountSwitchNote'
 import { TarefaAvisoNote } from './TarefaAvisoNote'
-import { IconSpeaker, IconStopSmall } from './Icons'
+import { IconBrain, IconSpeaker, IconStopSmall } from './Icons'
 import { CardRefText, type CardRefResolver } from './Markdown'
 import { LazyMarkdown } from './lazyMarkdown'
 import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
@@ -284,6 +284,26 @@ export function rowKey(m: UIMessage, idx: number): string {
  *  Em memo: só re-renderiza quando a própria mensagem (`m`) ou o contexto (`ctx`) muda — o
  *  pedaço novo da resposta em andamento não redesenha o resto da conversa. Quem monta a
  *  lista mantém `ctx` estável (useMemo) e a mensagem inalterada com a mesma referência. */
+/** Pensamento do agente: recolhido numa linha com o cérebro (como os cartões de
+ *  ferramenta); clicar abre o texto embaixo. */
+export function ThinkingCard({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const preview = text.replace(/\s+/g, ' ').trim()
+  return (
+    <div className="tool-card tool-thinking">
+      <button type="button" className="tool-head" aria-expanded={open} title={open ? 'Esconder o pensamento' : 'Ver o que o agente pensou'} onClick={() => setOpen((o) => !o)}>
+        <span className="tool-caret">{open ? '▾' : '▸'}</span>
+        <span className="thinking-icon" aria-hidden="true">
+          <IconBrain size={14} />
+        </span>
+        <span className="tool-name">Pensando</span>
+        {!open && <span className="tool-detail">{preview}</span>}
+      </button>
+      {open && <div className="tool-body thinking-text">{text}</div>}
+    </div>
+  )
+}
+
 export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: ChatRowContext }): JSX.Element | null {
   switch (m.kind) {
     case 'user':
@@ -291,11 +311,7 @@ export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: Ch
     case 'assistant-text':
       return <AssistantRow m={m} ctx={ctx} />
     case 'thinking':
-      return (
-        <div className="msg thinking">
-          <div className="bubble">{m.text}</div>
-        </div>
-      )
+      return <ThinkingCard text={m.text} />
     case 'tool-use': {
       // Planejamento: arquivo que o agente criou no plano ganha link logo abaixo.
       const created = createdPlanFile(m.name, m.input, m.result, ctx.planDir)

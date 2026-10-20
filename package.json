@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.126",
+  "version": "0.1.129",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -26,7 +26,7 @@
     "migrate-storage": "node scripts/migrate-storage.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.303",
+    "@anthropic-ai/claude-agent-sdk": "0.3.304",
     "@echogarden/espeak-ng-emscripten": "0.3.5",
     "@huggingface/transformers": "3.8.1",
     "@typesafe-ai/sdk": "^0.6.0",

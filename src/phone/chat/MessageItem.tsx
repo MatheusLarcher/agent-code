@@ -96,7 +96,7 @@ function Thinking({ id, text, light }: { id?: string; text: string; light: boole
   return (
     <div className={`msg thinking${open ? ' open' : ''}`}>
       <button type="button" className="thinking-head" onClick={() => setOpen((o) => !o)}>
-        {open ? '▾' : '▸'} Pensando…
+        {open ? '▾' : '▸'} <Icon name="brain" size={14} className="thinking-brain" /> Pensando…
       </button>
       {open && (
         <div className="thinking-body">
