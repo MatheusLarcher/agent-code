@@ -50,6 +50,10 @@ interface Entry {
   journaledVersion: number
   /** Quando chegou a mudança mais antiga ainda não gravada (ms). */
   since: number | null
+  /** A primeira mudança que chegou durante a gravação em curso: o `since` seguinte. */
+  sinceNext: number | null
+  /** Gravar e apagar o arquivo do diário em ordem: apagar nunca passa à frente de gravar. */
+  journalTail: Promise<void>
   urgent: boolean
   writing: Promise<void> | null
   lastWriteAt: number
@@ -75,6 +79,11 @@ function retryable(error: unknown): boolean {
 /** Conflito que sobrou dos rebases: disputa com outro writer, não recusa — tenta de novo. */
 function contended(error: unknown): boolean {
   return error instanceof StorageError && error.code === 'REVISION_CONFLICT'
+}
+
+/** Fence vencido (lease renovado ou sessão encerrada): a próxima tentativa relê o lease atual. */
+function leaseRefused(error: unknown): boolean {
+  return error instanceof StorageError && error.code === 'LEASE_HELD_BY_OTHER_DEVICE'
 }
 
 function iso(value: unknown): string {
@@ -124,7 +133,9 @@ export class ConversationWriteQueue {
         entry.deleted = false
       }
       entry.version += 1
-      entry.since ??= Date.now()
+      const now = Date.now()
+      entry.since ??= now
+      if (entry.writing) entry.sinceNext ??= now
       entry.error = null
       if (change.urgent) entry.urgent = true
       this.schedule(entry)
@@ -260,10 +271,10 @@ export class ConversationWriteQueue {
     return pending.length > 0 && pending.every((entry) => entry.error && !entry.writing)
   }
 
-  /** Fechamento: o que não está no banco vai inteiro para o diário. A recusa
-   *  definitiva fica de fora: reaplicada, falharia de novo a cada abertura. */
+  /** Fechamento: o que não está no banco vai inteiro para o diário — a recusa
+   *  definitiva também: é o fim da conversa, que só existe aqui. */
   async journalPending(): Promise<number> {
-    const pending = [...this.entries.values()].filter((entry) => entry.version > entry.writtenVersion && !entry.error)
+    const pending = [...this.entries.values()].filter((entry) => entry.version > entry.writtenVersion)
     await Promise.all(pending.map((entry) => this.journal(entry)))
     return pending.length
   }
@@ -300,7 +311,7 @@ export class ConversationWriteQueue {
     if (!entry) {
       entry = {
         id, doc: null, deleted: false, version: 0, writtenVersion: 0, journaledVersion: 0, since: null,
-        urgent: false, writing: null, lastWriteAt: 0, timer: null, failures: 0, retryAt: 0, error: null
+        sinceNext: null, journalTail: Promise.resolve(), urgent: false, writing: null, lastWriteAt: 0, timer: null, failures: 0, retryAt: 0, error: null
       }
       this.entries.set(id, entry)
     }
@@ -346,6 +357,8 @@ export class ConversationWriteQueue {
   }
 
   private async write(entry: Entry): Promise<void> {
+    // A versão capturada abaixo cobre tudo até aqui; o que chegar durante a gravação marca `sinceNext`.
+    entry.sinceNext = null
     const repository = this.deps.repository()
     if (!repository) {
       this.offline = true
@@ -380,20 +393,23 @@ export class ConversationWriteQueue {
       if (entry.writtenVersion >= entry.version) {
         if (entry.since !== null) this.stats.maxWaitMs = Math.max(this.stats.maxWaitMs, Date.now() - entry.since)
         entry.since = null
-        if (entry.journaledVersion) {
-          entry.journaledVersion = 0
-          void this.deps.journal.remove(entry.id).catch(() => undefined)
-        }
+      } else {
+        // Só falta o que chegou durante a gravação: a espera conta dali.
+        entry.since = entry.sinceNext ?? Date.now()
       }
+      // O banco já tem o que está no diário: o arquivo não pode sobrar mais velho que ele.
+      // (em fila com o diário: confere de novo quando chegar a vez).
+      if (entry.journaledVersion) void this.journalOp(entry, () => this.removeIfCovered(entry))
     } catch (error) {
       this.stats.failed += 1
       const message = error instanceof Error ? error.message : String(error)
-      if (contended(error) || retryable(error)) {
-        if (!contended(error)) this.offline = true
+      const reason = contended(error) ? 'conflito de revisão' : leaseRefused(error) ? 'lease recusado' : retryable(error) ? 'banco indisponível' : null
+      if (reason) {
+        if (!contended(error) && !leaseRefused(error)) this.offline = true
         entry.urgent = entry.urgent || urgent
         entry.failures += 1
         this.retryLater(entry)
-        this.deps.log?.(`[fila] ${entry.id}: ${contended(error) ? 'conflito de revisão' : 'banco indisponível'}, nova tentativa (${message})`)
+        this.deps.log?.(`[fila] ${entry.id}: ${reason}, nova tentativa (${message})`)
       } else {
         entry.error = message
         this.lastError = message
@@ -414,7 +430,8 @@ export class ConversationWriteQueue {
       const now = Date.now()
       let waiting = false
       for (const entry of this.entries.values()) {
-        if (entry.version <= entry.writtenVersion || entry.error) continue
+        // Recusa definitiva já no diário: nada a esperar até a próxima mudança (que religa o timer).
+        if (entry.version <= entry.writtenVersion || (entry.error && entry.journaledVersion >= entry.version)) continue
         waiting = true
         if (entry.since !== null && now - entry.since >= JOURNAL_AFTER_MS && entry.journaledVersion < entry.version) {
           void this.journal(entry)
@@ -429,17 +446,33 @@ export class ConversationWriteQueue {
     this.journalTimer.unref?.()
   }
 
-  private async journal(entry: Entry): Promise<void> {
-    const version = entry.version
-    if (entry.journaledVersion >= version || (!entry.deleted && !entry.doc)) return
-    try {
-      await this.deps.journal.save({ id: entry.id, deleted: entry.deleted, doc: entry.deleted ? null : entry.doc, since: entry.since ?? Date.now() })
-      entry.journaledVersion = Math.max(entry.journaledVersion, version)
+  private journal(entry: Entry): Promise<void> {
+    return this.journalOp(entry, async () => {
+      const version = entry.version
+      if (entry.journaledVersion >= version || entry.writtenVersion >= version || (!entry.deleted && !entry.doc)) return
+      try {
+        await this.deps.journal.save({ id: entry.id, deleted: entry.deleted, doc: entry.deleted ? null : entry.doc, since: entry.since ?? Date.now() })
+        entry.journaledVersion = Math.max(entry.journaledVersion, version)
+      } catch (error) {
+        this.deps.log?.(`[fila] diário de ${entry.id} falhou: ${error instanceof Error ? error.message : String(error)}`)
+        return
+      }
       // Gravou no banco enquanto o diário era escrito: o arquivo já não vale.
-      if (entry.writtenVersion >= entry.version) void this.deps.journal.remove(entry.id).catch(() => undefined)
-    } catch (error) {
-      this.deps.log?.(`[fila] diário de ${entry.id} falhou: ${error instanceof Error ? error.message : String(error)}`)
-    }
+      await this.removeIfCovered(entry)
+    })
+  }
+
+  /** Apaga o arquivo se o banco cobre o que está nele. Falhou: fica a marca, e a
+   *  próxima gravação no banco tenta de novo. */
+  private async removeIfCovered(entry: Entry): Promise<void> {
+    if (!entry.journaledVersion || entry.writtenVersion < entry.journaledVersion) return
+    await this.deps.journal.remove(entry.id).then(() => { entry.journaledVersion = 0 }, () => undefined)
+  }
+
+  private journalOp(entry: Entry, op: () => Promise<void>): Promise<void> {
+    const next = entry.journalTail.then(op)
+    entry.journalTail = next.catch(() => undefined)
+    return next
   }
 
   private statusChanged(): void {

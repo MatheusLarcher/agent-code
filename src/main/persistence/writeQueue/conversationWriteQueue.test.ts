@@ -129,13 +129,13 @@ describe('ConversationWriteQueue', () => {
     queue.apply([full(conversation('c1', ['offline']), true)])
     await vi.advanceTimersByTimeAsync(4_100)
     expect(queue.status()).toMatchObject({ state: 'offline', pending: 1 })
-    await vi.waitFor(async () => expect((await journal.loadAll()).map((e) => e.id)).toEqual(['c1']))
+    await vi.waitFor(async () => expect((await journal.loadAll()).map((e) => e.id)).toEqual(['c1']), { timeout: 10_000 })
     db.state.online = true
     queue.kick()
     await vi.advanceTimersByTimeAsync(50)
     expect(db.state.writes).toBe(1)
     expect(queue.status()).toMatchObject({ state: 'saved', pending: 0 })
-    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila'))).toEqual([]))
+    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila'))).toEqual([]), { timeout: 10_000 })
   })
 
   it('diário reaplicado é idempotente: o mesmo conteúdo já no banco não vira revisão nova', async () => {

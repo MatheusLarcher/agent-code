@@ -1,6 +1,14 @@
 import { CENTRAL_ID } from '../../../shared/central'
 import { mergeCentralConversation, normalizeCentralState } from '../../../shared/centralMerge'
-import { attachProjectIdentity, isMissingProjectFolderError, preserveProjectIdentityForMissingPersistedWrite, type ProjectIdentity } from '../projectIdentity'
+import {
+  attachProjectIdentity,
+  isMissingProjectFolderError,
+  isProjectIdentityMismatchError,
+  preserveProjectIdentityForMissingPersistedWrite,
+  sameProjectFolder,
+  withoutProjectIdentity,
+  type ProjectIdentity
+} from '../projectIdentity'
 import type { LeaseRenewal } from '../conversationWriteRecovery'
 import {
   StorageError,
@@ -72,8 +80,19 @@ async function withIdentity(ctx: WriteContext, doc: ConversationRecord): Promise
   try {
     return await attachProjectIdentity(doc, ctx.identity)
   } catch (cause) {
-    if (!isMissingProjectFolderError(cause)) throw cause
-    return preserveProjectIdentityForMissingPersistedWrite(doc, (await stored(ctx.repository, String(doc.id)))?.payload)
+    if (isMissingProjectFolderError(cause)) {
+      return preserveProjectIdentityForMissingPersistedWrite(doc, (await stored(ctx.repository, String(doc.id)))?.payload)
+    }
+    if (!isProjectIdentityMismatchError(cause)) throw cause
+    // A identidade vem do remote + root commit: adicionar ou trocar o remote do git
+    // muda a identidade da MESMA pasta. Se a pasta é a já gravada desta conversa,
+    // ela adota a identidade atual; outra pasta continua recusada.
+    const persisted = (await stored(ctx.repository, String(doc.id)))?.payload
+    if (typeof doc.cwd !== 'string' ||
+      typeof persisted?.cwd !== 'string' ||
+      persisted.id !== doc.id ||
+      !sameProjectFolder(persisted.cwd, doc.cwd)) throw cause
+    return attachProjectIdentity(withoutProjectIdentity(doc), ctx.identity)
   }
 }
 

@@ -7,6 +7,8 @@ import { StorageError, type ConversationRecord } from './types'
 
 const execFileAsync = promisify(execFile)
 const MISSING_PROJECT_FOLDER_MESSAGE = 'A pasta selecionada não existe.'
+const SIGNATURE_MISMATCH_MESSAGE = 'A pasta selecionada não corresponde ao projeto desta conversa.'
+const PROJECT_ID_MISMATCH_MESSAGE = 'A identidade da pasta selecionada não corresponde ao projeto.'
 const PROJECT_IDENTITY_FIELDS = ['projectId', 'projectSignature', 'projectRemoteGit'] as const
 
 export interface ProjectIdentity {
@@ -67,6 +69,25 @@ export function isMissingProjectFolderError(cause: unknown): boolean {
     cause.message === MISSING_PROJECT_FOLDER_MESSAGE
 }
 
+export function isProjectIdentityMismatchError(cause: unknown): boolean {
+  return cause instanceof StorageError &&
+    cause.code === 'INVALID_PERSISTED_DATA' &&
+    (cause.message === SIGNATURE_MISMATCH_MESSAGE || cause.message === PROJECT_ID_MISMATCH_MESSAGE)
+}
+
+/** Mesma pasta depois de `resolve()`; no Windows sem diferenciar maiúsculas. */
+export function sameProjectFolder(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  const left = resolve(a)
+  const right = resolve(b)
+  return platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+export function withoutProjectIdentity(payload: ConversationRecord): ConversationRecord {
+  const result = { ...payload }
+  for (const field of PROJECT_IDENTITY_FIELDS) delete result[field]
+  return result
+}
+
 /**
  * An existing legacy conversation can retain a device-local cwd whose folder
  * was moved or deleted. Updating its history is still safe when the renderer
@@ -100,10 +121,10 @@ export async function attachProjectIdentity(
   if (typeof payload.cwd !== 'string' || !payload.cwd.trim()) return payload
   const identity = await resolve(payload.cwd)
   if (typeof payload.projectSignature === 'string' && payload.projectSignature !== identity.signature) {
-    throw new StorageError('INVALID_PERSISTED_DATA', 'A pasta selecionada não corresponde ao projeto desta conversa.')
+    throw new StorageError('INVALID_PERSISTED_DATA', SIGNATURE_MISMATCH_MESSAGE)
   }
   if (typeof payload.projectId === 'string' && payload.projectId !== identity.projectId) {
-    throw new StorageError('INVALID_PERSISTED_DATA', 'A identidade da pasta selecionada não corresponde ao projeto.')
+    throw new StorageError('INVALID_PERSISTED_DATA', PROJECT_ID_MISMATCH_MESSAGE)
   }
   return {
     ...payload,
