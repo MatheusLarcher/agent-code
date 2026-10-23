@@ -3,7 +3,7 @@ import { buildPublicUrl } from './RemoteModal'
 
 describe('buildPublicUrl — QR aponta para o host público (VPS)', () => {
   it('host:porta vira http://host:porta/?token=…', () => {
-    expect(buildPublicUrl('191.96.251.106:8765', 'tok123')).toBe('http://191.96.251.106:8765/?token=tok123')
+    expect(buildPublicUrl('203.0.113.10:8765', 'tok123')).toBe('http://203.0.113.10:8765/?token=tok123')
   })
   it('aceita URL completa http(s) e mantém o origin', () => {
     expect(buildPublicUrl('https://remoto.larchertech.com', 'tok')).toBe(
