@@ -13,6 +13,7 @@ import { answerAppIpc, appIpcEventLine, type AppIpcBridge } from './appIpcBridge
 import { isRemoteIpcEventChannel } from '../../shared/remoteIpc'
 import { RemoteConversationStore, type RemoteMessageSource } from './remoteConversations'
 import { serveProjectIcon } from './projectIconRoute'
+import { parseStopTaskBody } from '../backgroundTaskStop'
 import { detailsByIds, historyPage, historyWindow, lightenMessages } from './remoteHistory'
 import type { RemoteSearchResult } from '../../shared/remoteSearch'
 import { CENTRAL_ID, parseCentralChoose, parseReplyTo, type RemoteCentralChoose } from '../../shared/central'
@@ -45,6 +46,8 @@ export interface RemoteServerDeps {
   onInbound: (convId: string, text: string, images?: ImageAttachment[], files?: FileAttachment[], replyTo?: string) => void
   /** A phone asked to stop the running turn of a conversation. */
   onInterrupt?: (convId: string) => void
+  /** O celular parou UMA tarefa de fundo (ids já validados); true se o SDK aceitou. */
+  onStopTask?: (convId: string, taskId: string) => Promise<boolean>
   /** A phone toggled a per-conversation mode (fast). */
   onSetMode?: (convId: string, mode: 'fast', on: boolean) => void
   /** A phone managed conversations: create in a project, rename, delete. */
@@ -390,6 +393,7 @@ export class RemoteServer {
       if (path === '/api/state') return this.serveState(res)
       if (path === '/api/pair' && req.method === 'POST') return this.servePair(req, url, res)
       if (path === '/api/interrupt' && req.method === 'POST') return this.serveInterrupt(req, res)
+      if (path === '/api/stop-task' && req.method === 'POST') return this.serveStopTask(req, res)
       if (path === '/api/set-mode' && req.method === 'POST') return this.serveSetMode(req, res)
       if (path === '/api/conversation' && req.method === 'POST') return this.serveConversationAction(req, res)
       if (path === '/api/skip-perms' && req.method === 'POST') return this.serveSetSkipPerms(req, res)
@@ -629,6 +633,14 @@ export class RemoteServer {
     if (!convId) return sendJson(res, 400, { ok: false, error: 'convId obrigatório' })
     this.deps.onInterrupt?.(convId)
     sendJson(res, 200, { ok: true })
+  }
+
+  /** Celular → PC: parar UMA tarefa de fundo (backgroundTaskStop.ts valida); `ok` diz se o SDK aceitou. */
+  private async serveStopTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const target = parseStopTaskBody(await readBody(req))
+    if (!target) return sendJson(res, 400, { ok: false, error: 'convId e taskId são obrigatórios' })
+    const ok = (await this.deps.onStopTask?.(target.convId, target.taskId).catch(() => false)) ?? false
+    sendJson(res, 200, { ok })
   }
 
   private async serveSetMode(req: IncomingMessage, res: ServerResponse): Promise<void> {

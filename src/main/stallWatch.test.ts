@@ -1,13 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import {
+  API_RETRY_GRACE_MS,
   isStalled,
   stallAbortText,
+  stallSuppressed,
   stallVerdict,
   STALL_ABORT_MS,
   STALL_ABORT_TOOL_MS,
   STALL_THRESHOLD_MS,
   STALL_THRESHOLD_TOOL_MS
 } from './stallWatch'
+
+describe('stallSuppressed — silêncio que não é travamento', () => {
+  const now = 1_000_000
+
+  it('permissão ou pergunta pendente: suprime', () => {
+    expect(stallSuppressed({ pendingPermissions: 1, retryAt: null, now })).toBe(true)
+  })
+
+  it('retry agendado: suprime até retryAt + folga (inclusive), depois não', () => {
+    const retryAt = now - API_RETRY_GRACE_MS
+    expect(stallSuppressed({ pendingPermissions: 0, retryAt, now })).toBe(true)
+    expect(stallSuppressed({ pendingPermissions: 0, retryAt, now: now + 1 })).toBe(false)
+    expect(stallSuppressed({ pendingPermissions: 0, retryAt: now + 30_000, now })).toBe(true)
+  })
+
+  it('sem espera nenhuma: não suprime', () => {
+    expect(stallSuppressed({ pendingPermissions: 0, retryAt: null, now })).toBe(false)
+    expect(stallSuppressed({ pendingPermissions: 0, retryAt: undefined, now })).toBe(false)
+  })
+})
 
 describe('stallVerdict — aviso e travamento definitivo', () => {
   it('limiares em ordem: aviso antes do encerramento, com e sem ferramenta', () => {

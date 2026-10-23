@@ -4,6 +4,7 @@
  * travado e a Central. Nada percorre mensagens — o estado leve de uma conversa
  * só é remontado quando uma dessas peças mudou.
  */
+import type { ApiRetryState } from '@shared/apiRetry'
 
 export interface RemoteLightInputs<C extends { id: string }> {
   conv: C
@@ -15,6 +16,12 @@ export interface RemoteLightInputs<C extends { id: string }> {
   stalled: number | undefined
   /** Início da compactação em curso (epoch ms), ou undefined. */
   compacting?: number
+  /** Nova tentativa da API agendada (cada evento traz um objeto novo), ou undefined. */
+  apiRetry?: ApiRetryState
+  /** Sugestão do próximo prompt (o chip), ou undefined. */
+  suggestion?: string
+  /** Chave dos subagentes rodando (remoteSubagentsKey: ids, rótulos e resumos). */
+  subagents?: string
   /** O retrato da Central (só nela; null nas outras). */
   central: unknown
   /** Modelo/esforço que valem fora da conversa (no Agent Manager, a config dele). */
@@ -30,6 +37,9 @@ const same = <C extends { id: string }>(a: RemoteLightInputs<C>, b: RemoteLightI
   a.permission === b.permission &&
   a.stalled === b.stalled &&
   a.compacting === b.compacting &&
+  a.apiRetry === b.apiRetry &&
+  a.suggestion === b.suggestion &&
+  (a.subagents ?? '') === (b.subagents ?? '') &&
   a.central === b.central
 
 export class RemoteLightDiff<C extends { id: string }> {

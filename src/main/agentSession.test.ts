@@ -1640,6 +1640,13 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
     expect(append).not.toContain('The folder already exists; just')
   })
 
+  it('leva as regras do app (resources/agent.md) no system prompt', async () => {
+    const { s } = makeSession()
+    await s.start()
+    const append = (optionsOfLastQuery().systemPrompt as { append: string }).append
+    expect(append).toContain('## Front-end: usar as skills de front')
+  })
+
   it('envia todas as memórias uma vez no system prompt inicial', async () => {
     const memories = await mkdtemp(join(tmpdir(), 'agent-session-memory-start-'))
     await mkdir(join(memories, 'produto'))

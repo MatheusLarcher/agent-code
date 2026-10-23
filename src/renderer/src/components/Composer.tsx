@@ -37,6 +37,7 @@ import { useComposerElements } from './elementPick/useComposerElements'
 import { boxMetrics, composerBoxHeight } from './composerHeight'
 import { enterSendsTyped, matchSlashEntries } from './slashMenu'
 import { useHasTextSignal, type HasTextListener } from './useHasTextSignal'
+import { appendInjected, type ComposerInject } from './promptSuggestion'
 
 const NO_CARDS: readonly RefCard[] = []
 
@@ -87,6 +88,9 @@ interface Props {
    *  full app re-render per letter — see `flushDraft` below). `media` só vem
    *  quando o rascunho tem anexo. */
   onDraftChange: (convId: string, text: string, media?: DraftMedia[]) => void
+  /** Texto posto no campo por quem monta (a sugestão do próximo prompt): entra no
+   *  fim do que está na caixa a cada `nonce` novo, nunca envia. */
+  inject?: ComposerInject | null
   /** True when the conversation's project folder no longer exists — blocks typing
    *  (the box becomes read-only and any interaction shows the error). */
   projectMissing: boolean
@@ -313,6 +317,27 @@ export function Composer(props: Props): JSX.Element {
       setValue(media.load(props.convId ?? '', props.draft, props.draftMedia))
     }
   }, [props.convId, props.draft])
+
+  // Texto injetado (a sugestão do próximo prompt): vai depois do que está na caixa —
+  // inclusive o digitado e ainda não salvo —, com o foco e o cursor no fim. Só um
+  // nonce NOVO decide: o que já estava ao montar não entra de novo.
+  const injectNonce = props.inject?.nonce
+  const appliedInject = useRef(injectNonce)
+  useEffect(() => {
+    if (injectNonce === appliedInject.current) return
+    appliedInject.current = injectNonce
+    const add = props.inject?.text
+    if (!add) return
+    const next = appendInjected(valueRef.current, add)
+    updateValue(next)
+    const ta = editorRef.current
+    if (ta) {
+      requestAnimationFrame(() => {
+        ta.focus()
+        ta.setSelectionRange(next.length, next.length)
+      })
+    }
+  }, [injectNonce])
 
   // Extra safety net: the whole app losing OS focus (e.g. Alt+Tab, closing via
   // Alt+F4) doesn't necessarily blur the textarea first — flush on window blur

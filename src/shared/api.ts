@@ -635,6 +635,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   waitTurnEnd(convId: string): Promise<TurnEndWait>
   /** `restart`: a troca silenciosa de sessão (config nova entre turnos) — não é o Stop do usuário. */
   interrupt(convId: string, opts?: { restart?: boolean }): Promise<AgentInterruptResult>
+  /** Para UMA tarefa de fundo (o turno e as outras seguem); false sem sessão ou se o SDK recusar. */
+  stopTask(convId: string, taskId: string): Promise<boolean>
   /** Toggle "allow all" on a conversation's running session. */
   setBypass(convId: string, on: boolean): Promise<void>
   respondPermission(convId: string, res: PermissionResponse): Promise<void>

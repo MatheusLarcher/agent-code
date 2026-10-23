@@ -61,6 +61,13 @@ export const IconArrowRight = (p: IconProps): JSX.Element => (
     <polyline points="13 6 19 12 13 18" />
   </Svg>
 )
+/** "Em seguida": a sugestão do próximo prompt. */
+export const IconCornerDownRight = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <polyline points="15 10 20 15 15 20" />
+    <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+  </Svg>
+)
 export const IconArrowUp = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <line x1="12" y1="19" x2="12" y2="5" />

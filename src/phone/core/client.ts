@@ -471,6 +471,17 @@ export class RemoteClient {
       this.patchConv(msg.convId, { compactingSince: ev.active ? ev.since : undefined })
       return
     }
+    if (ev.kind === 'api-retry') {
+      this.patchConv(msg.convId, {
+        apiRetry: ev.active ? { attempt: ev.attempt, maxRetries: ev.maxRetries, retryAt: ev.retryAt, status: ev.status, error: ev.error } : undefined
+      })
+      return
+    }
+    // Sugestão do próximo prompt (null = começou um turno): só o chip, nunca o feed.
+    if (ev.kind === 'prompt-suggestion') {
+      this.patchConv(msg.convId, { suggestion: ev.text ?? undefined })
+      return
+    }
     if (msg.convId === OFFICE_CONV_ID) {
       // Aviso de handoff (handoffNoticeBridge): só toast, com o app aberto.
       const notice = msg.event as unknown as { kind?: string }
@@ -670,6 +681,15 @@ export class RemoteClient {
     const convId = this.state.convId
     if (!convId) return Promise.resolve()
     return this.post('/api/interrupt', { convId }).then(() => this.fetchState())
+  }
+
+  /** Para UMA tarefa de fundo da conversa aberta (o turno segue); true se o PC confirmou. */
+  async stopTask(taskId: string): Promise<boolean> {
+    const convId = this.state.convId
+    if (!convId) return false
+    const r = await this.post('/api/stop-task', { convId, taskId })
+    void this.fetchState().catch(() => undefined)
+    return r.ok === true
   }
 
   /** Rápido da conversa aberta (otimista). */

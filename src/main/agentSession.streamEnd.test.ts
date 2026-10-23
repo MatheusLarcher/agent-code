@@ -228,13 +228,13 @@ describe('AgentSession — travamento definitivo (timers falsos)', () => {
     expect(interrupt).toHaveBeenCalledTimes(1)
   })
 
-  it('permissão esperando o usuário: não encerra (só o aviso)', async () => {
+  it('permissão esperando o usuário: nem encerra nem acusa "sem resposta" (a espera é dele)', async () => {
     const { events, internals, interrupt } = await setup()
     internals.pendingPermissions.set('perm-1', { toolName: 'Bash', input: {}, resolve: vi.fn() })
     vi.advanceTimersByTime(STALL_ABORT_TOOL_MS + STALL_POLL_MS)
     expect(interrupt).not.toHaveBeenCalled()
     expect(errors(events)).toEqual([])
-    expect(events.filter((e) => e.kind === 'stall-status').at(-1)).toMatchObject({ stalled: true })
+    expect(events.filter((e) => e.kind === 'stall-status' && e.stalled)).toEqual([])
     internals.pendingPermissions.clear()
   })
 })

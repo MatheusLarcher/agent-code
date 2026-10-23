@@ -86,6 +86,20 @@ describe('buildCrew', () => {
     expect(lineText(depois[1].line)).toBe('Bash npm test')
   })
 
+  it('com o resumo do SDK, passada a chegada, a linha é o resumo; sem ele, como antes', () => {
+    const task = { id: 'task-1', status: 'running' as const, lastToolName: 'Bash', summary: 'Analisando o módulo de autenticação' }
+    const comResumo = buildCrew(input({ tracks: { t1: track({ task }) } }))
+    expect(lineText(comResumo[1].line)).toBe('Analisando o módulo de autenticação')
+    // Nos primeiros segundos a manchete continua sendo a chegada.
+    const chegando = buildCrew(input({ tracks: { t1: track({ startedAt: T - 900, task }) } }))
+    expect(lineText(chegando[1].line)).toBe('começou agora · Bash')
+    // Subagente fora do cadastro também.
+    const avulso = buildCrew(input({ tracks: { x: track({ id: 'x', subagentType: 'Explore', task }) } }))
+    expect(lineText(avulso.find((m) => m.id === 'track:x')!.line)).toBe('Analisando o módulo de autenticação')
+    const semResumo = buildCrew(input({ tracks: { t1: track({ task: { ...task, summary: '  ' } }) } }))
+    expect(lineText(semResumo[1].line)).toBe('Bash npm test')
+  })
+
   it('o principal diz a quem delegou, não só que está ocupado', () => {
     const crew = buildCrew(input({ tracks: { t1: track() }, busy: true, busySince: T - 9_000 }))
     expect(lineText(crew[0].line)).toBe('delegando · Agent → executor')

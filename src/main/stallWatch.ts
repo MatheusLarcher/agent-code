@@ -47,6 +47,17 @@ export function stallVerdict(now: number, lastActivityAt: number, toolInFlight: 
   return isStalled(now, lastActivityAt, toolInFlight) ? 'warn' : 'ok'
 }
 
+/** Folga depois do horário da nova tentativa da API agendada pelo CLI: até lá o
+ *  silêncio é a espera dele, não travamento. Igual ao limiar do aviso. */
+export const API_RETRY_GRACE_MS = 60_000
+
+/** O silêncio não conta — nem aviso nem abort: o app espera o usuário (permissão
+ *  ou pergunta pendente) ou a nova tentativa da API (até `retryAt` + folga). */
+export function stallSuppressed(input: { pendingPermissions: number; retryAt: number | null | undefined; now: number }): boolean {
+  if (input.pendingPermissions > 0) return true
+  return typeof input.retryAt === 'number' && input.now <= input.retryAt + API_RETRY_GRACE_MS
+}
+
 /** Texto do terminal do travamento definitivo (minutos inteiros, mínimo 1). */
 export function stallAbortText(idleMs: number): string {
   const minutes = Math.max(1, Math.round(idleMs / 60_000))

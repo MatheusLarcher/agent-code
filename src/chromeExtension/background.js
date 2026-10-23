@@ -12,6 +12,7 @@ const PING_MS = 20_000
 const HELLO_TIMEOUT_MS = 3_000
 const RECONNECT_ALARM = 'agent-code-reconnect'
 const GROUP_TITLE = 'Agent Code'
+const GROUP_COLOR = 'orange'
 const WAIT_MAX_MS = 25_000
 const EVAL_MAX_CHARS = 8000
 
@@ -171,7 +172,9 @@ function waitLoad(tabId, timeout = 15_000) {
 async function addToGroup(tab) {
   const [group] = await chrome.tabGroups.query({ title: GROUP_TITLE, windowId: tab.windowId })
   const groupId = await chrome.tabs.group(group ? { groupId: group.id, tabIds: [tab.id] } : { tabIds: [tab.id] })
-  if (!group) await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'purple' })
+  // O Chrome só aceita a paleta fixa dele; 'orange' é a mais perto do laranja do
+  // Agent Code (#d97757). Grupo antigo (roxo) também troca de cor.
+  if (!group || group.color !== GROUP_COLOR) await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: GROUP_COLOR })
 }
 
 /** Aba com debugger acoplado; devolve o id. */

@@ -11,7 +11,11 @@ import { appRestart } from './appRestartRuntime'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
-import { stallAbortText, stallVerdict, STALL_POLL_MS } from './stallWatch'
+import { stallAbortText, stallSuppressed, stallVerdict, STALL_POLL_MS } from './stallWatch'
+import { apiRetryFrom, cliNoticeText } from './cliNotices'
+import { RefusalBubbleIndex, refusalFallbackEvents, refusalFallbackFrom } from './refusalFallback'
+import { promptSuggestionFrom } from './promptSuggestion'
+import type { ApiRetryState } from '../shared/apiRetry'
 import { logSession } from './sessionLog'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
 import { withTodoTools } from './todoToolsEnv'
@@ -47,6 +51,7 @@ import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writ
 import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
 import { buildSpecialistAgents } from './agents/specialists'
 import { TASKS_HINT } from './agents/tasksHint'
+import { AGENT_RULES_HINT } from './agents/agentRules'
 import { APP_DISABLED_PLUGINS, handoffSessionEnv } from './agents/sessionTuning'
 import { StageCompaction, stageCompactCeiling } from './agents/stageCompaction'
 import { applyPlanningSessionOptions, handoffAppendBlock, planGateApplies, sessionSkillDenial, sessionWriteScopes } from './planning/planningSession'
@@ -665,6 +670,9 @@ export class AgentSession {
   /** O modelo com que a sessão subiu (evento `system` init) — o que vale para
    *  uma resposta sem `model`. Nunca o sentinela do Automático. */
   private sessionModel = ''
+  /** uuid de cada resposta do agente → as bolhas de texto dela, para a recusa
+   *  do modelo reescrevê-las (refusalFallback.ts). */
+  private readonly refusalBubbles = new RefusalBubbleIndex()
   /** Root `node_id` of the CURRENT turn — the token-usage tree's root node for
    *  the main agent. Lazily created (see `getTurnId`) and replaced on every
    *  new user turn (`beginTurn`). */
@@ -764,6 +772,8 @@ export class AgentSession {
   private stalled = false
   /** O CLI está compactando (evento `compacting` aceso na tela)? */
   private compacting = false
+  /** Nova tentativa da API agendada pelo CLI no turno (evento `api-retry` aceso). */
+  private apiRetry: ApiRetryState | null = null
   /** Turno encerrado por travamento definitivo: os ids dele (rabo a engolir). */
   private stallAborted: { turnIds: string[] } | null = null
   private stallTimer: ReturnType<typeof setInterval> | undefined
@@ -804,6 +814,8 @@ export class AgentSession {
   private beginTurn(): void {
     this.turnActive = true
     if (!this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { working: true })
+    // Turno novo: a sugestão do anterior não vale mais (o chip some no PC e no celular).
+    this.emit({ kind: 'prompt-suggestion', text: null })
     // A new turn is a new root node for the token-usage tree: fresh turnId,
     // fresh delegation map (a subagent's tool-use id from a past turn will
     // never come back, so nothing is lost by dropping it here).
@@ -847,17 +859,28 @@ export class AgentSession {
   private checkStall(): void {
     // Fora de um turno o silêncio é o estado normal, não uma falha.
     if (!this.turnActive || this.disposed) return
+    const now = Date.now()
+    // Esperando o usuário (permissão/pergunta) ou a nova tentativa da API: nem
+    // aviso nem abort. A espera pelo usuário também não conta como silêncio do
+    // CLI — respondida, a contagem recomeça dali, e não acusa "sem resposta" na hora.
+    if (stallSuppressed({ pendingPermissions: this.pendingPermissions.size, retryAt: this.apiRetry?.retryAt, now })) {
+      if (this.pendingPermissions.size > 0) this.lastActivityAt = now
+      if (this.stalled) {
+        this.stalled = false
+        this.emit({ kind: 'stall-status', stalled: false, since: now })
+      }
+      return
+    }
     const toolInFlight = this.toolsInFlight.size > 0
-    const verdict = stallVerdict(Date.now(), this.lastActivityAt, toolInFlight)
-    // Permissão/pergunta esperando o usuário não é o CLI travado: só avisa.
-    if (verdict === 'abort' && this.pendingPermissions.size === 0) {
+    const verdict = stallVerdict(now, this.lastActivityAt, toolInFlight)
+    if (verdict === 'abort') {
       this.abortStalledTurn(toolInFlight)
       return
     }
     if (verdict === 'ok' || this.stalled) return
     this.stalled = true
     this.emit({ kind: 'stall-status', stalled: true, since: this.lastActivityAt })
-    logSession('stall-warn', { convId: this.opts.convId, toolInFlight, idleMs: Date.now() - this.lastActivityAt })
+    logSession('stall-warn', { convId: this.opts.convId, toolInFlight, idleMs: now - this.lastActivityAt })
   }
 
   /**
@@ -922,6 +945,46 @@ export class AgentSession {
     if (this.compacting === active) return
     this.compacting = active
     this.emit({ kind: 'compacting', active, since: Date.now() })
+  }
+
+  /** Nova tentativa da API agendada (cada uma traz contagem e prazo novos) ou o
+   *  fim da espera (`null`). O fim só emite se havia espera acesa: ele chega por
+   *  vários caminhos (resposta, `result`, erro, fim do turno). */
+  private setApiRetry(state: ApiRetryState | null): void {
+    if (!state && !this.apiRetry) return
+    this.apiRetry = state
+    this.emit(state ? { kind: 'api-retry', active: true, ...state } : { kind: 'api-retry', active: false })
+  }
+
+  /** Aviso do CLI (negação sem perguntar, linha do loop, notificação) como linha
+   *  `status`. Só com o turno aberto: fora dele um `status` religaria o "ocupado"
+   *  da tela e do celular (conta como atividade) sem `result` para desligá-lo. */
+  private emitCliNotice(message: unknown): void {
+    const text = cliNoticeText(message)
+    if (!text) return
+    if (this.turnActive) this.emit({ kind: 'status', id: nextId(), text })
+    else console.log(`[cli-notice] fora do turno, conv=${this.opts.convId}: ${text}`)
+  }
+
+  /** Recusa com troca de modelo (refusalFallback.ts): no escopo da sessão, ela
+   *  passa a responder no fallback; a tela reescreve o que foi recusado. */
+  private applyRefusalFallback(message: unknown): void {
+    const refusal = refusalFallbackFrom(message)
+    if (!refusal) return
+    if (refusal.scope === 'session') this.sessionModel = refusal.fallbackModel
+    logSession('model-refusal', { convId: this.opts.convId, model: refusal.originalModel, fallbackModel: refusal.fallbackModel })
+    // Fora do turno a bolha e a linha religariam o "ocupado" (PC e celular).
+    if (!this.turnActive) {
+      console.log(`[recusa] fora do turno, conv=${this.opts.convId}: ${refusal.originalModel} → ${refusal.fallbackModel}`)
+      return
+    }
+    const events = refusalFallbackEvents(refusal, {
+      bubblesOf: (uuid) => this.refusalBubbles.take(uuid),
+      effort: this.opts.effort,
+      fastMode: this.opts.fastMode === true,
+      newId: nextId
+    })
+    for (const event of events) this.emit(event)
   }
 
   /** O comando em segundo plano retornou: a trava passa a esperar a próxima lista de tarefas do SDK. */
@@ -1173,6 +1236,8 @@ export class AgentSession {
     let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
     append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}\n\n${APP_PRINT_HINT}`
+    // Regras do app para todos os usuários (resources/agent.md).
+    append += `\n\n${AGENT_RULES_HINT}`
     if (ledger) append += `\n\n${TASKS_HINT}`
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
@@ -1296,6 +1361,10 @@ export class AgentSession {
       // Pensamento visível: os modelos Claude novos mandam o bloco de pensamento
       // vazio por padrão ("omitted"); pedindo o resumo, o chat consegue mostrá-lo.
       ...(this.opts.model?.startsWith('claude-') ? { thinking: { type: 'adaptive', display: 'summarized' } as Options['thinking'] } : {}),
+      // Resumo ao vivo de cada subagente (~30 s, no `task_progress`) e sugestão do
+      // próximo prompt (depois do `result`): só no Claude, que reaproveita o cache;
+      // nos outros seria um pedido extra sem cache.
+      ...(this.opts.model?.startsWith('claude-') ? { agentProgressSummaries: true, promptSuggestions: true } : {}),
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.
@@ -1950,6 +2019,22 @@ export class AgentSession {
    */
   async interruptForScrum(): Promise<boolean> {
     return (await this.requestInterrupt('O Scrum Master interrompeu o turno.', false)) !== null
+  }
+
+  /** Para UMA tarefa de fundo (backgroundTaskStop.ts): o turno e as outras seguem.
+   *  False sem query ou se o SDK recusar; a linha some com o `background_tasks_changed`. */
+  async stopTask(taskId: string): Promise<boolean> {
+    const q = this.q
+    if (!q) return false
+    try {
+      await q.stopTask(taskId)
+      logSession('task-stop', { convId: this.opts.convId, taskId, threw: false })
+      return true
+    } catch (error) {
+      logSession('task-stop', { convId: this.opts.convId, taskId, threw: true })
+      console.warn(`[task-stop] conv=${this.opts.convId} task=${taskId}:`, error)
+      return false
+    }
   }
 
   /** Pede a interrupção ao CLI e solta as permissões. `null`: não havia turno para
@@ -2636,6 +2721,23 @@ ${lines}
               description: task.description
             }))
           })
+        } else if ((message as { subtype?: string }).subtype === 'api_retry') {
+          // O CLI vai tentar a chamada de novo depois de uma espera (cliNotices.ts):
+          // a faixa mostra o motivo e o prazo, e o watchdog não acusa a espera.
+          const retry = apiRetryFrom(message, Date.now())
+          if (retry && this.turnActive) this.setApiRetry(retry)
+        } else if (
+          (message as { subtype?: string }).subtype === 'permission_denied' ||
+          (message as { subtype?: string }).subtype === 'informational' ||
+          (message as { subtype?: string }).subtype === 'notification'
+        ) {
+          this.emitCliNotice(message)
+        } else if ((message as { subtype?: string }).subtype === 'model_refusal_fallback') {
+          this.applyRefusalFallback(message)
+        } else if ((message as { subtype?: string }).subtype === 'model_refusal_no_fallback') {
+          // Recusou sem refazer: o erro do turno já aparece na tela — só o registro.
+          const original = (message as { original_model?: unknown }).original_model
+          logSession('model-refusal', { convId: this.opts.convId, ...(typeof original === 'string' ? { model: original } : {}) })
         } else {
           // task_started/progress/updated/notification: o ciclo da tarefa (agentTasks.ts).
           const task = this.agentTasks.translate(message)
@@ -2644,11 +2746,14 @@ ${lines}
         break
 
       case 'stream_event':
+        // A resposta voltou a chegar: a espera da nova tentativa acabou.
+        this.setApiRetry(null)
         this.noteTurnFrame(message)
         this.handleStreamEvent(message.event as RawStreamEvent, message.parent_tool_use_id ?? null)
         break
 
       case 'assistant': {
+        this.setApiRetry(null)
         // Antes do limite de uso: o frame do erro de cota também abre o turno.
         this.noteTurnFrame(message)
         if (this.machineClaudeLogin && isClaudeAuthFailure(message)) {
@@ -2695,7 +2800,9 @@ ${lines}
             noteScrumAgentText(this.opts.convId, block.text)
           }
         }
-        this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track, model)
+        const bubbles = this.handleAssistant(blocks, (message as { aborted?: boolean }).aborted === true, track, model)
+        // A recusa do modelo retira respostas pelo uuid: guarda as bolhas que esta virou.
+        this.refusalBubbles.remember((message as { uuid?: unknown }).uuid, bubbles)
         break
       }
 
@@ -2882,6 +2989,14 @@ ${lines}
         break
       }
 
+      // O próximo pedido provável, depois do `result` (fora do turno). Chegou com
+      // outro turno já aberto: é do turno anterior, não vai à tela.
+      case 'prompt_suggestion': {
+        const text = promptSuggestionFrom(message)
+        if (text && !this.turnActive) this.emit({ kind: 'prompt-suggestion', text })
+        break
+      }
+
       default:
         break
     }
@@ -2900,6 +3015,8 @@ ${lines}
     this.toolInput.finishAll()
     // Fim, erro, interrupção ou travamento: a linha "Compactando…" nunca fica presa.
     this.setCompacting(false)
+    // Nem a espera da nova tentativa da API (o `result` passa por aqui também).
+    this.setApiRetry(null)
     if (!this.turnActive && this.idleWaiters.size === 0) return
     this.turnActive = false
     // O dispose fecha o turno DEPOIS de tirar a sessão do registro: não recriar.
@@ -2943,8 +3060,9 @@ ${lines}
     return chosen && !isAutoModel(chosen) ? chosen : ''
   }
 
-  private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK, model = ''): void {
-    let emittedText = false
+  /** Emite os blocos de uma resposta; devolve os ids das bolhas de texto (a recusa do modelo as reescreve). */
+  private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK, model = ''): string[] {
+    const textIds: string[] = []
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
         // Text/thinking from a SUBAGENT must never land in the chat feed — it
@@ -2952,10 +3070,11 @@ ${lines}
         // it when `forwardSubagentText` is on (it isn't), so this is a guard,
         // not a live path.
         if (track.parentToolUseId) continue
-        emittedText = true
+        const id = this.liveId ?? nextId()
+        textIds.push(id)
         this.emit({
           kind: 'assistant-text',
-          id: this.liveId ?? nextId(),
+          id,
           text: block.text,
           final: true,
           ...(aborted ? { aborted: true as const } : {})
@@ -2983,11 +3102,13 @@ ${lines}
     }
     // Some aborted frames carry no completed text block even though partial
     // deltas already painted text. Re-emit that live row only to attach the flag.
-    if (aborted && !emittedText && this.liveId && this.liveText) {
+    if (aborted && textIds.length === 0 && this.liveId && this.liveText) {
+      textIds.push(this.liveId)
       this.emit({ kind: 'assistant-text', id: this.liveId, text: this.liveText, final: true, aborted: true })
     }
     this.liveId = null
     this.liveText = ''
+    return textIds
   }
 
   private handleUser(content: AssistantBlock[] | string, parentToolUseId: string | null = null): void {

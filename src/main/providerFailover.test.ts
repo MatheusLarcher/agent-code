@@ -35,6 +35,20 @@ function stub() {
 }
 const settled = async (): Promise<void> => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 
+describe('parar uma tarefa de fundo', () => {
+  it('vai à sessão atual com o id; descartada (ou sem o método) → false', async () => {
+    const h = harness()
+    expect(await h.session.stopTask('t1')).toBe(false)
+    const stopTask = vi.fn(async () => true)
+    Object.assign(h.records[0].session, { stopTask })
+    expect(await h.session.stopTask('t1')).toBe(true)
+    expect(stopTask).toHaveBeenCalledWith('t1')
+    h.session.dispose()
+    expect(await h.session.stopTask('t2')).toBe(false)
+    expect(stopTask).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('provider failover', () => {
   it.each([['claude-opus-5-5', 'gpt-6.1-sol'], ['gpt-6-astra', 'claude-opus-5-5']])('continues %s on %s exactly once with the same transcript', async (from, to) => {
     const h = harness(from)

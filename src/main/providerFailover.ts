@@ -41,7 +41,7 @@ function interruptedNote(interrupted: readonly string[] | null): string {
 }
 
 type Session = Pick<AgentSession, 'start' | 'send' | 'dispose' | 'interrupt' | 'setBypass' | 'resolvePermission' | 'holdQuestion' | 'refreshUsage' | 'waitForIdle' | 'resumeAfterQuota' | 'continuationState' | 'restoreContinuation'> &
-  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'isAlive' | 'injectNow' | 'storageRestored' | 'restartActivity' | 'interruptForScrum'>>
+  Partial<Pick<AgentSession, 'hasBackgroundWork' | 'isAlive' | 'injectNow' | 'storageRestored' | 'restartActivity' | 'interruptForScrum' | 'stopTask'>>
 type Factory = (options: StartAgentOptions, emit: (event: ChatEvent) => void, complete: () => void) => Session
 
 /** Troca de conta com o turno fechado: a de fim de turno e a manual do painel. */
@@ -473,6 +473,8 @@ export class ProviderFailoverSession {
     }
     return receipt
   }
+  /** Para UMA tarefa de fundo da sessão atual, sem as marcas do Stop (o turno segue). */
+  async stopTask(taskId: string): Promise<boolean> { return !this.disposed && !!this.current.stopTask && this.current.stopTask(taskId) }
   /** Corte do Scrum Master, sem as marcas do Stop: `false` sem turno ou no meio de uma troca. */
   async interruptForScrum(): Promise<boolean> {
     if (this.disposed || this.switching || !this.current.interruptForScrum) return false

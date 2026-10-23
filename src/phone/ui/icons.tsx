@@ -18,6 +18,7 @@ const PATHS: Record<string, ReactNode> = {
   rocket: (<><path d="M12 3c3.5 2 5 5.5 5 9.5L15 16H9l-2-3.5C7 8.5 8.5 5 12 3z" /><circle cx="12" cy="10" r="1.6" /><path d="M9 16l-2.5 3.5M15 16l2.5 3.5M12 16v4" /></>),
   trash: (<><line x1="4" y1="7" x2="20" y2="7" /><path d="M9.5 7V4.5h5V7" /><path d="M6.5 7l1 13h9l1-13" /><line x1="10.5" y1="11" x2="10.5" y2="16" /><line x1="13.5" y1="11" x2="13.5" y2="16" /></>),
   reply: (<><polyline points="9 14 4 9 9 4" /><path d="M20 20v-7a4 4 0 0 0-4-4H4" /></>),
+  followup: (<><polyline points="15 10 20 15 15 20" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></>),
   back: (<><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></>),
   camera: (<><rect x="3" y="7" width="18" height="12" rx="2" /><path d="M8 7l1.5-2h5L16 7" /><circle cx="12" cy="13" r="3" /></>),
   image: (<><rect x="3" y="4.5" width="18" height="15" rx="2" /><circle cx="8.5" cy="9.5" r="1.6" /><path d="M21 16l-5-5L5 19" /></>),

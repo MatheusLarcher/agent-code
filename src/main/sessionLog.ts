@@ -28,6 +28,10 @@ export type SessionLogEvent =
   | 'stream-ended'
   | 'turn-error'
   | 'lease-lost'
+  /** O modelo recusou a resposta (stop_reason refusal); `fallbackModel` só quando o CLI a refez em outro. */
+  | 'model-refusal'
+  /** O usuário parou UMA tarefa de fundo (`taskId`; `threw` quando o SDK recusou). */
+  | 'task-stop'
 
 export type SessionLogReason =
   | 'auto-pair'
@@ -45,8 +49,12 @@ export interface SessionLogFields {
   convId?: string
   reason?: SessionLogReason
   model?: string
+  /** O modelo em que o CLI refez a resposta recusada. */
+  fallbackModel?: string
   effort?: string
   account?: string
+  /** A tarefa de fundo parada (id do SDK, nunca a descrição). */
+  taskId?: string
   resume?: boolean
   background?: boolean
   incomplete?: boolean
@@ -61,7 +69,7 @@ export interface SessionLogFields {
   turnIds?: readonly string[]
 }
 
-const STRING_KEYS = ['convId', 'reason', 'model', 'effort', 'account'] as const
+const STRING_KEYS = ['convId', 'reason', 'model', 'fallbackModel', 'effort', 'account', 'taskId'] as const
 const BOOLEAN_KEYS = ['resume', 'background', 'incomplete', 'retryable', 'usageExhausted', 'threw', 'toolInFlight', 'cwdChanged', 'mcpChanged'] as const
 const MAX_STRING = 120
 const MAX_IDS = 16

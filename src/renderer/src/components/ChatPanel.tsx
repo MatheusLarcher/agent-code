@@ -8,6 +8,7 @@ import type {
   QueuedAfterInterrupt
 } from '@shared/ipc'
 import { contextLimitFor, fastModeTransport } from '@shared/ipc'
+import { apiRetryText, type ApiRetryState } from '@shared/apiRetry'
 import type { TurnRecovery, UIMessage } from '../types'
 import type { CrewMember } from '../crew'
 import { MessageList, type TtsControls } from './MessageList'
@@ -18,6 +19,8 @@ import { CrewChip } from './CrewChip'
 import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
+import { PromptSuggestionChip } from './PromptSuggestionChip'
+import type { ComposerInject } from './promptSuggestion'
 import { VigiaChip, type VigiaDoubt } from './VigiaChip'
 import { IconClock, IconHelp, IconChevronDown, IconWarning, IconZap } from './Icons'
 import { TokenUsagePanel } from './TokenUsagePanel'
@@ -82,21 +85,25 @@ function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: nu
  * O texto afirma o que é observável ("sem resposta há X"), não um diagnóstico:
  * o turno continua vivo e pode terminar sozinho. Nada é cancelado por isto.
  */
-function WorkingBanner({ stalledSince, compacting }: { stalledSince?: number; compacting?: boolean }): JSX.Element {
+function WorkingBanner({ stalledSince, compacting, apiRetry }: { stalledSince?: number; compacting?: boolean; apiRetry?: ApiRetryState }): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
+  // O relógio só tique com algo a contar: o silêncio ou o prazo da nova tentativa.
+  const ticking = !!stalledSince || !!apiRetry
   useEffect(() => {
-    if (!stalledSince) return
+    if (!ticking) return
     setNow(Date.now())
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [stalledSince])
+  }, [ticking])
 
   return (
     <div className={`working-banner${stalledSince ? ' stalled' : ''}`} role="status" aria-live="polite">
-      <ChatLoader className="working-loader" compacting={compacting} />
+      <ChatLoader className="working-loader" compacting={compacting && !apiRetry} />
       <span className="working-text">
         {stalledSince ? (
           <>Sem resposta há {fmtDuration(Math.max(0, now - stalledSince))}</>
+        ) : apiRetry ? (
+          <>{apiRetryText(apiRetry, now)}</>
         ) : compacting ? (
           <>
             Agent está compactando a conversa<span className="working-dots" />
@@ -146,6 +153,9 @@ interface Props {
   /** Epoch ms do início da compactação em curso (evento `compacting`): a linha
    *  ao vivo e a faixa viram o aviso "Compactando a conversa…". */
   compactingSince?: number
+  /** Nova tentativa da API agendada pelo CLI (evento `api-retry`): a faixa diz o
+   *  motivo e quanto falta. Perde só para o "sem resposta". */
+  apiRetry?: ApiRetryState
   /** Independent high-risk permission warning, constrained to the chat column. */
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
@@ -220,6 +230,12 @@ interface Props {
   /** Abre o painel de agentes (o chip é só o atalho pra ele). */
   onOpenAgents?: () => void
   backgroundTasks?: BackgroundTask[]
+  /** Para UMA tarefa de fundo (o turno segue); o App avisa a falha. */
+  onStopBackgroundTask?: (taskId: string) => Promise<unknown>
+  /** Sugestão do próximo prompt da conversa (chip acima do composer, só sem turno rodando). */
+  suggestion?: string
+  /** O chip foi usado: o texto já foi para o campo; o App a tira (some também no celular). */
+  onUseSuggestion?: () => void
   queuedAfterInterrupt?: QueuedAfterInterrupt[]
   /** When the active conversation's task started (ms epoch), or null if idle. */
   runningSince: number | null
@@ -341,6 +357,8 @@ export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
+  // O texto que o chip da sugestão põe no campo (a cada nonce novo, sem enviar).
+  const [inject, setInject] = useState<ComposerInject | null>(null)
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
   const { compact, hideWindowsBanner, hideLastUsage, usageMini, onComposerHasText } = useChatDisplay()
   // "Comentar" num bloco da resposta: "[trecho N]" inline no cursor do campo de mensagem.
@@ -421,7 +439,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.topNotice}
 
-      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} />}
+      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} apiRetry={props.apiRetry} />}
 
       {messages.length === 0 && (
         <div className="empty-state">
@@ -491,8 +509,15 @@ export function ChatPanel(props: Props): JSX.Element {
           chamada Task/Agent (ChatSubagent.tsx). */}
       <CrewChip working={props.crewWorking ?? []} onOpen={() => props.onOpenAgents?.()} />
 
-      <BackgroundTasksCard tasks={props.backgroundTasks ?? []} />
+      <BackgroundTasksCard tasks={props.backgroundTasks ?? []} onStop={props.onStopBackgroundTask} />
       <InterruptQueueWarning messages={props.queuedAfterInterrupt ?? []} />
+      <PromptSuggestionChip
+        text={busy ? undefined : props.suggestion}
+        onUse={(text) => {
+          setInject((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }))
+          props.onUseSuggestion?.()
+        }}
+      />
 
       {!compact && !hideLastUsage && (
         <div className="last-usage-float" aria-label="Consumo da última resposta">
@@ -603,6 +628,7 @@ export function ChatPanel(props: Props): JSX.Element {
         draft={props.draft}
         draftMedia={props.draftMedia}
         onDraftChange={props.onDraftChange}
+        inject={inject}
         projectMissing={props.projectMissing}
         projectMissingMsg={props.projectMissingMsg}
         projectRoot={props.projectRoot}

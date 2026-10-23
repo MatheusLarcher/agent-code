@@ -22,6 +22,7 @@ import { ProviderFailoverSession } from './providerFailover'
 import { createConversationLock } from './conversationLock'
 import { createStepRunner, RESUME_PREPARE_DEADLINE_MS } from './sessionSteps'
 import { initSessionLog, logSession } from './sessionLog'
+import { stopBackgroundTask } from './backgroundTaskStop'
 import { initFreezeLog, logFreezes } from './freezeLog'
 import { startMemoryWatch } from './memoryWatch'
 import { warmMemoryFileCache } from './memory/memoryFileCache'
@@ -1345,6 +1346,8 @@ const remote = new RemoteServer({
     send(Channels.remoteInbound, { convId, text, images, files, ...(replyTo ? { replyTo } : {}) })
   },
   onInterrupt: (convId) => send(Channels.remoteInterrupt, { convId }),
+  // Parar uma tarefa de fundo vai direto à sessão: não mexe em estado de tela.
+  onStopTask: (convId, taskId) => stopBackgroundTask(sessions.get(convId), convId, taskId),
   onSetMode: (convId, mode, on) => send(Channels.remoteSetMode, { convId, mode, on }),
   onConversationAction: (action) => send(Channels.remoteConversationAction, action),
   createSandboxDir: sandboxCreateResult,
@@ -2871,6 +2874,11 @@ export function registerIpc(): void {
     if (session) logSession('session-stop', { convId, reason: 'stop', background: session.hasBackgroundWork() })
     return (await session?.interrupt()) ?? { stillQueued: [] }
   })
+
+  // UMA tarefa de fundo (backgroundTaskStop.ts valida os ids): o turno e as outras seguem.
+  ipcMain.handle(Channels.agentStopTask, (_e, convId: unknown, taskId: unknown) =>
+    stopBackgroundTask(typeof convId === 'string' ? sessions.get(convId) : undefined, convId, taskId)
+  )
 
   // MCP de entrada: o renderer montou o ouvinte (e carregou as conversas), ou
   // conta que uma tarefa não chegou à conversa / saiu da fila sem rodar.

@@ -7,6 +7,7 @@
  * o "■ parar" — o único status do turno (não há mais a faixa "trabalhando…" embaixo).
  */
 import type { ReactNode } from 'react'
+import { apiRetryText, type ApiRetryState } from '@shared/apiRetry'
 import { COMPACTING_LABEL } from '@shared/compacting'
 import { ChatLoader } from '@renderer/components/ChatLoader'
 import { stepActivity, type ChatRowItem } from '@renderer/components/chatSteps'
@@ -78,30 +79,36 @@ export interface Live {
   stalledSince?: number
   /** A conversa está sendo compactada desde então: "Compactando a conversa…" e o tempo dela. */
   compactingSince?: number
+  /** Nova tentativa da API agendada pelo CLI: o motivo e quanto falta (vence o compactando). */
+  apiRetry?: ApiRetryState
 }
 
 /**
  * O único status do turno: o loading no trilho (ChatLoader, o mesmo do PC), o que
- * faz agora (ou "Compactando a conversa…", ou "sem resposta há…"), o tempo e o "■ parar".
+ * faz agora (ou a nova tentativa da API, ou "Compactando a conversa…", ou "sem
+ * resposta há…"), o tempo e o "■ parar".
  */
-export function LiveRow({ text, since, stalledSince, compactingSince }: Live): JSX.Element {
-  const now = useTick(!!since || !!stalledSince || !!compactingSince)
+export function LiveRow({ text, since, stalledSince, compactingSince, apiRetry }: Live): JSX.Element {
+  const now = useTick(!!since || !!stalledSince || !!compactingSince || !!apiRetry)
   const stop = (): void => {
     client.interrupt().catch((err) => toast('Não consegui parar: ' + errorText(err)))
   }
-  const compacting = !stalledSince && !!compactingSince
+  const retrying = !stalledSince && !!apiRetry
+  const compacting = !stalledSince && !retrying && !!compactingSince
   const clock = compacting ? compactingSince : since
-  const cls = `turn-item live${stalledSince ? ' stalled' : ''}${compacting ? ' compacting' : ''}`
+  const cls = `turn-item live${stalledSince ? ' stalled' : ''}${retrying ? ' retrying' : ''}${compacting ? ' compacting' : ''}`
   return (
     <div className={cls} aria-live="polite">
       <ChatLoader compacting={compacting} className="live-loader" />
       <div className="live-row">
         {stalledSince ? (
           <span className="live-stalled">Sem resposta há {fmtElapsed(stalledSince, now)}</span>
+        ) : retrying && apiRetry ? (
+          <span className="live-retry">{apiRetryText(apiRetry, now)}</span>
         ) : (
           <span className={compacting ? 'live-compacting' : 'shimmer'}>{compacting ? COMPACTING_LABEL : text}</span>
         )}
-        {clock && !stalledSince ? <span className="live-t">{fmtElapsed(clock, now)}</span> : null}
+        {clock && !stalledSince && !retrying ? <span className="live-t">{fmtElapsed(clock, now)}</span> : null}
         <button type="button" className="live-stop" title="Parar o turno" aria-label="Parar" onClick={stop}>
           ■ parar
         </button>

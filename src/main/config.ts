@@ -5,6 +5,7 @@ import {
   defaultAppConfig,
   mergeAppConfig,
   normalizeAllowedAutoModels,
+  normalizeAutoModeClassifierModel,
   normalizeMemorySelector,
   normalizeSkillOverrides,
   parseStoredAppConfig
@@ -63,7 +64,13 @@ const FIELDS: Field[] = [
   // não é lista de textos volta ao padrão [] em vez de derrubar o boot.
   { key: 'config.typesafe.allowedAutoModels', get: (c) => c.typesafe.allowedAutoModels, patch: (v) => ({ typesafe: { allowedAutoModels: normalizeAllowedAutoModels(v) } as AppConfig['typesafe'] }) },
   // Ausente (config de antes do seletor) ou ilegível = 'haiku', o padrão.
-  { key: 'config.memorySelector', get: (c) => c.memorySelector, patch: (v) => ({ memorySelector: normalizeMemorySelector(v) }) }
+  { key: 'config.memorySelector', get: (c) => c.memorySelector, patch: (v) => ({ memorySelector: normalizeMemorySelector(v) }) },
+  // Ausente ou fora da lista = Sonnet 5.5, o padrão.
+  {
+    key: 'config.autoModeClassifierModel',
+    get: (c) => c.autoModeClassifierModel,
+    patch: (v) => ({ autoModeClassifierModel: normalizeAutoModeClassifierModel(v) })
+  }
 ]
 
 /** Every KV key the config persists, in write order. Exported so a test can hold

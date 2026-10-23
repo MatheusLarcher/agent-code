@@ -188,7 +188,11 @@ function memberFromTrack(
   if (alsoRunning > 1) base.kind = `${alsoRunning} em paralelo`
 
   if (running) {
-    if (!last) {
+    const summary = track.task?.summary?.trim()
+    if (summary && now - track.startedAt >= JUST_STARTED_MS) {
+      // Passada a chegada, o resumo do SDK (agentProgressSummaries) diz o que ele faz melhor que a ferramenta da vez.
+      base.line = [txt(summary)]
+    } else if (!last) {
       base.line = [txt('iniciando…')]
     } else if (now - track.startedAt < JUST_STARTED_MS) {
       // Nos primeiros segundos o que importa é que ELE ENTROU — a ferramenta

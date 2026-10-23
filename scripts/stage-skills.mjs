@@ -58,8 +58,10 @@ function bundledDirs() {
 if (process.argv[2] === '--verify') {
   const appDir = resolve(process.argv[3] ?? '')
   const packed = skillNames(join(appDir, '.agents', 'seed-skills'))
-  const missing = skillNames(STAGED).filter((name) => !packed.includes(name))
-  if (packed.length === 0 || missing.length > 0) {
+  const staged = skillNames(STAGED)
+  const missing = staged.filter((name) => !packed.includes(name))
+  // Semente vazia é válida: todas as skills do cache já vão por .agents ou são privadas.
+  if (missing.length > 0) {
     console.error(`Skills: instalador sem as skills do cache (faltando: ${missing.join(', ') || 'todas'}).`)
     process.exit(1)
   }

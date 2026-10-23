@@ -1,4 +1,6 @@
 import { query, type CanUseTool, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { AutoModeClassifierModel } from '../../shared/ipc'
+import { autoModeClassifierEnv, configuredAutoModeClassifierModel } from '../autoModeClassifier'
 
 /**
  * O MODO "PO COM FERRAMENTAS": uma consulta do Agent SDK com as ferramentas do
@@ -48,6 +50,8 @@ export interface PoAgentRequest {
   cwd: string
   model: string
   env?: NodeJS.ProcessEnv
+  /** Modelo do classificador do modo auto; ausente = o das Configurações. */
+  autoModeClassifierModel?: AutoModeClassifierModel
   /** Pastas fora do projeto que o PO lê (os arquivos exportados para a avaliação). */
   additionalDirectories?: string[]
   maxTurns?: number
@@ -90,7 +94,8 @@ export function poAgentOptions(req: PoAgentRequest, abortController: AbortContro
   return {
     cwd: req.cwd,
     model: req.model,
-    ...(req.env ? { env: req.env } : {}),
+    // Sessão 'auto': o classificador usa o modelo escolhido nas Configurações.
+    env: autoModeClassifierEnv(req.env ?? process.env, req.autoModeClassifierModel ?? configuredAutoModeClassifierModel()),
     // O CLI empacotado roda no Node do sistema, não no binário do Electron.
     executable: 'node',
     abortController,

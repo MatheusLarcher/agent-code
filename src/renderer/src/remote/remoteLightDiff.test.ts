@@ -44,6 +44,38 @@ describe('RemoteLightDiff — só o que mudou vai para o celular', () => {
     expect(diff.diff([item(a, { busy: true })], false).changed).toHaveLength(1)
   })
 
+  it('cada nova tentativa da API e o fim dela mandam a conversa de novo (a linha ao vivo do celular)', () => {
+    const diff = new RemoteLightDiff<C>()
+    const a = { id: 'a', title: 'A' }
+    const r1 = { attempt: 1, maxRetries: 10, retryAt: 5000, status: 529, error: 'overloaded' }
+    diff.diff([item(a, { busy: true })], true)
+    expect(diff.diff([item(a, { busy: true, apiRetry: r1 })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { busy: true, apiRetry: r1 })], false).changed).toHaveLength(0)
+    expect(diff.diff([item(a, { busy: true, apiRetry: { ...r1, attempt: 2 } })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { busy: true })], false).changed).toHaveLength(1)
+  })
+
+  it('sugestão do próximo prompt chegando, trocada ou tirada manda a conversa de novo (o chip do celular)', () => {
+    const diff = new RemoteLightDiff<C>()
+    const a = { id: 'a', title: 'A' }
+    diff.diff([item(a)], true)
+    expect(diff.diff([item(a, { suggestion: 'Rode os testes' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { suggestion: 'Rode os testes' })], false).changed).toHaveLength(0)
+    expect(diff.diff([item(a, { suggestion: 'Faça o commit' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a)], false).changed).toHaveLength(1)
+  })
+
+  it('subagente entrando, resumo novo e o fim deles mandam a conversa de novo (a faixa do celular)', () => {
+    const diff = new RemoteLightDiff<C>()
+    const a = { id: 'a', title: 'A' }
+    diff.diff([item(a, { busy: true })], true)
+    expect(diff.diff([item(a, { busy: true, subagents: 't1\u0000Executor\u0000' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { busy: true, subagents: 't1\u0000Executor\u0000' })], false).changed).toHaveLength(0)
+    expect(diff.diff([item(a, { busy: true, subagents: 't1\u0000Executor\u0000Rodando os testes' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { busy: true, subagents: '' })], false).changed).toHaveLength(1)
+    expect(diff.diff([item(a, { busy: true })], false).changed).toHaveLength(0)
+  })
+
   it('a config do Agent Manager trocada (modelKey) e o invalidate (pedido recusado) mandam a conversa de novo', () => {
     const diff = new RemoteLightDiff<C>()
     const a = { id: 'a', title: 'A' }

@@ -4,7 +4,8 @@ Meta: o app do celular (`src/phone`, empacotado em `smartfone-remote/`) deve faz
 o app do PC faz. Este documento é o inventário do que já existe e do que falta. Ele **não** é
 um plano fechado: cada item vira tarefa quando for atacado.
 
-Levantamento de 06/10/2026, atualizado em 07/10/2026. As rotas da ponte estão em
+Levantamento de 06/10/2026, atualizado em 07/10/2026 e em 23/10/2026 (visibilidade e controle
+do turno: retry da API, negação, recusa, subagentes, tarefas de fundo, sugestão). As rotas da ponte estão em
 `src/main/remote/remoteServer.ts:343-363` (as de planejamento em `src/main/remote/planningBridge.ts`)
 e o retrato de conversa enviado ao celular em `src/shared/ipc.ts:2460-2503`.
 
@@ -33,6 +34,12 @@ Legenda: **sim** = já existe · **parcial** = existe em parte · **não** = fal
 | Fila de mensagens (Mandar agora / remover) | parcial (só o eco "Na fila") | Rotas `queue-send-now` e `queue-delete`; `queued[]` já vem no retrato |
 | Modelo, esforço, modos Econ./Loop/Rápido | sim | — |
 | Parar turno, recuperar turno | sim | — |
+| Retry da API (motivo, prazo e contagem na faixa "trabalhando") | sim (linha ao vivo do turno; estado `apiRetry` no retrato) | — |
+| Negação sem perguntar, com o motivo (e avisos do CLI) | sim (linha de status no chat, igual ao PC) | — |
+| Recusa do modelo (troca visível, texto recusado substituído) | sim (aviso de troca e bolha reescrita no mesmo id; o seletor segue o modelo do retrato) | — |
+| Resumo ao vivo dos subagentes | sim (faixa acima do composer: papel · resumo · tempo) | — |
+| Tarefas em segundo plano, com o parar de cada uma | sim (cartão acima do composer; rota `POST /api/stop-task`) | — |
+| Sugestão do próximo prompt (chip acima do composer) | sim (o toque põe no campo, sem enviar) | Tocar no celular esconde só o chip do celular; o do PC some no próximo turno |
 | Permissões e AskUserQuestion, "Permitir tudo" | sim | — |
 | Plano de tarefas (TodoWrite) | sim | — |
 | Conversas: lista, busca, nova, renomear, excluir | sim | — |

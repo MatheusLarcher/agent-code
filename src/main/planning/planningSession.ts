@@ -3,6 +3,7 @@ import type { McpServerConfig, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { HandoffGuidance } from '../../shared/handoffGuidance'
 import type { StartAgentOptions } from '../../shared/ipc'
 import { MEDIA_DIR } from '../../shared/planningMedia'
+import { AGENT_RULES_HINT } from '../agents/agentRules'
 import { ENTREGA_ESTIMAR_TOOL, ENTREGA_TEMPO_TOOL } from '../handoffTracking/entregaTools'
 import type { ScopedTask } from '../tasks/writeScopeGuard'
 import {
@@ -49,7 +50,7 @@ export interface PlanningSessionSetup {
   createServer?: (ctx: PlanningToolContext) => McpServerConfig
 }
 
-/** O system prompt (append) do Manager: as instruções dele e, depois, a memória. */
+/** O system prompt (append) do Manager: as instruções dele, as regras do app e, depois, a memória. */
 export function buildPlanningAppend(
   projectCwd: string,
   slug: string,
@@ -62,7 +63,7 @@ export function buildPlanningAppend(
     sandboxDir: planningSandboxDir(projectCwd, slug),
     guidance
   })
-  return [hint, ...memoryBlocks.filter((block) => block.trim())].join('\n\n')
+  return [hint, AGENT_RULES_HINT, ...memoryBlocks.filter((block) => block.trim())].join('\n\n')
 }
 
 /**

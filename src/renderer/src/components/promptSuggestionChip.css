@@ -1,0 +1,57 @@
+/* ---- sugestão do próximo prompt (PromptSuggestionChip.tsx) ----
+   Mesmo lugar e formato do chip do elenco, acima do composer. A borda tracejada
+   diz "proposta, ainda não é sua": vira contínua no hover, quando a mão chega. */
+.prompt-suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  flex-shrink: 0;
+  max-width: calc(100% - 24px);
+  min-height: 30px;
+  margin: 0 12px 8px;
+  padding: 0 12px 0 10px;
+  border: 1px dashed var(--accent-dim);
+  border-radius: 999px;
+  background: var(--bg-3);
+  /* É um <button>: sem `font: inherit` o Chromium usa a fonte de controle do sistema. */
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  animation: prompt-suggestion-in 0.18s ease-out;
+}
+.prompt-suggestion-chip:hover {
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-3));
+}
+.prompt-suggestion-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.prompt-suggestion-icon {
+  flex: none;
+  color: var(--accent);
+}
+.prompt-suggestion-label {
+  flex: none;
+  color: var(--muted);
+}
+.prompt-suggestion-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes prompt-suggestion-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt-suggestion-chip {
+    animation: none;
+  }
+}

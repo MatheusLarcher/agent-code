@@ -4,6 +4,7 @@ import type { PlanMediaDto } from './planningMedia'
 import type { RemoteCentral } from './central'
 import type { HandoffEnvioStatus } from './handoffTracking'
 import type { StepState } from './stepProgress'
+import type { ApiRetryState } from './apiRetry'
 
 /**
  * Identidade de turno: os `messageUuid` (o que o renderer passa ao `agent:send`) de
@@ -121,6 +122,16 @@ export type ChatEvent =
    *  Estado, não conteúdo, como o `stall-status`: só acende/apaga a linha viva
    *  "Compactando a conversa…". `since` = epoch ms do início (ou do fim). */
   | { kind: 'compacting'; active: boolean; since: number }
+  /** O CLI vai tentar de novo uma chamada à API que falhou (`system/api_retry`,
+   *  shared/apiRetry.ts), ou a espera acabou (próxima resposta, fim/erro do turno).
+   *  Estado, não conteúdo, como o `compacting`: só muda a faixa "trabalhando" e a
+   *  linha ao vivo do celular. `retryAt` = epoch ms da nova tentativa. */
+  | ({ kind: 'api-retry'; active: true } & ApiRetryState)
+  | { kind: 'api-retry'; active: false }
+  /** A sugestão do próximo prompt (`prompt_suggestion` do SDK, só nos modelos
+   *  Claude), depois do `result`; `null` = começou um turno e ela não vale mais.
+   *  Estado, não conteúdo: vira o chip acima do composer, nunca bolha. */
+  | { kind: 'prompt-suggestion'; text: string | null }
   /** Reparo do espelho do transcript (mirrorRepair.ts). Estado, não conteúdo:
    *  `deferred` = a mensagem `messageUuid` NÃO foi enviada porque o banco ainda
    *  não voltou; o renderer a devolve para a cabeça da fila de espera.
@@ -1913,7 +1924,23 @@ export interface AppConfig {
   typesafe: TypeSafeConfig
   /** Quem escolhe as memórias do turno (see MemorySelectorMode). */
   memorySelector: MemorySelectorMode
+  /** Modelo do classificador do modo auto do CLI (see AutoModeClassifierModel). */
+  autoModeClassifierModel: AutoModeClassifierModel
 }
+
+/** Modelo do classificador que, nas sessões com `permissionMode: 'auto'`, decide
+ *  se uma ação roda sem perguntar. Vai para o CLI pela variável
+ *  `CLAUDE_CODE_AUTO_MODE_MODEL`; 'auto' não define a variável (o CLI decide). */
+export type AutoModeClassifierModel = 'auto' | 'claude-haiku-5-5' | 'claude-sonnet-5-5' | 'claude-opus-5-5'
+
+export const AUTO_MODE_CLASSIFIER_MODELS: readonly { id: AutoModeClassifierModel; label: string }[] = [
+  { id: 'auto', label: 'Automático' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' }
+]
+
+export const DEFAULT_AUTO_MODE_CLASSIFIER_MODEL: AutoModeClassifierModel = 'claude-sonnet-5-5'
 
 /** Seletor de memória por turno. 'haiku' (padrão): uma chamada curta ao Haiku
  *  com os caminhos, os cabeçalhos e a conversa, que também abastece os
@@ -2204,7 +2231,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     allowedAutoModels: []
   },
   // Haiku por padrão: não depende de serviço externo e vê a conversa inteira.
-  memorySelector: 'haiku'
+  memorySelector: 'haiku',
+  // Sonnet 5.5 por padrão: o classificador oficial (Sonnet 5) é mais fraco, e o
+  // Opus custa mais por decisão. Só vale com o CLI sem a trava (scripts/build-installer.bat).
+  autoModeClassifierModel: DEFAULT_AUTO_MODE_CLASSIFIER_MODEL
 }
 
 /** Where per-user data lives: the SQLite db (config/token/conversations) + .md memories. */
@@ -2482,6 +2512,8 @@ export const Channels = {
   /** Botão "agora" da fila: a mensagem entra no turno em andamento (sem interromper). */
   agentInjectNow: 'agent:inject-now',
   agentInterrupt: 'agent:interrupt',
+  /** Para UMA tarefa de fundo da conversa (Query.stopTask); o turno segue. */
+  agentStopTask: 'agent:stop-task',
   agentSetBypass: 'agent:set-bypass',
   agentPermissionResponse: 'agent:permission-response',
   agentQuestionHold: 'agent:question-hold',
@@ -2783,6 +2815,18 @@ export interface RemoteEtapasProgress {
   steps: { id: string; titulo: string; n: number; state: StepState; motivo: string | null }[]
 }
 
+/** Um subagente rodando, como o celular o mostra: nunca a ferramenta da vez (republicaria a cada chamada). */
+export interface RemoteSubagent {
+  /** O id da trilha (a chamada Agent/Task que o lançou). */
+  id: string
+  /** O papel ("Executor"); na falta, a descrição da tarefa. */
+  label: string
+  /** O resumo ao vivo do SDK (agentProgressSummaries), quando já veio. */
+  summary?: string
+  /** Epoch ms. */
+  startedAt: number
+}
+
 /** One conversation as mirrored to the phone (history + live status). The
  *  `messages` are the renderer's UIMessage objects, passed through as JSON. */
 export interface RemoteConversation {
@@ -2830,6 +2874,14 @@ export interface RemoteConversation {
   stalledSince?: number
   /** Epoch ms do início da compactação da conversa em curso, se compactando. */
   compactingSince?: number
+  /** Nova tentativa da API agendada pelo CLI no turno em curso (evento `api-retry`). */
+  apiRetry?: ApiRetryState
+  /** Subagentes rodando: papel, resumo do SDK e início — a faixa do celular (remoteSubagents.ts). */
+  subagents?: RemoteSubagent[]
+  /** Tarefas em segundo plano (snapshot do SDK): o cartão do celular, com o parar de cada uma. */
+  backgroundTasks?: BackgroundTask[]
+  /** Sugestão do próximo prompt (evento `prompt-suggestion`): o chip acima do composer do celular. */
+  suggestion?: string
   /** Context/output/cost accounting shown in the desktop header. */
   tokens?: { context: number; output: number; cost: number; contextLimit: number }
   /** Pending permission/AskUserQuestion request, if any — same shape the desktop

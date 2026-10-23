@@ -34,6 +34,7 @@ import {
   usageProviderOf
 } from '@shared/ipc'
 import type { AutoPrompt, AutoPromptTurn, EffortChoice, ProjectTree } from '@shared/ipc'
+import type { ApiRetryState } from '@shared/apiRetry'
 import { fileTouches, turnsOf } from './projectActivity'
 import { liveInput } from './office/liveInput'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
@@ -56,6 +57,7 @@ import {
 } from './conversationTitle'
 import { isFailedTerminal, MAX_GENERIC_RETRIES, scheduleFailure } from './turnRecovery'
 import { BACKGROUND_SETTLE_MS, canResumeQueue, createBackgroundHold } from './backgroundHold'
+import { BUSY_RECONCILE_POLL_MS, createBusyReconcile } from './busyReconcile'
 import {
   restartNoticeTexts,
   resumeAfterRestart,
@@ -203,6 +205,8 @@ import type { PoAuthorizationMap } from '@shared/poAuthorization'
 import { CentralPanel } from './central/CentralPanel'
 import { buildRemoteCentral } from './central/centralRemote'
 import { RemoteLightDiff } from './remote/remoteLightDiff'
+import { remoteSubagents, remoteSubagentsKey } from './remote/remoteSubagents'
+import { withSuggestion } from './components/promptSuggestion'
 import { searchUserPrompts } from '@shared/remoteSearch'
 import { DeliveryCenterProvider } from './deliveries/deliveryCenterContext'
 import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
@@ -609,6 +613,10 @@ export function App(): JSX.Element {
   // Conversas compactando agora (evento `compacting` do main) → epoch ms do início:
   // a linha ao vivo vira "Compactando a conversa…" até o compact_boundary.
   const [compactingSince, setCompactingSince] = useState<Record<string, number>>({})
+  // Nova tentativa da API agendada pelo CLI (evento `api-retry`): a faixa diz o motivo e o prazo.
+  const [apiRetry, setApiRetry] = useState<Record<string, ApiRetryState>>({})
+  // Sugestão do próximo prompt por conversa (evento `prompt-suggestion`): o chip acima do composer.
+  const [promptSuggestion, setPromptSuggestion] = useState<Readonly<Record<string, string>>>({})
   // Sidebar paging: the app opens with only the newest CONVERSATIONS_PER_PROJECT
   // of each project, and só dos PROJECTS_IN_FIRST_PAGE projetos mais recentes —
   // o resto chega em segundo plano. `projectSummaries` é a lista de projetos do
@@ -926,6 +934,40 @@ export function App(): JSX.Element {
     patchConv(id, (c) => (c.backgroundTasks?.length ? { ...c, backgroundTasks: [] } : c))
   }, [backgroundHold, patchConv])
 
+  // "Trabalhando" preso com o main parado: confere com o main e solta (busyReconcile.ts).
+  const lastEventAtRef = useRef<Record<string, number>>({})
+  const permissionsRef = useRef(permissions)
+  permissionsRef.current = permissions
+  useEffect(() => {
+    const reconcile = createBusyReconcile({
+      busyIds: () => busyRef.current,
+      lastEventAt: (cid) => lastEventAtRef.current[cid],
+      blocked: (cid) => {
+        const inflight = inflightRef.current[cid]
+        return (
+          !!permissionsRef.current[cid] ||
+          !!convsRef.current.find((c) => c.id === cid)?.recovery ||
+          queueHandoff.pending(cid) ||
+          stopHolds.isHeld(cid) ||
+          (!!inflight && !inflight.sending)
+        )
+      },
+      waitTurnEnd: (cid) => window.api.waitTurnEnd?.(cid),
+      release: (cid) => {
+        console.warn(`[busy] ${cid} marcada como trabalhando com o main ocioso; solta`)
+        delete inflightRef.current[cid]
+        patchConv(cid, (c) => withoutTurnInFlight(c))
+        setBusy(cid, false)
+        setBusySince((m) => withoutKey(m, cid))
+        notify('aviso', 'A conversa parecia trabalhando, mas o Agent já tinha terminado. Ela foi liberada.')
+        backgroundHold.schedule(cid) // a fila guardada sai pelo caminho normal
+      },
+      now: () => Date.now()
+    })
+    const timer = setInterval(() => void reconcile.tick(), BUSY_RECONCILE_POLL_MS)
+    return () => clearInterval(timer)
+  }, [backgroundHold, queueHandoff, stopHolds, patchConv, setBusy, notify])
+
   // Flag/clear the error banner on a specific user message (so a failed turn is
   // visible right on the message, with a retry button — instead of being lost).
   const markMessageError = useCallback(
@@ -952,6 +994,7 @@ export function App(): JSX.Element {
   // ---- agent event stream (each event is tagged with its conversation) ----
   const onEvent = useCallback(
     ({ convId: cid, event: e }: AgentEventMsg) => {
+      lastEventAtRef.current[cid] = Date.now() // sinal de vida para o busyReconcile
       // Código ao vivo do escritório (até 10/s por bloco): vai direto para a store
       // dele e para aqui — sem setState, sem reduceTracks/reduceMessages, nunca
       // vira mensagem nem é salvo. Primeiro teste de propósito: é o evento mais
@@ -992,6 +1035,18 @@ export function App(): JSX.Element {
           delete next[cid]
           return next
         })
+        return
+      }
+      if (e.kind === 'api-retry') {
+        setApiRetry((prev) => {
+          if (e.active) return { ...prev, [cid]: { attempt: e.attempt, maxRetries: e.maxRetries, retryAt: e.retryAt, status: e.status, error: e.error } }
+          return cid in prev ? withoutKey(prev, cid) : prev
+        })
+        return
+      }
+      // Sugestão do próximo prompt (null = começou um turno): estado do chip, nunca bolha.
+      if (e.kind === 'prompt-suggestion') {
+        setPromptSuggestion((prev) => withSuggestion(prev, cid, e.text))
         return
       }
       // Ciclo da tarefa do SDK (subagente em segundo plano): só as trilhas, nunca bolha.
@@ -2102,8 +2157,8 @@ export function App(): JSX.Element {
   const pubLastAt = useRef(0)
   const pubAllRef = useRef(true)
   const remoteDiff = useRef(new RemoteLightDiff<Conversation>())
-  const remoteInputsRef = useRef({ permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
-  remoteInputsRef.current = { permissions, stalledSince, compactingSince, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
+  const remoteInputsRef = useRef({ permissions, stalledSince, compactingSince, apiRetry, promptSuggestion, tracks, models, typesafeReady, installationId: storageStatus?.installationId ?? null })
+  remoteInputsRef.current = { permissions, stalledSince, compactingSince, apiRetry, promptSuggestion, tracks, models, typesafeReady, installationId: storageStatus?.installationId ?? null }
   // Republica sem mudança de conversa: config do Agent Manager trocada, ou pedido do celular recusado.
   const [remoteNudge, setRemoteNudge] = useState(0)
   useEffect(() => {
@@ -2134,13 +2189,16 @@ export function App(): JSX.Element {
           permission: inputs.permissions[c.id],
           stalled: inputs.stalledSince[c.id],
           compacting: inputs.compactingSince[c.id],
+          apiRetry: inputs.apiRetry[c.id],
+          suggestion: inputs.promptSuggestion[c.id],
+          subagents: remoteSubagentsKey(remoteSubagents(inputs.tracks[c.id])),
           central: isCentralConversation(c) ? centralRef.current : null
         })),
         all
       )
       void window.api.publishRemoteState({
         ...(all ? {} : { delta: true, removed }),
-        conversations: changed.map(({ conv: c, busy, connected, permission, stalled, compacting }) => ({
+        conversations: changed.map(({ conv: c, busy, connected, permission, stalled, compacting, apiRetry: retry, suggestion }) => ({
           id: c.id,
           title: c.title,
           cwd: c.cwd,
@@ -2165,6 +2223,13 @@ export function App(): JSX.Element {
           todoPlan: c.todoPlan,
           stalledSince: stalled,
           compactingSince: compacting,
+          apiRetry: retry,
+          // Papel + resumo + início dos subagentes rodando (a faixa do celular).
+          subagents: remoteSubagents(inputs.tracks[c.id]),
+          // O cartão de tarefas de fundo do celular (vive na conversa: a identidade dela já republica).
+          backgroundTasks: c.backgroundTasks?.length ? c.backgroundTasks : undefined,
+          // O chip da sugestão do próximo prompt no celular.
+          suggestion,
           tokens: { context: c.tokens.context, output: c.tokens.output, cost: c.tokens.cost, contextLimit: contextLimitFor(runningModel(c)) },
           permission: permission as PermissionRequest | undefined,
           // Aba Planos do celular: liga a conversa do Agent Manager ao plano (projeto = cwd).
@@ -2191,7 +2256,7 @@ export function App(): JSX.Element {
       })
       freezeSection('celular', publishStartedAt)
     }, Math.max(0, pubLastAt.current + REMOTE_PUBLISH_MIN_MS - Date.now()))
-  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, usageLimits, storageStatus?.installationId, remoteNudge])
+  }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, apiRetry, promptSuggestion, tracks, usageLimits, storageStatus?.installationId, remoteNudge])
   useEffect(() => () => clearTimeout(pubTimer.current), [])
 
   // Drag the splitter between chat and browser to resize the browser panel; the
@@ -3711,6 +3776,7 @@ export function App(): JSX.Element {
     setBusySince((m) => withoutKey(m, cid))
     setStalledSince((m) => withoutKey(m, cid))
     setCompactingSince((m) => withoutKey(m, cid))
+    setApiRetry((m) => (cid in m ? withoutKey(m, cid) : m))
     delete inflightRef.current[cid]
   }, [setBusy])
 
@@ -4438,6 +4504,11 @@ export function App(): JSX.Element {
       // emitir o "voltou") não pode acusar travamento num chat parado.
       stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
       compactingSince={showBusy && active ? compactingSince[active.id] : undefined}
+      apiRetry={showBusy && active ? apiRetry[active.id] : undefined}
+      suggestion={active ? promptSuggestion[active.id] : undefined}
+      onUseSuggestion={() => {
+        if (active) setPromptSuggestion((m) => withSuggestion(m, active.id, null))
+      }}
       windowsControlEnabled={windowsControlEnabled}
       onDisableWindowsControl={() => void toggleWindowsControl(false)}
       tokens={tokens}
@@ -4537,6 +4608,11 @@ export function App(): JSX.Element {
         )
       }}
       backgroundTasks={active?.backgroundTasks ?? []}
+      onStopBackgroundTask={async (taskId) => {
+        // Só aquela tarefa: o turno segue; a linha some com a lista nova do SDK.
+        const ok = active ? await window.api.stopTask(active.id, taskId).catch(() => false) : false
+        if (!ok) notify('erro', 'Não consegui parar a tarefa em segundo plano.')
+      }}
       queuedAfterInterrupt={active?.queuedAfterInterrupt ?? []}
       crewWorking={crewWorking}
       onOpenAgents={openAgentsPanel}

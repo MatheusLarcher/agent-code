@@ -181,6 +181,46 @@
 .agent-todo { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .agent-todo-head { padding: 2px 0; background: none; border: none; color: var(--faint); font-size: 12px; }
 .agent-todo-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+/* subagentes rodando (AgentBars.tsx): uma linha cada — papel, resumo do SDK e o tempo */
+.subagent-strip {
+  flex: 0 0 auto; margin: 6px 12px 0; padding: 7px 12px; display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); font-size: 12.5px;
+  max-height: 22vh; overflow: auto;
+}
+.subagent-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.subagent-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.subagent-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.subagent-text b { color: var(--text); font-weight: 600; }
+.subagent-t { flex: none; font-family: var(--mono); font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .subagent-dot { animation: none; } }
+/* tarefas em segundo plano (AgentBars.tsx): o parar de cada uma — o turno segue */
+.bg-tasks {
+  flex: 0 0 auto; margin: 6px 12px 0; padding: 7px 8px 5px 12px; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); font-size: 12.5px;
+  max-height: 26vh; overflow: auto;
+}
+.bg-tasks-title { color: var(--muted); font-size: 12px; padding-bottom: 2px; }
+.bg-task-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bg-task-type { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--accent); }
+.bg-task-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.bg-task-stop {
+  flex: none; width: 34px; height: 34px; display: grid; place-items: center; padding: 0;
+  border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--muted);
+}
+.bg-task-stop:active:not(:disabled) { color: var(--err); border-color: rgba(217, 112, 112, 0.5); }
+.bg-task-stop:disabled { opacity: 0.45; }
+/* sugestão do próximo prompt (PromptSuggestion.tsx): tracejado = proposta; o toque põe no campo, sem enviar */
+.prompt-suggestion {
+  flex: 0 0 auto; align-self: flex-start; max-width: calc(100% - 24px); min-height: 36px; margin: 6px 12px 0; padding: 0 14px 0 11px;
+  display: inline-flex; align-items: center; gap: 7px; text-align: left;
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: 999px; background: var(--bg-2);
+  color: var(--text); font-size: 13px; animation: rise 0.16s ease-out;
+}
+.prompt-suggestion svg { flex: none; color: var(--accent); }
+.prompt-suggestion:active { border-style: solid; background: var(--accent-soft); }
+.prompt-suggestion-label { flex: none; color: var(--muted); }
+.prompt-suggestion-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .prompt-suggestion { animation: none; } }
 
 .jump-bottom {
   position: absolute; right: 12px; bottom: 12px; z-index: 6;

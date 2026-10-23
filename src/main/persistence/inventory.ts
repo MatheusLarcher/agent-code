@@ -80,7 +80,8 @@ export const PERSISTENCE_INVENTORY: readonly PersistenceInventoryItem[] = [
       'config.typesafe.apiKey',
       'config.typesafe.minConfidence',
       'config.typesafe.allowedAutoModels',
-      'config.memorySelector'
+      'config.memorySelector',
+      'config.autoModeClassifierModel'
     ]
   },
   {

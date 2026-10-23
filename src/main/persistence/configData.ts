@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
+  AUTO_MODE_CLASSIFIER_MODELS,
   currentModelId,
+  DEFAULT_AUTO_MODE_CLASSIFIER_MODEL,
   DEFAULT_CONFIG,
   DEFAULT_VOICE,
   DEFAULT_WHISPER_MODEL,
@@ -14,6 +16,7 @@ import {
   SKILL_CATEGORIES,
   SKILL_TIERS,
   type AppConfig,
+  type AutoModeClassifierModel,
   type SkillCatalogConfig,
   type SkillCategory,
   type SkillTier,
@@ -88,6 +91,13 @@ export function normalizeSkillOverrides(value: unknown): SkillCatalogConfig['ove
  */
 export function normalizeMemorySelector(value: unknown): MemorySelectorMode {
   return value === 'typesafe' ? 'typesafe' : 'haiku'
+}
+
+/** O modelo do classificador do modo auto: fora da lista vira o padrão, sem lançar. */
+export function normalizeAutoModeClassifierModel(value: unknown): AutoModeClassifierModel {
+  return AUTO_MODE_CLASSIFIER_MODELS.some((option) => option.id === value)
+    ? (value as AutoModeClassifierModel)
+    : DEFAULT_AUTO_MODE_CLASSIFIER_MODEL
 }
 
 const partialConfigSchema = z
@@ -177,7 +187,9 @@ const partialConfigSchema = z
       .optional(),
     // Solto de propósito: quem valida é `normalizeMemorySelector` (valor
     // inválido vira 'haiku' em vez de derrubar a config inteira).
-    memorySelector: z.unknown().optional()
+    memorySelector: z.unknown().optional(),
+    // Idem: `normalizeAutoModeClassifierModel` devolve o padrão em vez de lançar.
+    autoModeClassifierModel: z.unknown().optional()
   })
   .strict()
 
@@ -237,6 +249,11 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     })(),
     memorySelector: normalizeMemorySelector(
       parsed.data.memorySelector === undefined ? current.memorySelector : parsed.data.memorySelector
+    ),
+    autoModeClassifierModel: normalizeAutoModeClassifierModel(
+      parsed.data.autoModeClassifierModel === undefined
+        ? current.autoModeClassifierModel
+        : parsed.data.autoModeClassifierModel
     )
   }
 }

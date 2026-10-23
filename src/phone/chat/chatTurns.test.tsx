@@ -83,6 +83,23 @@ describe('chat do celular — turno e ao vivo', () => {
     expect(live.querySelector('.shimmer')).toBeNull()
   })
 
+  it('nova tentativa da API: a linha ao vivo diz o motivo e o prazo; vence o compactando, perde para o "sem resposta"', () => {
+    const apiRetry = { attempt: 3, maxRetries: 10, retryAt: Date.now() + 12_000, status: 529, error: 'overloaded' }
+    const retrying = { ...conv(true), apiRetry, compactingSince: Date.now() - 1_000 } as ConvSummary
+    client.store.set({ conversations: [retrying], convId: 'c1', messages: HISTORY, historyLoading: false, loaded: true })
+    const { container, unmount } = render(<MessageList onRefresh={async () => undefined} />)
+    const live = container.querySelector('.turn-item.live.retrying')!
+    expect(live.querySelector('.live-retry')?.textContent).toMatch(/^API sobrecarregada · nova tentativa em 1[12] s \(3\/10\)$/)
+    expect(container.querySelector('.turn-item.live.compacting')).toBeNull()
+    expect(live.querySelector('.live-stop')).toBeTruthy()
+    unmount()
+    const both = { ...retrying, stalledSince: Date.now() - 65_000 } as ConvSummary
+    client.store.set({ conversations: [both], convId: 'c1' })
+    const again = render(<MessageList onRefresh={async () => undefined} />).container
+    expect(again.querySelector('.turn-item.live.stalled')).toBeTruthy()
+    expect(again.querySelector('.live-retry')).toBeNull()
+  })
+
   it('turno normal: o loading criativo no trilho (sem o modo compactar); "sem resposta" vence o compactando', () => {
     client.store.set({ conversations: [conv(true)], convId: 'c1', messages: HISTORY, historyLoading: false, loaded: true })
     const { container, unmount } = render(<MessageList onRefresh={async () => undefined} />)

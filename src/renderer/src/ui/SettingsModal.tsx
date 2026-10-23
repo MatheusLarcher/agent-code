@@ -17,6 +17,7 @@ import { MemoryDataSection } from './MemoryDataSection'
 import { ClaudeAccountsSection } from './ClaudeAccountsSection'
 import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { MemorySelectorSetting } from './MemorySelectorSetting'
+import { AutoModeClassifierSetting } from './AutoModeClassifierSetting'
 import { ChromeControlSection } from './ChromeControlSection'
 import { VoiceSettingsSection } from './VoiceSettingsSection'
 import { HandoffSettingsSection } from './HandoffSettingsSection'
@@ -570,6 +571,12 @@ export function SettingsModal({
                     </div>
                   )}
                 </section>
+
+                <AutoModeClassifierSetting
+                  cfg={cfg}
+                  setCfg={setCfg}
+                  patchConfig={(patch) => patchConfig(patch as DeepPartial<AppConfig>)}
+                />
 
                 <ScrumMasterSettingsSection cfg={cfg} setCfg={setCfg} patchConfig={patchConfig} />
 

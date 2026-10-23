@@ -88,6 +88,25 @@ describe('redutor do feed', () => {
     expect(list[1]).toMatchObject({ result: { isError: false, text: 'ok' } })
   })
 
+  it('recusa do modelo: a bolha de mesmo id fica uma só, com o texto novo; a troca entra no feed', () => {
+    let list: ChatMsg[] = []
+    list = reduce(list, { kind: 'assistant-text', id: 'msg_1', text: 'Parte que foi recusada', final: true })
+    list = reduce(list, { kind: 'assistant-text', id: 'msg_1', text: '_Resposta recusada pelo Opus 5.5 e refeita no Sonnet 5.5._', final: true })
+    list = reduce(list, {
+      kind: 'provider-switch',
+      id: 'sw',
+      fromModel: 'claude-opus-5-5',
+      model: 'claude-sonnet-5-5',
+      effort: 'high',
+      fastMode: false,
+      text: 'O Opus 5.5 recusou; a conversa seguiu no Sonnet 5.5.'
+    } as ChatMsg)
+    expect(list).toHaveLength(2)
+    expect(list[0]).toMatchObject({ kind: 'assistant-text', id: 'msg_1', text: '_Resposta recusada pelo Opus 5.5 e refeita no Sonnet 5.5._' })
+    expect(list[1]).toMatchObject({ kind: 'provider-switch', model: 'claude-sonnet-5-5' })
+    expect(isHiddenMessage(list[1])).toBe(false)
+  })
+
   it('não muta a lista anterior (o React compara por referência)', () => {
     const before: ChatMsg[] = [{ kind: 'assistant-text', id: 'a', text: 'x', final: false }]
     const after = reduce(before, { kind: 'assistant-text', id: 'a', text: 'xy', final: false })

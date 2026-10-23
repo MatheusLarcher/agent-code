@@ -22,6 +22,7 @@ const EXPECTED_KEYS = [
   'agentcode.usage-limits.v1',
   'codexAuth',
   'config',
+  'config.autoModeClassifierModel',
   'config.board.po.enabled',
   'config.board.po.model',
   'config.board.requirePlan',

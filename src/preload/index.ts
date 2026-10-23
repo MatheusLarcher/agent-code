@@ -490,6 +490,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   waitTurnEnd: (convId: string): Promise<TurnEndWait> => ipcRenderer.invoke(Channels.agentWaitTurnEnd, convId),
   interrupt: (convId: string, opts?: { restart?: boolean }): Promise<AgentInterruptResult> =>
     opts ? ipcRenderer.invoke(Channels.agentInterrupt, convId, opts) : ipcRenderer.invoke(Channels.agentInterrupt, convId),
+  stopTask: (convId: string, taskId: string): Promise<boolean> => ipcRenderer.invoke(Channels.agentStopTask, convId, taskId),
   setBypass: (convId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.agentSetBypass, convId, on),
   respondPermission: (convId: string, res: PermissionResponse): Promise<void> =>

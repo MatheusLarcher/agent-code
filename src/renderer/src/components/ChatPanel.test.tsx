@@ -266,6 +266,16 @@ describe('ChatPanel — faixa de trabalho', () => {
     expect(document.querySelector('.working-banner > .working-loader.chat-live-loader')).toBeTruthy()
   })
 
+  it('nova tentativa da API: a faixa diz o motivo, o prazo e a contagem; "sem resposta" ainda vence', () => {
+    const retry = { attempt: 3, maxRetries: 10, retryAt: Date.now() + 12_000, status: 529, error: 'overloaded' }
+    const { unmount } = renderPanel({ busy: true, apiRetry: retry, compactingSince: Date.now() - 1000 })
+    expect(document.querySelector('.working-banner')?.textContent).toMatch(/^API sobrecarregada · nova tentativa em 1[12] s \(3\/10\)$/)
+    expect(document.querySelector('.working-loader.compacting')).toBeNull()
+    unmount()
+    renderPanel({ busy: true, apiRetry: retry, stalledSince: Date.now() - 65_000 })
+    expect(document.querySelector('.working-banner')?.textContent).toMatch(/^Sem resposta há /)
+  })
+
   it('compactando: a faixa e a linha ao vivo viram o aviso, com o loading no modo compactar', () => {
     renderPanel({ busy: true, compactingSince: Date.now() - 2000 })
     expect(document.querySelector('.working-banner')?.textContent).toBe('Agent está compactando a conversa')
@@ -273,6 +283,34 @@ describe('ChatPanel — faixa de trabalho', () => {
     const live = document.querySelector('.chat-live.compacting')!
     expect(live.querySelector('.chat-live-text')?.textContent).toBe('Compactando a conversa…')
     expect(live.querySelector('.chat-live-loader.compacting')).toBeTruthy()
+  })
+})
+
+describe('ChatPanel — sugestão do próximo prompt', () => {
+  const chip = (text: string): HTMLElement | null => screen.queryByRole('button', { name: `Usar a sugestão: ${text}` })
+
+  it('parada: o chip aparece; o clique põe o texto na caixa vazia, sem enviar, e avisa o App', () => {
+    const onSend = vi.fn()
+    const onUseSuggestion = vi.fn()
+    renderPanel({ suggestion: 'Rode os testes', onUseSuggestion, onSend })
+    fireEvent.click(chip('Rode os testes')!)
+    expect(screen.getByRole('textbox').textContent).toBe('Rode os testes')
+    expect(onUseSuggestion).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('com texto na caixa, a sugestão entra no fim, depois de um espaço', () => {
+    renderPanel({ suggestion: 'e rode os testes', draft: 'Revise o diff  ' })
+    fireEvent.click(chip('e rode os testes')!)
+    expect(screen.getByRole('textbox').textContent).toBe('Revise o diff e rode os testes')
+  })
+
+  it('com turno rodando, ou sem sugestão, o chip não aparece', () => {
+    const { unmount } = renderPanel({ suggestion: 'Rode os testes', busy: true })
+    expect(chip('Rode os testes')).toBeNull()
+    unmount()
+    renderPanel()
+    expect(document.querySelector('.prompt-suggestion-chip')).toBeNull()
   })
 })
 
