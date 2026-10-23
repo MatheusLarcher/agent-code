@@ -43,9 +43,8 @@ echo.
 
 REM --- Motor livre: o sync-engine acabou de por o claude.exe OFICIAL. Troca pelo ---
 REM --- recompilado sem a trava do classificador do modo auto (fora do git, 188 MB). ---
-REM --- Ausente: so avisa e segue com o oficial.                                    ---
-if not defined CLAUDE_EXE_LIVRE set "CLAUDE_EXE_LIVRE=C:\Users\Matheus\Downloads\cli\teste app\claude-classificador-livre.exe"
-call node "%~dp0engine-override.mjs" "!CLAUDE_EXE_LIVRE!"
+REM --- Fica em <cacheDir>\motor\ (OneDrive). Ausente: o build PARA.               ---
+call node "%~dp0engine-override.mjs"
 if errorlevel 1 (
     echo.
     echo [ERRO] Nao foi possivel aplicar o claude.exe modificado.
@@ -117,8 +116,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM --- Confere que o claude.exe embutido e o modificado (se ele existir) ---
-call node "%~dp0engine-override.mjs" "!CLAUDE_EXE_LIVRE!" --verify "dist\win-unpacked\resources\app"
+REM --- Confere que o claude.exe embutido e o modificado ---
+call node "%~dp0engine-override.mjs" --verify "dist\win-unpacked\resources\app"
 if errorlevel 1 (
     echo.
     echo [ERRO] O instalador saiu com o claude.exe oficial em vez do modificado.
