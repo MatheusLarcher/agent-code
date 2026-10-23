@@ -10,7 +10,8 @@ import {
   type ApkToolchain,
   type Progress
 } from '../android/androidEnv'
-import { applyFirebaseConfig } from './apkFirebase'
+import { APP_ID, applyFirebaseConfig } from './apkFirebase'
+import { ensureReleaseConfig } from './apkRelease'
 
 /**
  * Build the Android remote APK (the `smartfone-remote` Capacitor project),
@@ -198,7 +199,7 @@ async function ensureManifestPermissions(androidDir: string, onLine: Progress): 
  *     DownloadManager. The URL is not taken on trust — it must point at the
  *     bridge the app is currently paired with (`/api/file`), so a page can't
  *     turn this into an arbitrary downloader. */
-export const MAIN_ACTIVITY_JAVA = `package com.matheus.agentremote;
+export const MAIN_ACTIVITY_JAVA = `package com.larchertech.agentcode;
 
 import android.Manifest;
 import android.app.DownloadManager;
@@ -261,7 +262,7 @@ public class MainActivity extends BridgeActivity {
                 DownloadManager.Request request = new DownloadManager.Request(uri);
                 if (mimeType != null) request.setMimeType(mimeType);
                 request.setTitle(name);
-                request.setDescription("Agent Remote");
+                request.setDescription("Agent Code");
                 request.allowScanningByMediaScanner();
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                 request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
@@ -283,7 +284,7 @@ public class MainActivity extends BridgeActivity {
  * storage permission comes from MANIFEST_PERMISSIONS). Idempotent.
  */
 async function ensureDownloadSupport(androidDir: string, onLine: Progress): Promise<void> {
-  const activity = join(androidDir, 'app', 'src', 'main', 'java', 'com', 'matheus', 'agentremote', 'MainActivity.java')
+  const activity = join(androidDir, 'app', 'src', 'main', 'java', 'com', 'larchertech', 'agentcode', 'MainActivity.java')
   try {
     const cur = await readFile(activity, 'utf8').catch(() => '')
     if (cur !== MAIN_ACTIVITY_JAVA) {
@@ -365,6 +366,11 @@ export async function missingDependencies(rootDir: string): Promise<boolean> {
  */
 export async function isStaleAndroidProject(androidDir: string): Promise<boolean> {
   if (await exists(join(androidDir, 'app', 'src', 'main', 'res', 'layout', 'bridge_layout_main.xml'))) return true
+  // Generated for another package (the pre‑Play com.matheus.agentremote): `cap sync`
+  // never renames applicationId/namespace/strings, so it must be recreated.
+  const appGradle = await readFile(join(androidDir, 'app', 'build.gradle'), 'utf8').catch(() => '')
+  const id = appGradle.match(/applicationId\s*=?\s*["']([^"']+)["']/)
+  if (id && id[1] !== APP_ID) return true
   const vars = await readFile(join(androidDir, 'variables.gradle'), 'utf8').catch(() => '')
   const m = vars.match(/compileSdkVersion\s*=\s*(\d+)/)
   return !m || Number(m[1]) < APK_COMPILE_SDK
@@ -474,6 +480,7 @@ export async function buildRemoteApk(rootDir: string, onLine: Progress): Promise
   await ensureManifestPermissions(androidDir, onLine)
   await ensureDownloadSupport(androidDir, onLine)
   await applyFirebaseConfig(rootDir, androidDir, onLine)
+  await ensureReleaseConfig(rootDir, androidDir, onLine)
 
   // Brand the launcher/splash with the SAME art as the desktop app
   // (resources/ generated from build/icon.svg). Non-fatal: a failure here just

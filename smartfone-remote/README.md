@@ -34,7 +34,7 @@ www/                 app web servido dentro do APK (e em /app pelo PC)
   index.html
   app.js             pareamento, lista, histórico, SSE ao vivo, envio
   styles.css         tema escuro espelhando o desktop
-capacitor.config.json  appId com.matheus.agentremote · androidScheme http + cleartext
+capacitor.config.json  appId com.larchertech.agentcode · androidScheme http + cleartext
 scripts/build-apk.mjs  build via CLI (assume toolchain instalada)
 android/             gerado por `cap add android` (gitignored)
 dist/                saída: agent-remote.apk (gitignored, servido em /download)

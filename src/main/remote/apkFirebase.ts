@@ -12,7 +12,9 @@ import { join } from 'node:path'
  */
 
 export const FIREBASE_CONFIG_DIR = 'firebase'
-const PACKAGE = 'com.matheus.agentremote'
+/** Pacote do app na Google Play (definitivo: não muda depois de publicado). */
+export const APP_ID = 'com.larchertech.agentcode'
+const PACKAGE = APP_ID
 
 /** Copia o config do Firebase para o projeto Android. Sem o arquivo (ou de outro app): segue sem push. */
 export async function applyFirebaseConfig(rootDir: string, androidDir: string, onLine: (line: string) => void): Promise<boolean> {

@@ -1,6 +1,6 @@
 {
-  "appId": "com.matheus.agentremote",
-  "appName": "Agent Remote",
+  "appId": "com.larchertech.agentcode",
+  "appName": "Agent Code",
   "webDir": "www",
   "server": {
     "androidScheme": "http",

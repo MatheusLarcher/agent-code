@@ -21,11 +21,11 @@ function projeto(json: string | null): { root: string; android: string } {
 
 describe('applyFirebaseConfig', () => {
   it('copia o config do app certo para android/app (sobrevive à pasta android recriada)', async () => {
-    const p = projeto(config('com.matheus.agentremote'))
+    const p = projeto(config('com.larchertech.agentcode'))
     const lines: string[] = []
     try {
       expect(await applyFirebaseConfig(p.root, p.android, (l) => lines.push(l))).toBe(true)
-      expect(readFileSync(join(p.android, 'app', 'google-services.json'), 'utf8')).toBe(config('com.matheus.agentremote'))
+      expect(readFileSync(join(p.android, 'app', 'google-services.json'), 'utf8')).toBe(config('com.larchertech.agentcode'))
       expect(lines.join('\n')).toMatch(/aplicado/)
     } finally {
       rmSync(p.root, { recursive: true, force: true })

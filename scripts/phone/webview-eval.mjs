@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import WebSocket from 'ws'
 
-const PKG = 'com.matheus.agentremote'
+const PKG = 'com.larchertech.agentcode'
 const PORT = 9333
 const sdk = process.env.ANDROID_HOME || join(process.env.APPDATA || '', 'agent-code-desktop', 'android-sdk')
 const adb = (...args) => execFileSync(join(sdk, 'platform-tools', 'adb.exe'), args, { encoding: 'utf8', timeout: 15000 })

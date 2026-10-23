@@ -7,6 +7,28 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:384582923107:android:008dadfd33d7d7f9ced956",
+        "android_client_info": {
+          "package_name": "com.larchertech.agentcode"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAleOJ8Iy5he3kRBDmcWFEMIG0om4Ktv5o"
+        },
+        {
+          "current_key": "AIzaSyDPa1l11aAcUkMh_GW46jhqIMkFJAKwT6o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:384582923107:android:4385bf8e36ed5394ced956",
         "android_client_info": {
           "package_name": "com.matheus.agentremote"
@@ -14,6 +36,9 @@
       },
       "oauth_client": [],
       "api_key": [
+        {
+          "current_key": "AIzaSyAleOJ8Iy5he3kRBDmcWFEMIG0om4Ktv5o"
+        },
         {
           "current_key": "AIzaSyDPa1l11aAcUkMh_GW46jhqIMkFJAKwT6o"
         }

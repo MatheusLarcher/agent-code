@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { APP_ID } from './apkFirebase'
 import { buildRemoteApk, isStaleAndroidProject, missingDependencies, phoneBuildCommand, resolveRemoteRoot } from './buildApk'
 
 // O build do APK precisa rodar `npm install` de novo quando um plugin local
@@ -77,6 +78,16 @@ describe('isStaleAndroidProject', () => {
     await mkdir(layout, { recursive: true })
     await writeFile(join(layout, 'bridge_layout_main.xml'), '<x/>')
     expect(await isStaleAndroidProject(dir)).toBe(true)
+  })
+
+  it('applicationId de outro pacote (com.matheus.agentremote) → recriar; do pacote atual → manter', async () => {
+    await writeFile(join(dir, 'variables.gradle'), vars(36))
+    await mkdir(join(dir, 'app'), { recursive: true })
+    const gradle = (id: string): string => `android {\n    defaultConfig {\n        applicationId "${id}"\n    }\n}\n`
+    await writeFile(join(dir, 'app', 'build.gradle'), gradle('com.matheus.agentremote'))
+    expect(await isStaleAndroidProject(dir)).toBe(true)
+    await writeFile(join(dir, 'app', 'build.gradle'), gradle(APP_ID))
+    expect(await isStaleAndroidProject(dir)).toBe(false)
   })
 
   it('sem variables.gradle (projeto quebrado) → recriar', async () => {
