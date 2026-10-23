@@ -1,4 +1,4 @@
-import { copyFile, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,7 +8,8 @@ import { join } from 'node:path'
  * `app/build.gradle` é reaplicado aqui a cada build, para não se perder:
  *  - assinatura release lida de `android/keystore.properties` — copiado de
  *    `~/.agent-code/keys/keystore.properties` quando falta (a chave NUNCA é gerada aqui);
- *  - versionCode/versionName derivados da versão do app desktop (package.json da raiz).
+ *  - versionCode/versionName derivados da versão do app desktop (package.json da raiz);
+ *  - manifesto sem backup (o token de pareamento não pode ir para a nuvem).
  */
 
 /** "0.1.133" → 1133 (major·10⁶ + minor·10³ + patch): sobe a cada versão, como a Play exige. */
@@ -58,6 +59,47 @@ export function patchAppGradle(gradle: string, version: string): string {
   return out
 }
 
+/** Sem backup na nuvem nem cópia para outro aparelho: o token de pareamento (localStorage do
+ *  WebView) dá controle do agente no PC e não pode sair do celular. */
+export const DATA_EXTRACTION_RULES = `<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+${['root', 'file', 'database', 'sharedpref', 'external'].map((d) => `        <exclude domain="${d}" path="." />`).join('\n')}
+    </cloud-backup>
+    <device-transfer>
+${['root', 'file', 'database', 'sharedpref', 'external'].map((d) => `        <exclude domain="${d}" path="." />`).join('\n')}
+    </device-transfer>
+</data-extraction-rules>
+`
+
+/** `<application>` do manifesto sem backup (Android ≤ 11 e ≥ 12). Idempotente. */
+export function hardenManifest(xml: string): string {
+  return xml.replace(/<application\b[^>]*>/, (tag) => {
+    let t = tag.replace(/android:allowBackup="true"/, 'android:allowBackup="false"')
+    if (!/android:allowBackup=/.test(t)) t = t.replace('<application', '<application\n        android:allowBackup="false"')
+    if (!/android:fullBackupContent=/.test(t)) t = t.replace('<application', '<application\n        android:fullBackupContent="false"')
+    if (!/android:dataExtractionRules=/.test(t)) {
+      t = t.replace('<application', '<application\n        android:dataExtractionRules="@xml/data_extraction_rules"')
+    }
+    return t
+  })
+}
+
+async function ensureNoBackup(androidDir: string, onLine: (line: string) => void): Promise<void> {
+  const main = join(androidDir, 'app', 'src', 'main')
+  try {
+    const manifest = join(main, 'AndroidManifest.xml')
+    const cur = await readFile(manifest, 'utf8')
+    const next = hardenManifest(cur)
+    if (next !== cur) await writeFile(manifest, next)
+    await mkdir(join(main, 'res', 'xml'), { recursive: true })
+    await writeFile(join(main, 'res', 'xml', 'data_extraction_rules.xml'), DATA_EXTRACTION_RULES)
+    onLine('Backup do app desligado (o token de pareamento não sai do celular).')
+  } catch (err) {
+    onLine(`Aviso: não foi possível desligar o backup do app (${String(err)}).`)
+  }
+}
+
 /**
  * @param rootDir projeto smartfone-remote (o package.json da versão fica no pai).
  * @param keysDir onde mora o keystore.properties de backup (padrão ~/.agent-code/keys).
@@ -88,4 +130,5 @@ export async function ensureReleaseConfig(
   } catch (err) {
     onLine(`Aviso: não foi possível aplicar assinatura/versão no build.gradle (${String(err)}).`)
   }
+  await ensureNoBackup(androidDir, onLine)
 }

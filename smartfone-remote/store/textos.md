@@ -11,6 +11,15 @@ Arquivos desta pasta:
   ponte de teste (`scripts/phone/dev-bridge.mjs`), com conversas fictícias ("loja-bolos" e
   "app-financas"). Nenhum projeto privado aparece. Sugestão de ordem: 01, 03, 04, 02, 05, 06.
 
+## Obrigatório logo depois do primeiro envio do AAB
+
+A Play reassina o app com a chave dela (Assinatura de apps do Google Play). A chave de API do
+Firebase que o app usa (`AIzaSyAleOJ8…`, Google Cloud do projeto agent-code-c6c23) está restrita
+ao pacote `com.larchertech.agentcode` com a impressão digital da chave de upload
+(`10:62:10:CB:C8:9D:68:87:7D:C9:DE:46:AD:E9:AC:26:F0:6B:25:C0`). Depois do primeiro envio, copie o
+SHA-1 da "Chave de assinatura do app" (Play Console › Integridade do app) e adicione na mesma
+restrição. Sem isso, o aviso com o app fechado não funciona em quem instalar pela loja.
+
 ## Nome do app (até 30)
 
 Agent Code

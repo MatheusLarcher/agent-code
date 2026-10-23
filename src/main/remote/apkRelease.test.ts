@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ensureReleaseConfig, patchAppGradle, versionCodeOf } from './apkRelease'
+import { DATA_EXTRACTION_RULES, ensureReleaseConfig, hardenManifest, patchAppGradle, versionCodeOf } from './apkRelease'
 
 // Trecho do app/build.gradle como o `cap add android` (Capacitor 8) gera.
 const TEMPLATE = `apply plugin: 'com.android.application'
@@ -48,6 +48,32 @@ describe('patchAppGradle', () => {
     const once = patchAppGradle(TEMPLATE, '0.1.133')
     expect(patchAppGradle(once, '0.1.133')).toBe(once)
     expect(patchAppGradle(once, '0.1.134')).toContain('versionCode 1134')
+  })
+})
+
+describe('hardenManifest', () => {
+  const MANIFEST = `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher">
+        <activity android:name=".MainActivity" />
+    </application>
+</manifest>`
+
+  it('desliga o backup (≤ 11 e ≥ 12) sem mexer no resto, e é idempotente', () => {
+    const out = hardenManifest(MANIFEST)
+    expect(out).toContain('android:allowBackup="false"')
+    expect(out).not.toContain('android:allowBackup="true"')
+    expect(out).toContain('android:fullBackupContent="false"')
+    expect(out).toContain('android:dataExtractionRules="@xml/data_extraction_rules"')
+    expect(out).toContain('<activity android:name=".MainActivity" />')
+    expect(hardenManifest(out)).toBe(out)
+  })
+
+  it('as regras excluem todos os domínios na nuvem e na troca de aparelho', () => {
+    for (const d of ['root', 'file', 'database', 'sharedpref', 'external']) {
+      expect(DATA_EXTRACTION_RULES.match(new RegExp(`domain="${d}"`, 'g'))).toHaveLength(2)
+    }
   })
 })
 
