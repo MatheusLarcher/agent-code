@@ -262,12 +262,14 @@ export class RemoteServer {
     if (this.server) return this.info()
     this.ip = await lanIp()
     // Fixed token: reuse the persisted one so a paired phone stays paired across
-    // restarts; generate + save once on first ever start.
+    // restarts and reinstalls; generate + save once on first ever start. The
+    // pre-0.1.135 format (32 hex) went to the broker's access log in the URL, so it
+    // is replaced exactly once by a `v2` token, which then stays fixed.
     const saved = this.deps.loadToken?.() ?? ''
-    if (saved) {
+    if (saved && !/^[0-9a-f]{32}$/.test(saved)) {
       this.token = saved
     } else {
-      this.token = randomBytes(16).toString('hex')
+      this.token = `v2${randomBytes(16).toString('hex')}`
       await this.deps.saveToken?.(this.token)
     }
     this.pairedDevice = this.deps.loadPairedDevice?.() ?? null

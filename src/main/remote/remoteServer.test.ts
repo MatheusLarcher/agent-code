@@ -131,6 +131,43 @@ describe('RemoteServer — ponte LAN', () => {
     expect(secondInfo.token).toBe(firstInfo.token)
   })
 
+  it('troca uma única vez o token do formato antigo (vazou em log), depois mantém o novo', async () => {
+    let persisted = 'a'.repeat(32) // formato gerado antes da v0.1.135
+    const deps = {
+      onInbound: () => undefined,
+      apkPath: () => 'C:/nonexistent/agent-remote.apk',
+      wwwDir: () => 'C:/nonexistent/www',
+      loadToken: () => persisted,
+      saveToken: (token: string) => {
+        persisted = token
+      }
+    }
+    const first = new RemoteServer(deps)
+    const firstInfo = await first.start()
+    await first.stop()
+    expect(firstInfo.token).not.toBe('a'.repeat(32))
+    expect(persisted).toBe(firstInfo.token)
+
+    const second = new RemoteServer(deps)
+    const secondInfo = await second.start()
+    await second.stop()
+    expect(secondInfo.token).toBe(firstInfo.token)
+  })
+
+  it('token escolhido à mão (fora do formato gerado) não é trocado', async () => {
+    const deps = {
+      onInbound: () => undefined,
+      apkPath: () => 'C:/nonexistent/agent-remote.apk',
+      wwwDir: () => 'C:/nonexistent/www',
+      loadToken: () => 'devtoken',
+      saveToken: () => undefined
+    }
+    const s = new RemoteServer(deps)
+    const info = await s.start()
+    await s.stop()
+    expect(info.token).toBe('devtoken')
+  })
+
   it('exige token nas rotas /api', async () => {
     const r = await getJson('/api/state')
     expect(r.status).toBe(401)

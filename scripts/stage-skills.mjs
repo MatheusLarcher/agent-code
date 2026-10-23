@@ -107,6 +107,16 @@ if (!source || !existsSync(source)) {
   process.exit(1)
 }
 
+// Pasta de skill vazia = cache esvaziado pelo OneDrive (outra máquina apagou o
+// conteúdo). Seguir geraria um instalador sem as skills sem ninguém notar.
+const empty = readdirSync(source, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && VALID.test(e.name) && readdirSync(join(source, e.name)).length === 0)
+  .map((e) => e.name)
+if (empty.length > 0) {
+  console.error(`Skills: ${empty.length} pasta(s) vazia(s) no cache ${source} (${empty.slice(0, 8).join(', ')}${empty.length > 8 ? ', …' : ''}).\nRestaure o conteúdo (ou apague a pasta, se a skill saiu de vez) antes de gerar o instalador.`)
+  process.exit(1)
+}
+
 // As do repositório já vão por .agents/skills e pelos kits; aqui entra só o que o
 // usuário instalou. Skill de kit na semente vazaria com o interruptor do kit desligado.
 const bundled = new Set(bundledDirs().flatMap((dir) => skillNames(join(REPO, '.agents', dir))))
