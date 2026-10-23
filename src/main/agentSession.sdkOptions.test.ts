@@ -103,10 +103,10 @@ afterEach(() => {
 })
 
 describe('AgentSession — Options por família de modelo', () => {
-  it('Claude: resumo ao vivo dos subagentes e sugestão do próximo prompt ligados', async () => {
+  it('Claude: resumo ao vivo dos subagentes ligado; sugestão do próximo prompt desligada', async () => {
     const options = await optionsFor('claude-opus-5-5')
     expect(options.agentProgressSummaries).toBe(true)
-    expect(options.promptSuggestions).toBe(true)
+    expect(options).not.toHaveProperty('promptSuggestions')
   })
 
   it.each([

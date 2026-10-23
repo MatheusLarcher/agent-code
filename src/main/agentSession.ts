@@ -1361,10 +1361,11 @@ export class AgentSession {
       // Pensamento visível: os modelos Claude novos mandam o bloco de pensamento
       // vazio por padrão ("omitted"); pedindo o resumo, o chat consegue mostrá-lo.
       ...(this.opts.model?.startsWith('claude-') ? { thinking: { type: 'adaptive', display: 'summarized' } as Options['thinking'] } : {}),
-      // Resumo ao vivo de cada subagente (~30 s, no `task_progress`) e sugestão do
-      // próximo prompt (depois do `result`): só no Claude, que reaproveita o cache;
-      // nos outros seria um pedido extra sem cache.
-      ...(this.opts.model?.startsWith('claude-') ? { agentProgressSummaries: true, promptSuggestions: true } : {}),
+      // Resumo ao vivo de cada subagente (~30 s, no `task_progress`): só no Claude,
+      // que reaproveita o cache; nos outros seria um pedido extra sem cache.
+      // `promptSuggestions` fica desligado por decisão do usuário: sugestão vai
+      // para o quadro de tarefas, opcional, nunca um chip ao fim de toda resposta.
+      ...(this.opts.model?.startsWith('claude-') ? { agentProgressSummaries: true } : {}),
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.
