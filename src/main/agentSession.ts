@@ -8,6 +8,7 @@ import { taskListKey } from './board/boardModel'
 import { attachPrintFromAgent } from './board/printRuntime'
 import { OFFICE_CALL_TOOL } from '../shared/officeCall'
 import { appRestart } from './appRestartRuntime'
+import { UPDATE_HOLD_MESSAGE } from './appRestart'
 import type { RestartActivity } from './appRestart'
 import { isUsageExhausted, sdkUsageExhausted } from './providerQuota'
 import { claudeAuthExpiry, isClaudeAuthFailure } from './authExpiry'
@@ -733,7 +734,14 @@ export class AgentSession {
   private handoffReady: Promise<void> = Promise.resolve()
   /** Fins de turno vistos: só o mais recente libera o `restartPersisting`. */
   private turnEnds = 0
-  private restartInitializing = true
+  /**
+   * Mensagem já entregue ao SDK antes do `init` dele chegar: o turno existe, mas
+   * `turnActive` ainda não o cobre (fila durável drenada no start). Uma sessão só
+   * aberta, sem mensagem, NÃO conta — o CLI só emite `init` no primeiro turno, e
+   * ela segurava o reinício, a troca de banco e a atualização agendada para sempre.
+   */
+  private restartInitializing = false
+  private sdkInitSeen = false
   private restartPersisting = false
   private restartBackground: number | null = null
   private restartUncertain = false
@@ -1420,6 +1428,8 @@ export class AgentSession {
         // message history, unlike prefixing the SDK user payload.
         UserPromptSubmit: [{ hooks: [async () => {
           if (appRestart?.reserved) return { decision: 'block' as const, reason: 'Reinício reservado; novo turno recusado.' }
+          // Atualização agendada: turno novo recusado; o turno em curso segue com as ferramentas dele.
+          if (appRestart?.updateHold) return { decision: 'block' as const, reason: UPDATE_HOLD_MESSAGE }
           this.beginTurn()
           // Início de turno: o contexto vai SEMPRE, mesmo igual ao anterior.
           const parts = await this.buildLiveRequestContext()
@@ -1626,7 +1636,7 @@ export class AgentSession {
         // push/result callback must observe the same item, and no other drain
         // may claim the next row until this one reaches a terminal result.
         this.currentInputId = item.id
-        this.input.push(item.message)
+        this.pushInput(item.message)
         const uuid = (item.message as { uuid?: unknown }).uuid
         if (typeof uuid === 'string') {
           this.turns.pushed(uuid)
@@ -1658,13 +1668,19 @@ export class AgentSession {
       return
     }
     if (!this.inputQueueRepository) {
-      this.input.push(message)
+      this.pushInput(message)
       this.turns.pushed(messageUuid)
       this.contextCapture.activate(messageUuid)
       return
     }
     await this.inputQueueRepository.enqueueAgentInput(this.opts.convId, message, messageUuid)
     await this.drainPersistedInputs()
+  }
+
+  /** Entrega ao SDK; antes do `init` dele, a sessão passa a contar como ocupada (ver `restartInitializing`). */
+  private pushInput(message: SDKUserMessage): void {
+    if (!this.sdkInitSeen) this.restartInitializing = true
+    this.input.push(message)
   }
 
   private async consumeMessages(q: NonNullable<typeof this.q>): Promise<void> {
@@ -1921,7 +1937,7 @@ export class AgentSession {
     const uuid = messageUuid || randomUUID()
     this.submittedMessages.set(uuid, text.length > 500 ? `${text.slice(0, 500)}…` : text)
     this.markActivity()
-    this.input.push(buildInjectedMessage(text, images, uuid))
+    this.pushInput(buildInjectedMessage(text, images, uuid))
     return true
   }
 
@@ -2628,6 +2644,7 @@ ${lines}
       case 'system':
         if (message.subtype === 'init') {
           this.restartInitializing = false
+          this.sdkInitSeen = true
           if (Array.isArray(message.skills)) this.skills.rememberNative(message.skills)
           // O processo do CLI acabou de subir: só conhece as tarefas em background que
           // ele mesmo lançar, e essas chegam pelo `background_tasks_changed`. Vale

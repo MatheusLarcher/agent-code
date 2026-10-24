@@ -39,7 +39,7 @@ Você **vê cada passo acontecendo** na tela, sem precisar entender nada de cód
 **Como começar, em 3 passos:**
 
 1. Clique no botão verde **Baixar para Windows** acima.
-2. Abra o arquivo baixado (`AgentCode-setup.exe`) e siga a instalação.
+2. Abra o arquivo baixado (`AgentCode-setup.exe`): instala em um clique, sem assistente, e já abre o app. Dali em diante o próprio app avisa quando houver versão nova e atualiza quando você mandar.
 3. Entre com a sua conta [Claude](https://claude.ai) quando o app pedir. Pronto: é só escrever o que você quer.
 
 > O Windows pode mostrar o aviso *"O Windows protegeu o computador"*, porque o instalador ainda não tem assinatura digital. Clique em **Mais informações → Executar assim mesmo**.

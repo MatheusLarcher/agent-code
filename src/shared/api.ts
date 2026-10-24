@@ -18,6 +18,7 @@ import type {
   VoiceSelfTest,
   AndroidToolchainStatus,
   AppConfig,
+  AppUpdateState,
   BrowserFrame,
   BrowserInput,
   BrowserState,
@@ -240,6 +241,18 @@ export type PoAuthorizationListResult = { ok: true; authorizations: PoAuthorizat
 export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** App version from package.json (matches the installer/build). */
   getAppVersion(): Promise<string>
+  /** Atualização automática: o estado atual (fase, versão, progresso, se pode instalar agora). */
+  getUpdateState(): Promise<AppUpdateState>
+  /** O main avisa a cada mudança de estado da atualização. */
+  onUpdateStateChanged(cb: (state: AppUpdateState) => void): () => void
+  /** Verifica agora (Configurações); devolve o estado logo após o pedido. */
+  updateCheckNow(): Promise<AppUpdateState>
+  /** Fecha o app de forma ordenada, instala em silêncio e reabre; `ok: false` com o motivo se não puder. */
+  updateInstallNow(): Promise<{ ok: boolean; message?: string }>
+  /** Instala sozinho quando o último agente terminar; trabalho novo é recusado até lá. */
+  updateScheduleWhenIdle(): Promise<AppUpdateState>
+  /** Desfaz o agendamento; o app volta a aceitar trabalho. */
+  updateCancelSchedule(): Promise<AppUpdateState>
   /** Read the persisted app configuration. */
   getConfig(): Promise<AppConfig>
   /** Persist a partial app configuration (merged with what's on disk). */

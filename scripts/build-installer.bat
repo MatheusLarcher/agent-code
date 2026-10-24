@@ -156,6 +156,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Confere o feed da atualizacao: latest.yml desta versao e o .blockmap ---
+REM --- (o electron-updater le os dois da Release; sem eles a atualizacao nao sai) ---
+findstr /C:"version: !VERSAO!" "dist\latest.yml" >nul 2>nul
+if errorlevel 1 (
+    echo.
+    echo [ERRO] dist\latest.yml nao existe ou nao e da versao !VERSAO!.
+    echo.
+    pause
+    exit /b 1
+)
+if not exist "dist\AgentCode-setup.exe.blockmap" (
+    echo.
+    echo [ERRO] dist\AgentCode-setup.exe.blockmap nao foi gerado.
+    echo.
+    pause
+    exit /b 1
+)
+
 for %%F in ("!ARTIFACT!") do (
     echo ============================================
     echo   EXE GERADO COM SUCESSO
@@ -166,6 +184,25 @@ for %%F in ("!ARTIFACT!") do (
 )
 echo.
 echo O arquivo esta na pasta dist\.
+echo.
+
+REM --- Publicacao na Release do GitHub: so com S explicito (padrao N) ---
+set "PUBLICAR=N"
+set /p "PUBLICAR=Publicar a release v!VERSAO! no GitHub? (S/N) [N]: "
+if /I "!PUBLICAR!"=="S" (
+    echo.
+    call node "%~dp0publish-release.mjs"
+    if errorlevel 1 (
+        echo.
+        echo [ERRO] A publicacao falhou; o setup continua em dist\ e pode ser publicado com: npm run publish:release
+        echo.
+        pause
+        exit /b 1
+    )
+    echo Release publicada.
+) else (
+    echo Nao publicado. Para publicar depois: npm run publish:release
+)
 echo.
 start "" explorer.exe "%CD%\dist"
 pause

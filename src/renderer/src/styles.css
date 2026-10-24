@@ -5778,6 +5778,174 @@ img.inline-att[data-caret] {
   line-height: 1.4;
 }
 
+/* ============ Atualização do app (topbar) ============
+   Indicador redondo quando a versão nova está pronta (laranja) ou agendada
+   (âmbar); pílula travada com spinner enquanto instala. */
+.update-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+.update-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+.update-trigger:hover,
+.update-badge.open .update-trigger {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: var(--accent);
+}
+.update-trigger:active {
+  transform: scale(0.96);
+}
+.update-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.update-trigger.scheduled {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.update-trigger.scheduled:hover,
+.update-badge.open .update-trigger.scheduled {
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+  border-color: var(--warn);
+}
+.update-trigger.installing {
+  padding: 0 10px 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-3);
+  border-color: var(--line);
+  cursor: default;
+}
+.update-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 320px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  animation: modal-in 0.16s cubic-bezier(0.21, 1.02, 0.73, 1);
+}
+.update-popover h4 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.update-popover p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.update-popover-wait {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.update-popover-wait svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warn);
+}
+.update-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+/* Faixa no topo da janela enquanto o app fecha para instalar. */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 26px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a1a1a;
+  background: var(--accent);
+  -webkit-app-region: no-drag;
+}
+.update-banner .spinner {
+  color: #1a1a1a;
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-popover {
+    animation: none;
+  }
+}
+/* Configurações: "Versão X · Verificar agora · estado", no rodapé do menu. */
+.update-status.settings-nav-version {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 4px;
+  row-gap: 2px;
+  white-space: normal;
+  line-height: 1.4;
+}
+.update-status > * + *::before {
+  content: '·';
+  margin-right: 4px;
+  color: var(--muted);
+}
+.update-status-check {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.update-status-check:hover {
+  color: var(--text);
+}
+.update-status-check:disabled {
+  color: var(--muted);
+  cursor: default;
+  text-decoration: none;
+}
+.update-status-state.err {
+  color: var(--err);
+}
+
 /* ============ Configurações em abas ============ */
 .settings-modal {
   width: 820px;

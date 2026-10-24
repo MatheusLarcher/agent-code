@@ -33,10 +33,25 @@ describe('AgentSession initialization with the restart coordinator', () => {
     const readSecond = register.mock.calls[1][1] as () => RestartActivity
     expect(readFirst()).toEqual(first.restartActivity())
     expect(readSecond()).toEqual(second.restartActivity())
-    expect(readFirst().busy).toBe(true)
+    // Só aberta, sem mensagem: não é trabalho — o CLI só emite `init` no primeiro
+    // turno, e "ocupada desde a construção" segurava reinício/atualização para sempre.
+    expect(readFirst().busy).toBe(false)
   })
 
   it('also constructs when the restart runtime is absent', () => {
-    expect(session('without-runtime').restartActivity().busy).toBe(true)
+    expect(session('without-runtime').restartActivity().busy).toBe(false)
+  })
+
+  it('a message handed to the SDK before its init makes the session busy; init clears it', () => {
+    const s = session('drained') as unknown as {
+      pushInput: (m: unknown) => void
+      handleMessage: (m: unknown) => void
+      restartActivity: () => RestartActivity
+    }
+    expect(s.restartActivity().busy).toBe(false)
+    s.pushInput({ type: 'user', message: { role: 'user', content: 'oi' } })
+    expect(s.restartActivity().busy).toBe(true)
+    s.handleMessage({ type: 'system', subtype: 'init', session_id: 's1', model: 'm', cwd: '/test', tools: [] })
+    expect(s.restartActivity().busy).toBe(false)
   })
 })

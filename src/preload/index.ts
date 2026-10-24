@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
+import type { AppUpdateState } from '../shared/ipc'
 import type { ProjectColorMap } from '../shared/projectColor'
 import type {
   CloudInspectionDto,
@@ -181,6 +182,13 @@ const read = <T>(channel: string, ...args: unknown[]): Promise<T> => invokeRead<
 // propósito: o contrato mora junto da fila do quadro, e a tela o lê como opcional.
 const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
+  // Atualização automática (main/appUpdate/): estado, mudanças e as ações do indicador.
+  getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke(Channels.updateStateGet),
+  onUpdateStateChanged: (cb: (state: AppUpdateState) => void): (() => void) => on(Channels.updateStateChanged, cb),
+  updateCheckNow: (): Promise<AppUpdateState> => ipcRenderer.invoke(Channels.updateCheckNow),
+  updateInstallNow: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke(Channels.updateInstallNow),
+  updateScheduleWhenIdle: (): Promise<AppUpdateState> => ipcRenderer.invoke(Channels.updateScheduleWhenIdle),
+  updateCancelSchedule: (): Promise<AppUpdateState> => ipcRenderer.invoke(Channels.updateCancelSchedule),
   // Detector de travadas: ninguém espera a resposta; quem valida é o main (freezeLog.ts).
   logFreezes: (batch: FreezeRecord[]): void => {
     void ipcRenderer.invoke(Channels.perfLogFreezes, batch).catch(() => undefined)

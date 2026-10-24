@@ -114,6 +114,8 @@ import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { DeepSeekUsageBadge, useDeepSeekBalance } from './components/DeepSeekUsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
+import { UpdateBadge } from './components/UpdateBadge'
+import { useAppUpdate } from './components/useAppUpdate'
 import { useClaudeAccounts } from './accounts/useClaudeAccounts'
 import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
 import { useAccountActions } from './accounts/useAccountActions'
@@ -543,6 +545,9 @@ function hydrateLoaded(list: Conversation[], self: string | null): { list: Conve
 
 export function App(): JSX.Element {
   const { notify } = useUI()
+  // Atualização automática do app: indicador na barra; erro de instalação vira toast.
+  const update = useAppUpdate({ onError: (m) => notify('erro', m) })
+  const updateInstalling = update.state.phase === 'instalando'
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -4644,7 +4649,7 @@ export function App(): JSX.Element {
     <>
       <QueueStrip queued={activeQueue} onDelete={trashQueued} onSendNow={(id) => void sendQueuedNow(id)} />
       <Composer
-        disabled={!active}
+        disabled={!active || updateInstalling}
         busy={showBusy}
         chips={chips}
         onChipsConsumed={consumeChips}
@@ -4816,6 +4821,13 @@ export function App(): JSX.Element {
             <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           )}
           {activeDeepSeek && active && <DeepSeekUsageBadge balance={deepseekBalance} convCostUsd={active.tokens.cost} />}
+          <UpdateBadge
+            state={update.state}
+            onInstallNow={() => void update.installNow()}
+            onScheduleWhenIdle={() => void update.scheduleWhenIdle()}
+            onCancelSchedule={() => void update.cancelSchedule()}
+            onRefresh={() => void update.refresh()}
+          />
           <button
             className={`btn ghost remote-btn topbar-right ${remoteRunning ? 'on' : ''}`}
             onClick={() => setRemoteOpen(true)}

@@ -1875,6 +1875,36 @@ export interface LocalSpeechConfig {
   model: string
 }
 
+/** Fase da atualização automática do app (main/appUpdate/appUpdateService.ts). */
+export type AppUpdatePhase =
+  | 'ocioso'
+  | 'verificando'
+  | 'baixando'
+  /** Baixada e conferida pelo updater: é quando o indicador aparece na barra. */
+  | 'pronta'
+  /** Instala sozinha quando o último agente terminar; trabalho novo é recusado até lá. */
+  | 'agendada'
+  /** A sequência de fechamento começou; o app some e volta na versão nova. */
+  | 'instalando'
+  | 'erro'
+
+/** O que a tela sabe da atualização automática. */
+export interface AppUpdateState {
+  phase: AppUpdatePhase
+  /** A versão em curso: a que está baixando, pronta, agendada ou instalando. */
+  version: string | null
+  /** Progresso do download, 0-100 (só faz sentido em `baixando`). */
+  percent: number | null
+  /** Fim da última verificação (ISO); null antes da primeira. */
+  checkedAt: string | null
+  /** Última falha (verificação, download ou disparo da instalação); null sem falha. */
+  error: string | null
+  /** Instalar agora é possível: `pronta`, nenhum agente trabalhando e nenhuma tarefa agendada ativa. */
+  canInstallNow: boolean
+  /** O que segura a instalação agora (uma frase), quando há algo segurando. */
+  blockedBy: string | null
+}
+
 /** Everything the user can configure — persisted across app restarts. */
 export interface AppConfig {
   /** Read-aloud voice and speed (local Kokoro). */
@@ -2312,6 +2342,16 @@ export const Channels = {
   // renderer -> main (invoke)
   /** Read the app version from package.json (shown in the Settings screen). */
   appGetVersion: 'app:get-version',
+  /** Atualização automática (main/appUpdate/): o estado atual e cada mudança dele (main → tela). */
+  updateStateGet: 'update:state-get',
+  updateStateChanged: 'update:state-changed',
+  /** Verificar agora (Configurações); devolve o estado logo após o pedido. */
+  updateCheckNow: 'update:check-now',
+  /** Atualizar agora: fechamento ordenado, instalador silencioso, app de volta. */
+  updateInstallNow: 'update:install-now',
+  /** Atualizar quando os agentes terminarem / cancelar esse agendamento. */
+  updateScheduleWhenIdle: 'update:schedule-when-idle',
+  updateCancelSchedule: 'update:cancel-schedule',
   /** Read the persisted app configuration (Settings screen). */
   configGet: 'config:get',
   /** Persist the app configuration (Settings screen). */

@@ -7,7 +7,7 @@ import { openUrlExternally } from './openInBrowser'
 import { randomUUID } from 'node:crypto'
 import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
 import { spawn } from 'node:child_process'
-import { join, basename, extname } from 'node:path'
+import { join, basename, dirname, extname } from 'node:path'
 import {
   stat as fsStat,
   copyFile as fsCopyFile,
@@ -192,6 +192,13 @@ import { startTaskReaper } from './tasks/taskReaper'
 import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
+import * as electronUpdater from 'electron-updater'
+import { AppUpdateService, type UpdaterLike } from './appUpdate/appUpdateService'
+import { createUpdateLog } from './appUpdate/updateLog'
+import { devUpdateDryInstall, devUpdateFeedConfigPath } from './appUpdate/devUpdateFeed'
+import { UpdateInstaller, type ShutdownStep } from './appUpdate/updateInstaller'
+import { killProcessTree, listInstallDirProcesses } from './appUpdate/installDirProcesses'
+import { INSTALL_MARKER_FILENAME, describeInstallOutcome, readAndClearInstallMarker, writeInstallMarker } from './appUpdate/installMarker'
 import { setupTarefasApp } from './tarefas/appWiring'
 import { ligarAvisoCelular } from './tarefas/destinoCelular'
 import { tarefasServico } from './tarefas/runtime'
@@ -222,6 +229,7 @@ import type {
   TurnEndWait,
   ChatEvent,
   AppConfig,
+  AppUpdateState,
   BrowserInput,
   FileAttachment,
   FileBytes,
@@ -904,6 +912,207 @@ const storageTransitionHooks = {
 function conversationLabel(convId: string): string {
   const title = conversationQueue.snapshot(convId)?.title
   return typeof title === 'string' && title.trim() ? title.trim() : convId
+}
+
+// Atualização automática do app (appUpdate/): checa o feed das Releases, baixa
+// em segundo plano e publica o estado para a tela; instalar é sempre pedido
+// explícito (botão ou agendamento). Log em <userData>/logs/atualizacao.log.
+const updateLog = createUpdateLog(app.getPath('userData'))
+let appUpdate: AppUpdateService | null = null
+
+/** O que segura a instalação agora: agente trabalhando (workStatus) ou tarefa agendada ativa. */
+function updateBlockedBy(): string | null {
+  const status = appRestart?.workStatus(conversationLabel)
+  if (status?.blockedBy) return status.blockedBy
+  if (tarefasServico()?.temAtiva()) return 'Uma tarefa agendada está em execução.'
+  return null
+}
+
+/** O `autoUpdater` do electron-updater embutido no bundle; sem ele, um inerte e o log diz por quê. */
+function loadAutoUpdater(): UpdaterLike {
+  const candidate = (electronUpdater as { autoUpdater?: UpdaterLike }).autoUpdater
+  if (candidate && typeof candidate.checkForUpdates === 'function') return candidate
+  updateLog('electron-updater não veio no bundle do main: atualização automática desligada nesta build')
+  return {
+    autoDownload: false, autoInstallOnAppQuit: false, allowDowngrade: false, forceDevUpdateConfig: false,
+    updateConfigPath: null, logger: null,
+    on: () => undefined,
+    checkForUpdates: async () => null,
+    quitAndInstall: () => { throw new Error('Atualização automática indisponível nesta build.') }
+  }
+}
+
+/** Criado no primeiro uso (depois do `ready`): o updater lê a versão e o caminho do app ao nascer. */
+function appUpdateService(): AppUpdateService {
+  appUpdate ??= new AppUpdateService({
+    updater: loadAutoUpdater(),
+    currentVersion: app.getVersion(),
+    log: updateLog,
+    blockedBy: updateBlockedBy,
+    onChange: (state) => send(Channels.updateStateChanged, state),
+    devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath())
+  })
+  return appUpdate
+}
+
+/** Raiz de instalação: a pasta do executável no app instalado; em desenvolvimento, o
+ *  repositório (cobre out/postgres, out/ms-playwright e o claude.exe de node_modules). */
+function installRootDir(): string {
+  return app.isPackaged ? dirname(process.execPath) : app.getAppPath()
+}
+const updateMarkerPath = (): string => join(app.getPath('userData'), 'logs', INSTALL_MARKER_FILENAME)
+
+/** Tudo o que `window-all-closed` e `before-quit` param hoje, mas esperado de verdade e com prazo. */
+function updateShutdownSteps(): ShutdownStep[] {
+  return [
+    { name: 'flush da tela', timeoutMs: 16_000, run: () => requestStorageFlush() },
+    {
+      name: 'janela escondida',
+      timeoutMs: 1_000,
+      run: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
+      }
+    },
+    { name: 'persistência (filas, leases, pool, pg_ctl stop)', timeoutMs: 60_000, run: () => closeStorageForQuit() },
+    {
+      name: 'sessões dos agentes',
+      timeoutMs: 5_000,
+      run: () => {
+        for (const s of sessions.values()) s.dispose()
+        sessions.clear()
+      }
+    },
+    {
+      name: 'navegadores',
+      timeoutMs: 15_000,
+      run: async () => {
+        const open = [...browsers.values()]
+        browsers.clear()
+        await Promise.all(open.map((b) => b.close()))
+      }
+    },
+    {
+      name: 'controle do Windows e ponte do Chrome',
+      timeoutMs: 5_000,
+      run: () => {
+        windowsControl.stop()
+        stopChromeBridge()
+      }
+    },
+    { name: 'voz', timeoutMs: 15_000, run: () => stopVoice() },
+    {
+      name: 'celular, relay e MCP de entrada',
+      timeoutMs: 10_000,
+      run: async () => {
+        relay.stop()
+        await Promise.all([remote.stop(), mcpInbound.stop()])
+      }
+    },
+    {
+      name: 'vigias e timers',
+      timeoutMs: 5_000,
+      run: () => {
+        stopAccountSync()
+        stopMemoryCurator?.()
+        stopMemoryCurator = null
+        stopTaskReaper?.()
+        stopTaskReaper = null
+        stopHandoffSweep?.()
+        stopHandoffSweep = null
+        stopRestartGuardFile?.()
+        stopRestartGuardFile = null
+        stopSleepGuard?.()
+        stopSleepGuard = null
+        brilhoDasTarefas.restaurarAoSair()
+        stopMemoryWatch?.()
+        stopMemoryWatch = null
+        planningIpc?.close()
+        planningIpc = null
+        centralIpc?.dispose()
+        centralIpc = null
+        appUpdate?.stop()
+      }
+    }
+  ]
+}
+
+// "Atualizar agora" e o disparo do agendamento (appUpdate/updateInstaller.ts):
+// fechamento ordenado, conferência de processos e o instalador silencioso.
+let updateInstall: UpdateInstaller | null = null
+function updateInstaller(): UpdateInstaller {
+  updateInstall ??= new UpdateInstaller({
+    log: updateLog,
+    blockedBy: updateBlockedBy,
+    pendingInstaller: () => appUpdateService().pendingInstaller(),
+    pendingVersion: () => appUpdateService().snapshot().version,
+    fileExists: (file) => existsSync(file),
+    markInstalling: () => appUpdateService().markInstalling(),
+    markReady: (error) => appUpdateService().markReady(error),
+    // Durante o fechamento, trabalho novo é recusado com a mensagem da retenção.
+    hold: () => appRestart?.holdForUpdate(() => undefined, scheduledTaskBusy),
+    steps: updateShutdownSteps,
+    // O próprio exe (auxiliares do Electron, MCP em ELECTRON_RUN_AS_NODE) sai com o app; o instalador cobre o resto dele.
+    listProcesses: () => listInstallDirProcesses(installRootDir(), process.pid, process.execPath),
+    killProcess: (pid) => killProcessTree(pid),
+    rememberAttempt: (version) => writeInstallMarker(updateMarkerPath(), version),
+    // O app.quit() que vem a seguir (do updater ou nosso) não pede flush nem segura a janela.
+    markQuitReady: () => {
+      quitRequested = true
+      quitReady = true
+      closeReady = true
+      // A tela já entregou tudo (passo "flush da tela"): a janela some sem passar pelo
+      // `beforeunload` do renderer, que cancelaria o app.quit() e deixaria o app vivo e
+      // escondido (foi o que o ensaio mostrou). `destroy()` não dispara `close`.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy()
+    },
+    quitAndInstall: () => appUpdateService().quitAndInstall(),
+    stillInstalling: () => appUpdateService().snapshot().phase === 'instalando',
+    quitApp: () => app.quit(),
+    flushLog: () => updateLog.flush(),
+    dryRun: devUpdateDryInstall(process.env, app.isPackaged)
+  })
+  return updateInstall
+}
+
+/** O outro motivo para a retenção esperar: tarefa agendada em execução. */
+const scheduledTaskBusy = (): string | undefined =>
+  tarefasServico()?.temAtiva() ? 'Uma tarefa agendada está em execução.' : undefined
+
+/** "Atualizar quando os agentes terminarem": estado `agendada` + retenção no coordenador. */
+function scheduleUpdateWhenIdle(): AppUpdateState {
+  const service = appUpdateService()
+  if (appRestart && service.markScheduled()) {
+    appRestart.holdForUpdate(
+      () => void runScheduledUpdate(),
+      scheduledTaskBusy,
+      // Quem segura mudou: a tela relê o estado (blockedBy) sem abrir o popover; o log diz quem é.
+      (blockedBy) => {
+        updateLog(blockedBy ? `agendamento esperando: ${blockedBy}` : 'agendamento: nada trabalhando, disparando a instalação')
+        send(Channels.updateStateChanged, service.snapshot())
+      }
+    )
+  }
+  return service.snapshot()
+}
+
+/** O instante ocioso chegou: a mesma sequência do "Atualizar agora". */
+async function runScheduledUpdate(): Promise<void> {
+  const result = await updateInstaller().installNow('agendamento')
+  if (result.ok) return
+  // Recusa passageira (um agente começou a trabalhar no meio): continua agendada.
+  if (result.transient && appRestart?.rearmHold()) {
+    updateLog(`agendamento mantido: ${result.message}`)
+    return
+  }
+  appRestart?.releaseHold()
+  appUpdateService().markReady(result.message)
+}
+
+function cancelScheduledUpdate(): AppUpdateState {
+  appRestart?.releaseHold()
+  const service = appUpdateService()
+  if (service.snapshot().phase === 'agendada') service.markReady()
+  return service.snapshot()
 }
 
 // Restauração e troca local ↔ nuvem: a guarda do app_restart, a drenagem da tela e
@@ -1625,6 +1834,12 @@ export function registerIpc(): void {
     else pending.resolve()
   })
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
+  // Atualização automática (appUpdate/appUpdateService.ts): o estado e o "Verificar agora".
+  ipcMain.handle(Channels.updateStateGet, () => appUpdateService().snapshot())
+  ipcMain.handle(Channels.updateCheckNow, () => appUpdateService().checkNow())
+  ipcMain.handle(Channels.updateInstallNow, () => updateInstaller().installNow('botão'))
+  ipcMain.handle(Channels.updateScheduleWhenIdle, () => scheduleUpdateWhenIdle())
+  ipcMain.handle(Channels.updateCancelSchedule, () => cancelScheduledUpdate())
   // Detector de travadas: lote do renderer, validado e gravado em fila (freezeLog.ts).
   ipcMain.handle(Channels.perfLogFreezes, (_e, batch: unknown) => logFreezes(batch))
   // Arquivos 3D dos agentes do Escritório (resources/office-agents): bytes por IPC, o file:// não serve ao GLTFLoader.
@@ -3389,6 +3604,12 @@ app.whenReady().then(async () => {
   // A persistência já está pronta (ou já falhou de forma conhecida): só agora a
   // interface pode ler config e conversas sem tomar STORAGE_OFFLINE.
   send(Channels.storageStatusChanged, storageLifecycle.status())
+  // Atualização automática: primeira verificação 30 s depois de janela e banco
+  // prontos, depois de hora em hora (appUpdate/appUpdateService.ts).
+  appUpdateService().start()
+  // A abertura seguinte a um "Atualizar agora": concluiu ou não (installMarker.ts).
+  const previousInstall = readAndClearInstallMarker(updateMarkerPath())
+  if (previousInstall) updateLog(describeInstallOutcome(previousInstall, app.getVersion()))
   // Índice da Central (lê todas as conversas) aquecido em segundo plano, alguns
   // segundos depois: a 1ª mensagem da Central não espera essa carga.
   if (storageAvailable) centralIpc?.prewarm()
@@ -3474,6 +3695,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (event) => {
   quitRequested = true
+  // Fechar o app com a atualização agendada cancela o agendamento, sem instalar.
+  appRestart?.releaseHold()
   // Antes de fechar o banco: sem sync nem nova tentativa da lista de contas depois.
   stopAccountSync()
   if (!quitReady) {
@@ -3508,6 +3731,8 @@ app.on('before-quit', (event) => {
   brilhoDasTarefas.restaurarAoSair()
   stopMemoryWatch?.()
   stopMemoryWatch = null
+  // Sem checagem de atualização no meio do fechamento.
+  appUpdate?.stop()
   planningIpc?.close()
   centralIpc?.dispose()
 })

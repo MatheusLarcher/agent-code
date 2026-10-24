@@ -11,7 +11,12 @@ export default defineConfig({
     // DLLs, kokoro-js's voices/*.bin, eSpeak's espeak-ng.data): they must stay
     // runtime imports from node_modules. They are `dependencies`, so the plugin
     // already externalizes them; `include` pins the transitive ones too.
-    plugins: [externalizeDepsPlugin({ include: ['onnxruntime-node', 'onnxruntime-common', 'sharp'] })],
+    // `electron-updater` vai no bundle do main (com as dependências dele): o
+    // `files` do electron-builder.yml é explícito e não o levaria de node_modules
+    // para o instalador; scripts/check-deps.mjs confere a marca dele em out/main.
+    plugins: [
+      externalizeDepsPlugin({ include: ['onnxruntime-node', 'onnxruntime-common', 'sharp'], exclude: ['electron-updater'] })
+    ],
     // The installed app has no smartfone-remote of its own: the APK build goes
     // back to the repo it was built from (see REMOTE_ROOT in src/main/index.ts).
     define: { __AGENT_CODE_REPO__: JSON.stringify(resolve('.')) },

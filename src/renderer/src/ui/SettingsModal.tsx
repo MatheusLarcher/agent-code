@@ -26,6 +26,7 @@ import { SkillCatalogSection } from './SkillCatalogSection'
 import { AndroidToolchainSection } from './AndroidToolchainSection'
 import { DeepSeekSettingsSection } from './DeepSeekSettingsSection'
 import { RevealButton } from './RevealButton'
+import { AppUpdateStatus } from './AppUpdateStatus'
 import { ipcErrorMessage } from '../ipcError'
 import {
   IconBoard,
@@ -293,7 +294,7 @@ export function SettingsModal({
                 </span>
               </button>
             ))}
-            {appVersion && <div className="settings-nav-version">Agent Code v{appVersion}</div>}
+            {appVersion && <AppUpdateStatus appVersion={appVersion} />}
           </nav>
 
           <div className="settings-scroll" role="tabpanel" key={tab}>

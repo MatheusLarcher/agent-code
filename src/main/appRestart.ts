@@ -30,6 +30,22 @@ export interface RestartHost {
 }
 export interface RestartReply { ok: boolean; prepared: boolean; message: string }
 
+/** A recusa de trabalho novo durante a retenção da atualização — a mesma no `assertOpen` e no hook do turno. */
+export const UPDATE_HOLD_MESSAGE =
+  'Atualização agendada: o app reinicia quando os agentes terminarem. Cancele no indicador para continuar.'
+/** Reconferência periódica da retenção: nem todo fim de trabalho passa por `changed()`. */
+export const UPDATE_HOLD_RECHECK_MS = 5_000
+
+interface UpdateHold {
+  onIdle: () => void
+  /** Outro motivo para esperar (tarefa agendada ativa); undefined = nada. */
+  extraBusy: () => string | undefined
+  onBlockedChange?: (blockedBy: string | undefined) => void
+  fired: boolean
+  lastBlockedBy: string | undefined
+  timer: ReturnType<typeof setInterval>
+}
+
 /** Same question `blocker()` answers, exposed for an outside restarter script. */
 export interface RestartGuardStatus {
   /** True only when NO conversation is busy and nothing is starting/sending. */
@@ -47,7 +63,74 @@ export class AppRestartCoordinator {
   private sessions = new Map<symbol, { id: string; read: () => RestartActivity }>()
   private operations = new Set<symbol>()
   private reservation?: { caller: symbol; timer: ReturnType<typeof setTimeout>; running: boolean }
+  private hold?: UpdateHold
   constructor(private readonly host: RestartHost, private readonly timeoutMs = 60_000) {}
+
+  /**
+   * "Atualizar quando os agentes terminarem": trabalho NOVO é recusado (`enter`/
+   * `assertOpen` e o hook UserPromptSubmit da sessão) e `onIdle` dispara UMA vez
+   * no instante em que nada trabalha — `working()` vazio e `extraBusy()` vazio.
+   * Diferente da reserva do app_restart, não nega ferramentas nem permissões do
+   * turno em curso: `reserved` continua falso. Sem prazo de validade; só
+   * `releaseHold()` (cancelamento na tela, fechamento do app) a desfaz. Um timer
+   * reconfere enquanto ela existir: nem todo fim de trabalho chama `changed()`.
+   * Já existindo uma retenção, a chamada é ignorada.
+   */
+  holdForUpdate(
+    onIdle: () => void,
+    extraBusy: () => string | undefined = () => undefined,
+    onBlockedChange?: (blockedBy: string | undefined) => void,
+    recheckMs = UPDATE_HOLD_RECHECK_MS
+  ): void {
+    if (this.hold) return
+    const timer = setInterval(() => this.checkHold(), recheckMs)
+    timer.unref?.()
+    this.hold = { onIdle, extraBusy, onBlockedChange, fired: false, lastBlockedBy: undefined, timer }
+    // Nunca dispara dentro da chamada de quem agendou: mesmo ocioso, cede primeiro.
+    setImmediate(() => this.checkHold())
+  }
+
+  releaseHold(): void {
+    if (!this.hold) return
+    clearInterval(this.hold.timer)
+    this.hold = undefined
+  }
+
+  /** A instalação agendada foi recusada por motivo passageiro: volta a esperar o próximo instante ocioso. */
+  rearmHold(): boolean {
+    const hold = this.hold
+    if (!hold) return false
+    hold.fired = false
+    clearInterval(hold.timer)
+    hold.timer = setInterval(() => this.checkHold(), UPDATE_HOLD_RECHECK_MS)
+    hold.timer.unref?.()
+    return true
+  }
+
+  get updateHold(): boolean { return !!this.hold }
+
+  /** O que segura a retenção agora (para a tela); undefined = livre ou sem retenção. */
+  holdBlockedBy(label: (convId: string) => string = String): string | undefined {
+    if (!this.hold) return undefined
+    return this.working(label) ?? this.hold.extraBusy()
+  }
+
+  private checkHold(): void {
+    const hold = this.hold
+    if (!hold) return
+    const blockedBy = this.working(String) ?? hold.extraBusy()
+    if (blockedBy !== hold.lastBlockedBy) {
+      hold.lastBlockedBy = blockedBy
+      try { hold.onBlockedChange?.(blockedBy) } catch { /* a tela pode já ter ido embora */ }
+    }
+    if (hold.fired || blockedBy) return
+    hold.fired = true
+    clearInterval(hold.timer)
+    // A retenção continua (trabalho novo segue recusado) até releaseHold() ou o fim do app.
+    try { hold.onIdle() } catch (error) {
+      this.host.report(`Atualização agendada: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
 
   register(id: string, read: () => RestartActivity): {
     request: (reason: string, checkOnly?: boolean) => RestartReply
@@ -104,6 +187,7 @@ export class AppRestartCoordinator {
   }
   assertOpen(): void {
     if (this.reservation) throw new Error('Reinício preparado: novo trabalho recusado. Tente novamente após o reinício ou cancelamento.')
+    if (this.hold) throw new Error(UPDATE_HOLD_MESSAGE)
   }
   get reserved(): boolean { return !!this.reservation }
 
@@ -185,6 +269,7 @@ export class AppRestartCoordinator {
     this.host.report(message)
   }
   changed(): void {
+    this.checkHold()
     const reservation = this.reservation
     if (!reservation || reservation.running || this.blocker(reservation.caller, true)) return
     reservation.running = true

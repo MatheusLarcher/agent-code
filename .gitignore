@@ -4,6 +4,8 @@ out/
 .seed-skills/
 graphify-out/
 dist/
+# Feed local de atualização do ensaio (scripts/dev-update-feed.mjs); nunca vai no instalador
+dev-app-update.yml
 .vite/
 *.log
 .DS_Store

@@ -69,6 +69,16 @@ extraResources:
       - '*.glb'
       - '*.bin'
 
+# Feed de atualização: o README baixa de releases/latest/download/AgentCode-setup.exe
+# e o electron-updater lê o app-update.yml que o electron-builder gera a partir
+# daqui (owner/repo/provider). Quem publica a Release é scripts/publish-release.mjs
+# (rascunho + conferência dos anexos antes de tornar pública) — por isso o
+# `package:win` roda com `--publish never`.
+publish:
+  - provider: github
+    owner: MatheusLarcher
+    repo: agent-code
+
 win:
   target:
     - target: nsis
@@ -77,7 +87,14 @@ win:
 
 nsis:
   artifactName: AgentCode-setup.exe
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  # Um clique e por usuário (%LOCALAPPDATA%\Programs\Agent Code, sem UAC): é o que
+  # deixa o app instalar a versão nova sozinho (`--updated /S --force-run`) e faz o
+  # latest.yml sair sem isAdminRightsRequired. Sem escolha de pasta: o updater
+  # reinstala sempre na mesma.
+  oneClick: true
+  perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # customInit: na instalação manual, remove a instalação antiga por máquina
+  # (Program Files, HKLM) com um UAC só — ver build/installer.nsh.
+  include: build/installer.nsh

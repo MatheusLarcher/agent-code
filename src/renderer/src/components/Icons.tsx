@@ -449,6 +449,15 @@ export const IconPlay = (p: IconProps): JSX.Element => (
   </Svg>
 )
 
+/** Atualização do app: seta para cima dentro de um círculo. */
+export const IconUpdate = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <line x1="12" y1="16" x2="12" y2="8" />
+    <polyline points="8.5 11.5 12 8 15.5 11.5" />
+  </Svg>
+)
+
 /** Windows-style spinning ring (apply the `.spinner` CSS class for the animation). */
 export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>

@@ -11,6 +11,12 @@ function stubApi(config: AppConfig): Record<string, ReturnType<typeof vi.fn>> {
     setConfig: vi.fn(async () => {}),
     getCacheInfo: vi.fn(async () => ({ dir: 'C:/dados', dbPath: 'C:/dados/app.db' })),
     getAppVersion: vi.fn(async () => '0.0.0'),
+    getUpdateState: vi.fn(async () => ({ phase: 'ocioso', version: null, percent: null, checkedAt: null, error: null, canInstallNow: false, blockedBy: null })),
+    onUpdateStateChanged: vi.fn(() => () => {}),
+    updateCheckNow: vi.fn(async () => ({ phase: 'verificando', version: null, percent: null, checkedAt: null, error: null, canInstallNow: false, blockedBy: null })),
+    updateInstallNow: vi.fn(async () => ({ ok: true })),
+    updateScheduleWhenIdle: vi.fn(async () => ({ phase: 'agendada', version: null, percent: null, checkedAt: null, error: null, canInstallNow: false, blockedBy: null })),
+    updateCancelSchedule: vi.fn(async () => ({ phase: 'pronta', version: null, percent: null, checkedAt: null, error: null, canInstallNow: true, blockedBy: null })),
     getChromeBridgeStatus: vi.fn(async () => ({
       listening: false,
       port: null,
