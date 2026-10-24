@@ -85,6 +85,13 @@ describe('readProjectIcon', () => {
     expect(await readProjectIcon(root)).toBeNull()
   })
 
+  it('acha o logo em packaging/ antes do ícone do app Android (projeto Rust)', async () => {
+    put('packaging/velora-icon.svg', '<svg/>')
+    put('android/app/src/main/AndroidManifest.xml', '<application android:icon="@mipmap/ic_launcher">')
+    put('android/app/src/main/res/mipmap-hdpi/ic_launcher.png', 'a')
+    expect(await readProjectIcon(root)).toMatch(/^data:image\/svg\+xml;base64,/)
+  })
+
   it('casa o nome sem diferenciar maiúscula (Windows não diferencia)', async () => {
     put('public/Logo.PNG', 'L')
     expect(await readProjectIcon(root)).toMatch(/^data:image\/png;base64,/)

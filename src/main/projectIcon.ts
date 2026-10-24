@@ -57,7 +57,9 @@ export const ASSET_DIRS = new Set([
   'media',
   'build',
   'www',
-  'brand'
+  'brand',
+  // Rust/Linux projects keep the app icon next to the installer scripts.
+  'packaging'
 ])
 
 /** Never descend into these, however the walk got there. */
