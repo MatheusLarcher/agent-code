@@ -107,6 +107,21 @@ describe('AppUpdateService', () => {
     expect(service.pendingInstaller()).toBeNull()
   })
 
+  it('release mais recente sem latest.yml (anterior ao atualizador) → nenhuma versão nova, sem erro na tela', async () => {
+    const { updater, service, lines } = setup()
+    updater.script = async () => {
+      updater.emit('checking-for-update')
+      const error = new Error('Cannot find latest.yml in the latest release artifacts (https://github.com/x/y/releases/download/v0.1.130/latest.yml): HttpError: 404')
+      updater.emit('error', error)
+      throw error
+    }
+    const result = await service.checkNow()
+    expect(result.phase).toBe('ocioso')
+    expect(result.error).toBeNull()
+    expect(result.checkedAt).toBe('2026-10-24T03:00:00.000Z')
+    expect(lines.some((l) => l.includes('sem latest.yml'))).toBe(true)
+  })
+
   it('erro de rede não trava: fica em erro e a próxima verificação periódica tenta de novo', async () => {
     const { updater, service, lines } = setup()
     updater.script = async () => {

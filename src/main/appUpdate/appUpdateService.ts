@@ -268,6 +268,13 @@ export class AppUpdateService {
 
   private noteError(error: unknown, origin: CheckOrigin | 'updater'): void {
     const message = errorText(error)
+    // Release mais recente sem latest.yml (publicada antes do atualizador): não há
+    // versão nova para este app, não é falha para mostrar na tela.
+    if (/Cannot find latest\.yml/i.test(message) && (this.phase === 'verificando' || this.phase === 'ocioso' || this.phase === 'erro')) {
+      this.log(`release mais recente sem latest.yml (${origin}); tratada como nenhuma versão nova`)
+      this.onNotAvailable({})
+      return
+    }
     // Evento 'error' + rejeição da mesma falha: a segunda não muda nada.
     if (this.error === message && this.phase !== 'verificando' && this.phase !== 'baixando') return
     this.checkedAt = this.now()
