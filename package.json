@@ -1,10 +1,11 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.147",
+  "version": "0.1.148",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
   "author": "Larcher Tech",
+  "license": "MIT",
   "scripts": {
     "dev": "npm run windows-control:build && npm run postgres:stage && electron-vite dev",
     "build": "electron-vite build && node scripts/build-storage-migration.mjs && npm run windows-control:build",
