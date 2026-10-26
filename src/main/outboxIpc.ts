@@ -10,7 +10,8 @@ import type { OutboxWriteQueue } from './persistence/writeQueue/outboxQueue'
  * gravação é da fila do main (writeQueue/outboxQueue.ts): nova tentativa quando
  * o banco cai e diário local no fechamento, sem a tela esperar.
  *
- * Fronteira: zod em tudo, nenhuma exceção atravessa o IPC.
+ * Fronteira: zod em tudo. Única exceção que atravessa o IPC, de propósito: a
+ * leitura com o banco fora (o renderer tenta de novo em vez de ver fila vazia).
  */
 
 export type OutboxIpcListener = (event: unknown, ...args: unknown[]) => unknown
@@ -35,12 +36,17 @@ const ReplaceReq = z.strictObject({
 
 export function registerOutboxIpc(deps: OutboxIpcDeps): void {
   deps.handle(Channels.outboxList, async (): Promise<OutboxEntryDto[]> => {
-    let stored: OutboxEntryDto[] = []
+    // Banco fora: ERRO, nunca lista vazia. O renderer tomaria "vazia" por "sem
+    // fila", e a próxima gravação de uma conversa apagaria a fila dela no banco.
+    // Ele tenta de novo (useOutboxPersistence).
+    const repo = deps.repository()
+    if (!repo) throw new Error('fila gravada indisponível: banco fora')
+    let stored: OutboxEntryDto[]
     try {
-      const repo = deps.repository()
-      stored = repo ? await repo.listConversationOutbox() : []
+      stored = await repo.listConversationOutbox()
     } catch (error) {
       console.warn('[fila] não consegui ler a fila gravada:', (error as Error).message)
+      throw new Error('fila gravada indisponível: leitura falhou')
     }
     // O que está na fila do main (ou voltou do diário) vale por cima do banco.
     return deps.queue.overlay(stored)

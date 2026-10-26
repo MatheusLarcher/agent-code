@@ -1,6 +1,7 @@
 /**
  * A Central no App inteiro — o que sai do destino sem rodar e o envio que falha:
- * item da Central descartado da fila (Stop comum, lixeira, conversa apagada) volta
+ * item da Central descartado da fila (lixeira, conversa apagada — o Stop comum não
+ * descarta: a fila fica, pausada) volta
  * a perguntar em vez de ficar "entregue" para sempre; e, num envio que falha, a
  * Central é a única dona do reenvio do pedido dela (o destino não oferece "Tentar
  * de novo" para ele), enquanto o reenvio de um turno comum entra na Central (A1).
@@ -62,13 +63,16 @@ async function queuedFromCentral(): Promise<void> {
 }
 
 describe('item da Central descartado da fila do destino', () => {
-  it('Stop comum (descarta a fila): o pedido volta a perguntar e nunca sai em c1', async () => {
+  it('Stop comum (fila fica, pausada): o pedido segue entregue na fila de c1 e não sai sozinho', async () => {
     await queuedFromCentral()
     await act(async () => cbs.remoteInterrupt?.({ convId: 'c1' }))
-    await waitFor(() => expect(routed()).toMatchObject({ state: 'asking', ask: { reason: 'target-missing' } }))
-    expect(routed()).not.toHaveProperty('anchor')
     await emit(result)
+    await settle()
+    // Só o usuário apaga da fila: o pedido continua lá, "entregue", sem rodar.
+    expect(routed()?.state).toBe('delivered')
     expect(sentTexts(api)).toEqual(['primeira'])
+    await openConversation('Conversa')
+    expect((await screen.findAllByTitle('Remover da fila')).length).toBe(1)
   })
 
   it('lixeira na fila do destino: idem', async () => {

@@ -25,22 +25,38 @@ export function useOutboxPersistence<T extends OutboxItemLike>(opts: {
   useEffect(() => {
     if (!hydrated || startedRef.current) return
     startedRef.current = true
-    void (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let disposed = false
+    let done = false
+    const load = async (attempt: number): Promise<void> => {
+      let entries: Parameters<typeof restoreOutbox>[0]
       try {
-        const entries = (await window.api.outboxList?.()) ?? []
-        const restored = restoreOutbox<T>(entries, isPayload)
-        savedRef.current = restored
-        if (restored.length > 0) {
-          const ids = new Set(restored.map((item) => item.id))
-          setQueue((current) => [...restored, ...current.filter((item) => !ids.has(item.id))])
-          onRestoredRef.current(restored)
-        }
+        entries = (await window.api.outboxList?.()) ?? []
       } catch {
-        // Banco indisponível: segue com a fila em memória (como antes).
-      } finally {
-        setReady(true)
+        // Banco indisponível: NÃO segue como se a fila gravada estivesse vazia — a
+        // primeira gravação de uma conversa apagaria a fila dela no banco. Tenta de
+        // novo; até lá nada é gravado (a fila em memória continua valendo na tela).
+        if (!disposed) timer = setTimeout(() => void load(attempt + 1), Math.min(2000 * 2 ** attempt, 30_000))
+        return
       }
-    })()
+      if (disposed) return
+      done = true
+      const restored = restoreOutbox<T>(entries, isPayload)
+      savedRef.current = restored
+      if (restored.length > 0) {
+        const ids = new Set(restored.map((item) => item.id))
+        setQueue((current) => [...restored, ...current.filter((item) => !ids.has(item.id))])
+        onRestoredRef.current(restored)
+      }
+      setReady(true)
+    }
+    void load(0)
+    return () => {
+      disposed = true
+      if (timer) clearTimeout(timer)
+      // Leitura interrompida (remontagem/StrictMode): a próxima execução recomeça.
+      if (!done) startedRef.current = false
+    }
   }, [hydrated, isPayload, setQueue])
 
   useEffect(() => {

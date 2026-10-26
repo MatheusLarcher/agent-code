@@ -734,7 +734,7 @@ describe('App — fila de mensagens (multi-sessão)', () => {
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
   })
 
-  it('parar (■) com fila NÃO despacha a próxima — vai para ociosa', async () => {
+  it('parar (■) com fila NÃO despacha a próxima e NÃO apaga a fila — ela anda com a próxima mensagem', async () => {
     render(
       <UiProvider>
         <App />
@@ -753,7 +753,14 @@ describe('App — fila de mensagens (multi-sessão)', () => {
 
     await emit(result) // o 'result' vindo da interrupção não pode despachar a fila
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText(/Na fila/)).toBeNull()
+    // Só o usuário apaga um item da fila: o Stop a deixa parada, inteira.
+    expect(screen.getByText(/Na fila/)).toBeTruthy()
+
+    // A próxima mensagem do usuário solta a fila, na ordem: msg2 sai antes.
+    await send('msg3')
+    await flushConnect()
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(2))
+    expect(api.sendMessage.mock.calls[1][1]).toBe('msg2')
   })
 
   it('persiste sdkUuid no pedido antes de receber qualquer saída do agente', async () => {

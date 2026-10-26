@@ -720,6 +720,10 @@ export function App(): JSX.Element {
   const consumeChips = useCallback(() => setChips([]), [])
   const queueRef = useRef(queue)
   queueRef.current = queue
+  // Stop comum: a fila da conversa FICA (só o usuário apaga um item), mas nada
+  // sai sozinho — Stop é parar. Volta a andar quando o usuário mandar outra
+  // mensagem ou clicar "agora" num item.
+  const pausedQueueRef = useRef<Set<string>>(new Set())
   // Subagentes em segundo plano seguram a fila (backgroundHold.ts). A conferência
   // (`ready`) e a retomada (`run`) dependem do resto do App: chegam pelas refs,
   // atribuídas a cada render mais abaixo.
@@ -1082,6 +1086,7 @@ export function App(): JSX.Element {
         const conv = convsRef.current.find((c) => c.id === cid)
         const blocked =
           busyRef.current.has(cid) ||
+          pausedQueueRef.current.has(cid) ||
           stopHolds.isHeld(cid) ||
           !!(conv?.recovery && conv.recovery.scheduledAt !== 0) ||
           backgroundHold.holds(cid)
@@ -1373,7 +1378,11 @@ export function App(): JSX.Element {
             // handoff e do lease); até lá a conversa segue ocupada, e o que
             // chegar entra na fila. O dispatch reconecta se a sessão caiu.
             // Subagentes ainda rodando: a fila espera eles (backgroundHold.ts).
-            if (!queueRef.current.some((m) => m.convId === cid) || backgroundHold.holds(cid)) {
+            if (
+              !queueRef.current.some((m) => m.convId === cid) ||
+              backgroundHold.holds(cid) ||
+              pausedQueueRef.current.has(cid)
+            ) {
               setBusy(cid, false)
               return
             }
@@ -1464,7 +1473,11 @@ export function App(): JSX.Element {
         if (sessionConfigPending) pendingSessionConfigRef.current = withoutId(pendingSessionConfigRef.current, cid)
         // Fila do projeto: outro plano tem a vez na pasta — a fila desta conversa
         // fica guardada e sai quando ela for solta (useProjectQueue → onRelease).
-        const next = projectQueueRef.current?.holds(cid) ? undefined : queueRef.current.find((m) => m.convId === cid)
+        // Fila pausada pelo Stop: os itens ficam, nada sai sozinho.
+        const next =
+          projectQueueRef.current?.holds(cid) || pausedQueueRef.current.has(cid)
+            ? undefined
+            : queueRef.current.find((m) => m.convId === cid)
         if (next) {
           setQueue((cur) => cur.filter((m) => m.id !== next.id))
           const nextMsgId = next.msgId ?? uid('u')
@@ -2490,6 +2503,7 @@ export function App(): JSX.Element {
       centralRef.current?.dropped(id, [...queuedMsgIds(queueRef.current, id), ...(inflightMsg ? [inflightMsg] : [])])
       reportMcpDropped(queueRef.current.filter((m) => m.convId === id), 'A conversa foi apagada no Agent Code.')
       setQueue((q) => q.filter((m) => m.convId !== id))
+      pausedQueueRef.current.delete(id)
       const removed = convsRef.current.find((c) => c.id === id)
       // As cópias em disco do rascunho dela eram só do rascunho: saem junto.
       if (removed?.draftMedia?.length) discardDraftCopies(draftCopyPaths(removed.draftMedia))
@@ -2855,7 +2869,28 @@ export function App(): JSX.Element {
       // A Central não despacha: o pedido dela vai para o roteador (central/centralSend.ts).
       if (isCentralConversation(conv)) return true
       // Project folder gone → don't process or send to the LLM; just warn.
-      if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) return false
+      if (!busyRef.current.has(conv.id) && !(await ensureProject(conv))) {
+        // A cabeça da fila já tinha saído dela: volta para o começo, nunca some.
+        if (fromQueue) {
+          const item: QueuedMessage = {
+            id: uid('q'),
+            convId: conv.id,
+            full,
+            text,
+            images,
+            thumbs,
+            files,
+            fileRefs,
+            ...(mcpTaskId ? { mcpTaskId } : {}),
+            ...(presetMsgId ? { msgId: presetMsgId } : {})
+          }
+          queueRef.current = [item, ...queueRef.current]
+          setQueue((q) => [item, ...q])
+        }
+        return false
+      }
+      // O usuário mandou algo (mensagem nova ou "agora"): a fila pausada pelo Stop volta a andar.
+      if (now || (!fromQueue && !mcpTaskId)) pausedQueueRef.current.delete(conv.id)
 
       // Recuperação já parada (tentativas automáticas encerradas): nada mais vai
       // despachar a fila, então uma mensagem nova recomeça o fluxo — descarta o
@@ -2915,7 +2950,8 @@ export function App(): JSX.Element {
         setQueue((q) => (fromQueue ? [item, ...q] : [...q, item]))
         // Conversa parada com fila (ex.: fila restaurada depois de reiniciar o
         // app): ninguém ia drenar. A cabeça sai agora; o resto, no fim do turno.
-        if (idle) {
+        // Pausada pelo Stop (ex.: chegou uma tarefa MCP): espera o usuário.
+        if (idle && !pausedQueueRef.current.has(conv.id)) {
           const head = queueRef.current.find((m) => m.convId === conv.id)
           if (head) {
             queueRef.current = queueRef.current.filter((m) => m.id !== head.id)
@@ -2932,6 +2968,8 @@ export function App(): JSX.Element {
       // closes the connect-window race.
       const msgId = presetMsgId ?? uid('u')
       interruptedRef.current.delete(conv.id) // fresh turn: clear any stale stop flag
+      // Um turno começando aqui já passou pela pausa (fila vazia ou ação do usuário).
+      pausedQueueRef.current.delete(conv.id)
       setBusy(conv.id, true)
       setBusySince((m) => ({ ...m, [conv.id]: Date.now() }))
       const beforeTitle = convsRef.current.find((c) => c.id === conv.id) ?? conv
@@ -3074,7 +3112,7 @@ export function App(): JSX.Element {
       if (connectedRef.current.has(cid)) await stopSession(cid, { silent: true })
     }
     const conv = convsRef.current.find((c) => c.id === cid)
-    if (!conv || !queueRef.current.some((m) => m.convId === cid)) return
+    if (!conv || !queueRef.current.some((m) => m.convId === cid) || pausedQueueRef.current.has(cid)) return
     // Pasta do projeto sumiu: a fila fica (o aviso sai), em vez de a cabeça se perder.
     if (!(await ensureProject(conv)) || !queueResumeReadyRef.current(cid)) return
     const head = queueRef.current.find((m) => m.convId === cid)
@@ -3502,6 +3540,8 @@ export function App(): JSX.Element {
         notify('aviso', STOPPING_MESSAGE)
         return
       }
+      // O usuário mexeu na fila: a pausa do Stop acaba.
+      pausedQueueRef.current.delete(item.convId)
       // Quem vinha depois dele: para uma recusa do main devolvê-lo ao MESMO lugar.
       const later = new Set(queueRef.current.slice(at + 1).map((m) => m.id))
       queueRef.current = queueRef.current.filter((m) => m.id !== id)
@@ -3807,10 +3847,10 @@ export function App(): JSX.Element {
   useEffect(() => () => stopHolds.dispose(), [stopHolds])
 
   const interruptConv = useCallback((cid: string, opts?: { keepQueue?: boolean }): void => {
-    // Stop the current task AND drop anything queued for this conversation. The
-    // SDK ends an interrupt by emitting a `result` (not `error`); with the queue
-    // cleared, the turn-end handler finds nothing to dispatch and just goes idle
-    // instead of auto-starting the next queued message.
+    // Stop the current task and PAUSE this conversation's queue (the items stay;
+    // only the user deletes them). The SDK ends an interrupt by emitting a
+    // `result` (not `error`); with the queue paused, the turn-end handler
+    // dispatches nothing and just goes idle.
     // `keepQueue` (o "não era aqui" da Central): só o turno para; a fila fica, e a
     // conversa segue "parando" (ocupada) até o turno parado assentar (stopHold.ts).
     const keepQueue = opts?.keepQueue === true
@@ -3830,13 +3870,17 @@ export function App(): JSX.Element {
       stopHolds.begin(cid, phase)
     } else {
       stopHolds.cancel(cid)
-      // A fila sai sem rodar: o que a Central entregou nela volta para ela perguntar.
-      centralRef.current?.dropped(cid, queuedMsgIds(queueRef.current, cid))
-      reportMcpDropped(
-        queueRef.current.filter((m) => m.convId === cid),
-        'Cancelada: a conversa foi interrompida no Agent Code.'
-      )
-      setQueue((q) => q.filter((m) => m.convId !== cid))
+      // As mensagens do usuário FICAM na fila (só ele apaga), pausada: nada sai
+      // sozinho depois do Stop. Só as tarefas do MCP de entrada saem, canceladas —
+      // o chamador está esperando a resposta delas.
+      const mcpItems = queueRef.current.filter((m) => m.convId === cid && m.mcpTaskId)
+      if (mcpItems.length > 0) {
+        reportMcpDropped(mcpItems, 'Cancelada: a conversa foi interrompida no Agent Code.')
+        const gone = new Set(mcpItems.map((m) => m.id))
+        queueRef.current = queueRef.current.filter((m) => !gone.has(m.id))
+        setQueue((q) => q.filter((m) => !gone.has(m.id)))
+      }
+      if (queueRef.current.some((m) => m.convId === cid)) pausedQueueRef.current.add(cid)
     }
     // Sem sobreviventes: o Stop comum desliga já; o que mantém a fila só arma a
     // reserva — quem desliga é o terminal do turno parado (ou ela).
