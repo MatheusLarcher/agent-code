@@ -25,6 +25,13 @@ export const PERSISTED_KEY_REGISTRY = {
   'config.ollama.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
   'config.deepseek.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.deepseek.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
+  'config.kimi.enabled': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.kimi.apiKey': { scope: 'device', sensitive: true, source: 'main-kv', store: 'local' },
+  'config.kimi.region': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.kimi.contextWindow': { scope: 'device', source: 'main-kv', store: 'local' },
+  'config.kimi.models': { scope: 'device', source: 'main-kv', store: 'local' },
+  // Texto da organização, não segredo: vai no prompt de todo modelo não Claude.
+  'config.externalOrgInstructions': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.skipPermissions': { scope: 'global', source: 'main-kv', store: 'local' },
   'config.windowsControlEnabled': { scope: 'device', source: 'main-kv', store: 'local' },
   'config.chromeControlEnabled': { scope: 'device', source: 'main-kv', store: 'local' },

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { isUsageExhausted } from './providerQuota'
+import { loadConfig } from './config'
+import { insertOrgInstructionsInBody } from './orgInstructions'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { RateLimitStatus } from '../shared/ipc'
 import { getValidCodexTokens, refreshCodexTokensAfter, type CodexTokens } from './codexAuth'
@@ -246,6 +248,9 @@ export interface CodexProxyDeps {
   /** Called with the ChatGPT plan usage windows found on an upstream response
    *  (see `parseCodexRateLimitHeaders`). Never called when the headers are absent. */
   onRateLimit?: (limits: RateLimitStatus[]) => void
+  /** "Instruções da organização para modelos não Claude" (config), inseridas no
+   *  texto de sistema na mesma âncora da sessão Claude antes de virar `instructions`. */
+  orgInstructions?: () => string
 }
 
 /** Reads the ChatGPT plan usage that the Codex backend attaches to every
@@ -448,7 +453,9 @@ async function handleMessages(
   const cacheSessionId = cacheScopeForAccount(sessionId, initialTokens.accountId)
   let codexBody: CodexResponsesRequest
   try {
-    codexBody = toCodexRequest({ ...body, stream: true }, cache, cacheSessionId)
+    const withOrg = { ...body, stream: true }
+    insertOrgInstructionsInBody(withOrg, deps.orgInstructions?.())
+    codexBody = toCodexRequest(withOrg, cache, cacheSessionId)
     if (credential.fastMode) codexBody.service_tier = CODEX_FAST_SERVICE_TIER
   } catch (error) {
     sendAnthropicError(response, 400, 'invalid_request_error', String(error))
@@ -605,7 +612,14 @@ export function ensureCodexProxyRunning(log?: (line: string) => void): Promise<{
     refreshTokens: refreshCodexTokensAfter,
     secret,
     log,
-    onRateLimit: (limits) => rateLimitListener?.(limits)
+    onRateLimit: (limits) => rateLimitListener?.(limits),
+    orgInstructions: () => {
+      try {
+        return loadConfig().externalOrgInstructions ?? ''
+      } catch {
+        return ''
+      }
+    }
   })
     .then((handle) => ({ baseUrl: `http://127.0.0.1:${handle.port}`, secret }))
     .catch((error) => {

@@ -94,13 +94,20 @@ import {
   fastModeTransport,
   isAutoModel,
   isDeepSeekModel,
+  isKimiModel,
   isOllamaModel,
   isOpenAIModel,
   modelSupportsVision,
-  OLLAMA_BASE_URL
+  OLLAMA_BASE_URL,
+  setKimiContextWindow
 } from '../shared/ipc'
 import { DEEPSEEK_MISSING_KEY_ERROR, DEEPSEEK_NO_CONFIG_DIR_ERROR, deepseekCostUsd, deepseekSessionEnv, pdfReadDenied } from './deepseek'
 import { ensureCodexProxyRunning, FAST_MODE_TOKEN_SUFFIX } from './codexProxy'
+import { KIMI_MISSING_KEY_ERROR, kimiApiKey } from './kimi/kimiAuth'
+import { ensureKimiRouterRunning } from './kimi/kimiRouter'
+import { addKimiAuxListener, KIMI_AUX_RESERVE_NOTICE, kimiSessionEnv, kimiWireModel } from './kimi/kimiSession'
+import { kimiRouterCredential } from './kimi/kimiCredential'
+import { withOrgInstructionsAppend } from './orgInstructions'
 import { isCodexConnected } from './codexAuth'
 import { describeImages, mergeUserTextWithVisualContext } from './visionRelay'
 import { buildProjectOutline } from './projectOutline'
@@ -492,7 +499,7 @@ export async function prepareGptRuntime(
         ANTHROPIC_DEFAULT_SONNET_MODEL: model,
         ANTHROPIC_DEFAULT_OPUS_MODEL: model,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-        ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+        // Sem ANTHROPIC_DEFAULT_FABLE_MODEL: com ele = modelo o CLI se apresenta como "Claude Fable 5".
         CLAUDE_CODE_SUBAGENT_MODEL: model
       }
     }
@@ -708,6 +715,10 @@ export class AgentSession {
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
    *  can hand us a different session id, and then we re-point the watcher). */
   private stopTaskWatch: (() => void) | null = null
+  private stopKimiAuxWatch: (() => void) | null = null
+  private kimiAuxWarned = false
+  /** Id da sessão do CLI (system/init): casa o aviso de reserva do roteador do Kimi. */
+  private cliSessionId = ''
   private watchedSessionId: string | null = null
   /** Effective CLI root of this SDK process. GPT points it at the isolated
    * config so task-list snapshots never leak to the default Claude root. */
@@ -1050,7 +1061,7 @@ export class AgentSession {
     this.contextCapture = new ContextCapture({
       convId: opts.convId, pc: hostname(), model: opts.model ?? '',
       provider: isOpenAIModel(opts.model) ? 'gpt' : isOllamaModel(opts.model) ? 'ollama'
-        : isDeepSeekModel(opts.model) ? 'deepseek' : 'claude'
+        : isDeepSeekModel(opts.model) ? 'deepseek' : isKimiModel(opts.model) ? 'kimi' : 'claude'
     }, contextHistoryRepository, onContextChanged, () => this.disposed ? null : this.q)
     this.skills = new SessionSkillCatalog(opts.cwd, skillRuntime, () => this.q)
     // Native class fields run before constructor parameter properties are assigned.
@@ -1140,8 +1151,9 @@ export class AgentSession {
         // "Ghidra ausente" enquanto vive: reconectar faz esta conversa já enxergá-lo.
         ghidra: this.opts.planning ? undefined : ghidraPreparer,
         reconnectRea: this.opts.planning ? undefined : async () => { await this.q?.reconnectMcpServer('rea') },
-        // A API da DeepSeek não aceita PDF: o Read de .pdf é negado no PreToolUse e cai aqui.
-        readPdf: isDeepSeekModel(this.opts.model)
+        // DeepSeek e Kimi não aceitam PDF (sonda de 26/10: bloco `document` → 400):
+        // o Read de .pdf é negado no PreToolUse e cai aqui.
+        readPdf: isDeepSeekModel(this.opts.model) || isKimiModel(this.opts.model)
       })
     }
     if (process.platform === 'win32') {
@@ -1297,6 +1309,22 @@ export class AgentSession {
       this.emit({ kind: 'error', id: nextId(), text: DEEPSEEK_MISSING_KEY_ERROR })
       return false
     }
+    // Kimi: o CLI fica logado na conta Claude da conversa e o roteador local
+    // leva ao Kimi só os pedidos com modelo Kimi (kimi/kimiSession.ts).
+    const kimiOn = isKimiModel(this.opts.model)
+    let kimiRouterUrl: string | undefined
+    if (kimiOn) {
+      if (!kimiApiKey(cfg.kimi)) {
+        this.emit({ kind: 'error', id: nextId(), text: KIMI_MISSING_KEY_ERROR })
+        return false
+      }
+      try {
+        kimiRouterUrl = (await ensureKimiRouterRunning(kimiRouterCredential, (l) => console.log(`[kimi-router] ${l}`))).baseUrl
+      } catch (error) {
+        this.emit({ kind: 'error', id: nextId(), text: `Não consegui iniciar o roteador do Kimi: ${String(error)}` })
+        return false
+      }
+    }
     // A rota Ollama precisa do mesmo isolamento. A rota GPT prepara esse
     // diretório dentro de `prepareGptRuntime`, compartilhada pelo PO Luna.
     if (ollamaOn || deepseekOn) await localLeftoversSettled()
@@ -1340,7 +1368,8 @@ export class AgentSession {
           ANTHROPIC_DEFAULT_SONNET_MODEL: this.opts.model,
           ANTHROPIC_DEFAULT_OPUS_MODEL: this.opts.model,
           ANTHROPIC_DEFAULT_HAIKU_MODEL: this.opts.model,
-          ANTHROPIC_DEFAULT_FABLE_MODEL: this.opts.model,
+          // Sem ANTHROPIC_DEFAULT_FABLE_MODEL: com ele = modelo o CLI apresenta o
+          // modelo como "Claude Fable 5" no prompt de sistema (captura de 26/10).
           CLAUDE_CODE_SUBAGENT_MODEL: this.opts.model
         }
       : openaiEnv
@@ -1353,7 +1382,17 @@ export class AgentSession {
     // ambiente, como sempre. GPT, Ollama e DeepSeek já têm o próprio desvio acima.
     const foreignRoute = ollamaOn || openaiOn || deepseekOn
     if (!foreignRoute) env = claudeAccounts.envFor(this.opts.claudeAccountId)
-    this.machineClaudeLogin = !foreignRoute && env === undefined
+    this.machineClaudeLogin = !foreignRoute && !kimiOn && env === undefined
+    if (kimiOn && kimiRouterUrl) {
+      // Mesma conta/pasta da conversa Claude; `sessionTasksRoot` abaixo segue a mesma pasta.
+      env = kimiSessionEnv(env ?? process.env, kimiWireModel(this.opts.model ?? '', cfg.kimi), kimiRouterUrl, cfg.kimi)
+      // contextLimitFor (compactação por etapa) passa a usar a janela do plano.
+      setKimiContextWindow(cfg.kimi.contextWindow)
+      this.watchKimiAuxReserve()
+    }
+    // Instruções da organização para Ollama e DeepSeek: sem proxy no meio, vão no
+    // fim do append (GPT recebe no proxy do Codex; Kimi, no roteador).
+    if (ollamaOn || deepseekOn) append = withOrgInstructionsAppend(append, cfg.externalOrgInstructions)
 
     // The bundled CLI receives this environment rather than inheriting our
     // process. Task snapshots must resolve from that same effective root.
@@ -1362,18 +1401,19 @@ export class AgentSession {
     // Última barreira: o sentinel `auto` (ou qualquer texto fora da escada)
     // nunca vira `--effort`, e um degrau acima do teto do modelo é recortado.
     const effort = sdkEffort(this.opts.model, this.opts.effort)
+    const withThinking = this.opts.model?.startsWith('claude-') || kimiOn
     const options: Options = {
       cwd: this.opts.cwd,
-      model: this.opts.model,
+      model: kimiOn ? kimiWireModel(this.opts.model ?? '', cfg.kimi) : this.opts.model,
       ...(effort ? { effort: effort as Options['effort'] } : {}),
       // Pensamento visível: os modelos Claude novos mandam o bloco de pensamento
       // vazio por padrão ("omitted"); pedindo o resumo, o chat consegue mostrá-lo.
-      ...(this.opts.model?.startsWith('claude-') ? { thinking: { type: 'adaptive', display: 'summarized' } as Options['thinking'] } : {}),
+      ...(withThinking ? { thinking: { type: 'adaptive', display: 'summarized' } as Options['thinking'] } : {}),
       // Resumo ao vivo de cada subagente (~30 s, no `task_progress`): só no Claude,
       // que reaproveita o cache; nos outros seria um pedido extra sem cache.
       // `promptSuggestions` fica desligado por decisão do usuário: sugestão vai
       // para o quadro de tarefas, opcional, nunca um chip ao fim de toda resposta.
-      ...(this.opts.model?.startsWith('claude-') ? { agentProgressSummaries: true } : {}),
+      ...(withThinking ? { agentProgressSummaries: true } : {}),
       // Modo rápido: only sent when the chosen model actually supports it — the
       // API rejects a fast-mode request on an unsupported model instead of
       // quietly serving it at standard speed.
@@ -2222,12 +2262,25 @@ export class AgentSession {
     }
   }
 
+  /** Conversa Kimi: avisa UMA vez por sessão quando o roteador leva os
+   *  auxiliares do CLI ao Kimi porque o Claude está sem cota/credencial. */
+  private watchKimiAuxReserve(): void {
+    if (this.stopKimiAuxWatch) return
+    this.stopKimiAuxWatch = addKimiAuxListener((cliSessionId) => {
+      if (this.kimiAuxWarned || !cliSessionId || cliSessionId !== this.cliSessionId) return
+      this.kimiAuxWarned = true
+      this.emit({ kind: 'status', id: nextId(), text: KIMI_AUX_RESERVE_NOTICE })
+    })
+  }
+
   dispose(): void {
     if (this.disposed) return
     const restartState = this.restartActivity()
     if (!restartState.busy && !restartState.unsafe) this.restartRegistration?.remove()
     else this.restartUncertain = true // Closing SDK is not proof detached work ended.
     this.disposed = true
+    this.stopKimiAuxWatch?.()
+    this.stopKimiAuxWatch = null
     this.contextCapture.dispose()
     presenceRemove(this, this.opts.convId)
     this.mirrorRepair?.dispose()
@@ -2645,6 +2698,7 @@ ${lines}
         if (message.subtype === 'init') {
           this.restartInitializing = false
           this.sdkInitSeen = true
+          if (typeof message.session_id === 'string') this.cliSessionId = message.session_id
           if (Array.isArray(message.skills)) this.skills.rememberNative(message.skills)
           // O processo do CLI acabou de subir: só conhece as tarefas em background que
           // ele mesmo lançar, e essas chegam pelo `background_tasks_changed`. Vale
@@ -2944,7 +2998,9 @@ ${lines}
           text: r.result ?? (r.subtype === 'success' ? 'Done.' : r.subtype),
           durationMs: r.duration_ms,
           // DeepSeek: o CLI calcula com a tabela da Anthropic; vale a estimativa nossa.
-          costUsd: isDeepSeekModel(this.opts.model) ? (deepseekCostUsd(reconciledUsage) ?? 0) : r.total_cost_usd,
+          // Kimi: assinatura, sem custo por turno (o CLI usaria a tabela da Anthropic).
+          costUsd: isDeepSeekModel(this.opts.model) ? (deepseekCostUsd(reconciledUsage) ?? 0)
+            : isKimiModel(this.opts.model) ? 0 : r.total_cost_usd,
           // `|| undefined` so the renderer's `?? fallback` kicks in if we never
           // saw a main-thread assistant usage (0 would otherwise stick).
           contextTokens: this.lastContextTokens || undefined,

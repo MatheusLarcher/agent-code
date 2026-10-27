@@ -24,6 +24,11 @@ const EXHAUSTED_RE = new RegExp([
   'usage allocation has been disabled',
   'usage limit is set to \\$0',
   'usage limit (?:has been )?(?:reached|exceeded)',
+  // Kimi Code (429): "You've reached your weekly (7-day) usage limit" — os parênteses
+  // escapam do HIT_LIMIT_RE — e "Your credit balance is insufficient". As de 5 h e
+  // mensal ("…your 5-hour usage limit", "…your monthly usage limit…") já caem nele.
+  'reached your weekly \\(7-day\\)',
+  'credit balance is insufficient',
   '(?:limite de uso|cr[eé]ditos).{0,80}(?:atingido|esgotad)'
 ].join('|'), 'iu')
 

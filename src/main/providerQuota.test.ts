@@ -132,3 +132,22 @@ describe('erro transitório não é estouro', () => {
     expect(sdkUsageExhausted({ ...message, error: undefined })).toBe(false)
   })
 })
+
+describe('cota do Kimi Code (429)', () => {
+  it.each([
+    "You've reached your 5-hour usage limit",
+    "You've reached your weekly (7-day) usage limit",
+    "You've reached your monthly usage limit for this billing cycle",
+    'Your credit balance is insufficient'
+  ])('%s conta como esgotado', (text) => {
+    expect(isUsageExhausted(text)).toBe(true)
+  })
+
+  it.each([
+    'You have exceeded the concurrent request limit',
+    'too many requests',
+    'The engine is currently overloaded, please try again later'
+  ])('%s é transitório', (text) => {
+    expect(isUsageExhausted(text)).toBe(false)
+  })
+})

@@ -27,6 +27,7 @@ import type {
   CodexStatus,
   ProvidersStatus,
   DeepSeekBalance,
+  KimiConnectionResult,
   SandboxCreateResult,
   FileAttachment,
   FileBytes,
@@ -608,6 +609,9 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   onProvidersChanged(cb: (status: ProvidersStatus) => void): () => void
   /** Saldo da conta DeepSeek; null sem chave ou com falha (nunca lança). */
   deepseekBalance(): Promise<DeepSeekBalance | null>
+  /** "Testar conexão" do Kimi com a chave digitada: região, janela e modelos do
+   *  plano (a tela aplica e o Salvar grava). Nunca lança; o resultado não traz a chave. */
+  kimiTestConnection(apiKey: string): Promise<KimiConnectionResult>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
   /** Fila de espera gravada no banco: tudo, no boot. */

@@ -1045,7 +1045,11 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'gpt-6.1-sol': ['low', 'medium', 'high', 'xhigh', 'max'],
   'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max'],
   // DeepSeek: três degraus; xhigh cai para high e medium para low (clampEffortToModel).
-  'deepseek-flash': ['low', 'high', 'max']
+  'deepseek-flash': ['low', 'high', 'max'],
+  // Kimi: três degraus reais; o Kimi faz medium→high e xhigh→max, e o recorte
+  // segue o dele (para cima, ver clampEffortToModel).
+  'k3.1-pro': ['low', 'high', 'max'],
+  'k3.1-pro-highspeed': ['low', 'high', 'max']
 }
 
 /** Default effort when none is selected — "high" is the Anthropic default. */
@@ -1072,6 +1076,8 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
   const wanted = EFFORT_LEVELS.indexOf(effort)
   const allowed = EFFORT_LEVELS.filter((level) => supported.includes(level))
   if (allowed.length === 0) return effort
+  // Kimi: o degrau ausente sobe (é o que o próprio Kimi faz com medium e xhigh).
+  if (isKimiModel(model)) return allowed.find((level) => EFFORT_LEVELS.indexOf(level) >= wanted) ?? allowed[allowed.length - 1]
   let best = allowed[0]
   for (const level of allowed) if (EFFORT_LEVELS.indexOf(level) <= wanted) best = level
   return best
@@ -1397,13 +1403,25 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'glm-5.3-flash:cloud': 1_000_000,
   'kimi-k3:cloud': 1_000_000,
   // DeepSeek V4.1 Flash — 1M de contexto, até 384K de saída.
-  'deepseek-flash': 1_000_000
+  'deepseek-flash': 1_000_000,
+  // Kimi Code — 1M é o teto do K3.1 Pro; a janela real é a do plano, detectada
+  // no "Testar conexão" (setKimiContextWindow).
+  'k3.1-pro': 1_000_000,
+  'k3.1-pro-highspeed': 1_000_000
+}
+
+/** Janela do Kimi detectada no "Testar conexão" (config.kimi.contextWindow).
+ *  Cada processo a aplica ao ler a config; vale para todo `contextLimitFor`. */
+let kimiDetectedWindow: number | undefined
+export function setKimiContextWindow(tokens: number | undefined): void {
+  kimiDetectedWindow = typeof tokens === 'number' && tokens > 0 ? tokens : undefined
 }
 
 /** Context-window size for a model id, falling back to DEFAULT_CONTEXT_LIMIT. */
 export function contextLimitFor(model: string | undefined): number {
   if (!model) return DEFAULT_CONTEXT_LIMIT
-  return CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
+  if (kimiDetectedWindow && isKimiModel(model)) return kimiDetectedWindow
+  return CONTEXT_LIMITS[model.replace(/\[1m\]$/, '')] ?? CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
 }
 
 /** Ollama Cloud integration (optional). When enabled with an API key, the model
@@ -1456,6 +1474,59 @@ export interface DeepSeekBalance {
   available: boolean
   /** Saldo total em USD; null se a conta só tem outra moeda. */
   totalUsd: number | null
+}
+
+// ---- Kimi Code integration ------------------------------------------------
+// The user's Kimi Code plan, through its official Anthropic-compatible endpoint
+// and an API key from the Kimi Code console. The CLI stays logged in to the
+// conversation's Claude account; a local router (src/main/kimi/kimiRouter.ts)
+// sends only the Kimi-model calls to Kimi and everything else to Anthropic.
+
+/** Kimi models offered in the selector. */
+export const KIMI_MODELS = [
+  { id: 'k3.1-pro', label: 'Kimi K3.1 Pro (assinatura)' },
+  { id: 'k3.1-pro-highspeed', label: 'Kimi K3.1 Pro Highspeed (assinatura · 2× cota)' }
+] as const
+
+/** Kimi model for the CLI's internal helper calls when Claude is out: it accepts
+ *  requests without thinking (K3.1 Pro does not) and costs about half the quota. */
+export const KIMI_AUX_MODEL = 'k3-256k'
+
+/** Every id the Kimi Code endpoint serves (selector + helper/legacy ids). */
+const KIMI_WIRE_MODELS = new Set(['k3.1-pro', 'k3.1-pro-highspeed', 'k3', 'k3-256k', 'kimi-for-coding'])
+
+/** True when `model` runs on Kimi Code. Accepts the CLI's `[1m]` suffix. Not the
+ *  Ollama tag `kimi-k3:cloud`, which is an Ollama model. */
+export function isKimiModel(model: string | undefined): boolean {
+  if (!model) return false
+  return KIMI_WIRE_MODELS.has(model.replace(/\[1m\]$/i, ''))
+}
+
+/** Context windows the Kimi plans grant to K3.1 Pro (Plus: 256K; Pro and up: 1M). */
+export const KIMI_CONTEXT_WINDOWS = [262_144, 1_048_576] as const
+
+/** Kimi Code integration (optional). `models` and `region`/`contextWindow` are
+ *  written by "Testar conexão": empty `models` = connection never tested, and the
+ *  selector stays without Kimi. The key is stored only on this machine (sensitive). */
+export interface KimiConfig {
+  enabled: boolean
+  /** API key from the Kimi Code console (sent by the router, never to the CLI). */
+  apiKey: string
+  /** `intl` = api.kimi.ai, `cn` = api.kimi.com. */
+  region: 'intl' | 'cn'
+  /** K3.1 Pro window the plan grants (262144 or 1048576). */
+  contextWindow: number
+  /** Selector models the plan allows (subset of KIMI_MODELS ids). */
+  models: string[]
+}
+
+/** Result of "Testar conexão" in Settings › Kimi. Never carries the key. */
+export interface KimiConnectionResult {
+  ok: boolean
+  message: string
+  region?: 'intl' | 'cn'
+  contextWindow?: number
+  models?: string[]
 }
 
 /** Vigia — a second, cheap session that watches the conversation and asks ONE
@@ -1814,6 +1885,8 @@ export interface ProvidersStatus {
   ollama: boolean
   /** Integração DeepSeek ligada e com chave. */
   deepseek: boolean
+  /** Kimi ligado, com chave e com a conexão testada. Ausente = desligado. */
+  kimi?: boolean
 }
 
 /** Resposta de `sandboxCreate`: erro de disco vira `{ error }`, nunca lança. */
@@ -1917,6 +1990,12 @@ export interface AppConfig {
   ollama: OllamaConfig
   /** DeepSeek key + toggle (adds DEEPSEEK_MODELS to the selector). */
   deepseek: DeepSeekConfig
+  /** Kimi Code key + toggle + what "Testar conexão" found (adds KIMI_MODELS). */
+  kimi: KimiConfig
+  /** "Instruções da organização" sent to every non-Claude model (Kimi, GPT,
+   *  Ollama, DeepSeek). Empty = nothing is inserted. Claude conversations never
+   *  get a copy: Anthropic's server already adds the real organization block. */
+  externalOrgInstructions: string
   /** "Permitir tudo": run new sessions with permission prompts disabled. Persisted. */
   skipPermissions: boolean
   /** Independent high-risk gate for controlling arbitrary Windows applications. */
@@ -2216,6 +2295,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   localSpeech: { model: 'nvidia/parakeet-tdt-0.6b-v3' },
   ollama: { enabled: false, apiKey: '' },
   deepseek: { enabled: false, apiKey: '' },
+  kimi: { enabled: false, apiKey: '', region: 'intl', contextWindow: 262_144, models: [] },
+  externalOrgInstructions: '',
   skipPermissions: false,
   windowsControlEnabled: false,
   chromeControlEnabled: false,
@@ -2685,6 +2766,8 @@ export const Channels = {
   codexLogin: 'codex:login',
   /** Erase the saved Codex login. */
   codexLogout: 'codex:logout',
+  /** "Testar conexão" do Kimi: região, janela e modelos do plano (grava na config). */
+  kimiTestConnection: 'kimi:test-connection',
   /** Raiz do modo sandbox (`<localDir>\sandbox`). */
   sandboxInfo: 'sandbox:info',
   /** Cria uma subpasta nova do sandbox para uma conversa. */

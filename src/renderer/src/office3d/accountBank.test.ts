@@ -46,7 +46,7 @@ describe('featuredAccount — a conta em destaque', () => {
   })
 
   it('conversa GPT ou Ollama ocupada não conta; ninguém trabalhando: a da conversa aberta', () => {
-    const f = feed([A, B, C], [conv('g', 'c', 'gpt-6-luna'), conv('o', 'c', 'kimi-k3:cloud'), conv('2', 'c')], ['g', 'o'], '2')
+    const f = feed([A, B, C], [conv('g', 'c', 'gpt-6-luna'), conv('o', 'c', 'kimi-k3:cloud'), conv('k', 'c', 'k3.1-pro'), conv('2', 'c')], ['g', 'o', 'k'], '2')
     expect(busyByAccount(f).size).toBe(0)
     expect(featuredAccount(f)).toBe('c')
   })

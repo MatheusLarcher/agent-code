@@ -1,10 +1,11 @@
 /**
  * Botão grande "Conectar conta" no chat, só quando NENHUM provedor (Claude,
- * GPT, Ollama, DeepSeek) está conectado. Conecta ali mesmo, reaproveitando os
+ * GPT, Ollama, DeepSeek, Kimi) está conectado. Conecta ali mesmo, reaproveitando os
  * fluxos que já existem em Configurações:
  * - Claude e GPT: o login OAuth existente (abre o navegador do sistema); o card
  *   fica "Aguardando…" até o login voltar.
- * - Ollama e DeepSeek: cola a API key e grava a config (`<provedor>.enabled` + chave).
+ * - Ollama, DeepSeek e Kimi: cola a API key e grava a config (`<provedor>.enabled` + chave);
+ *   a do Kimi passa antes pelo "Testar conexão" (mesmo do Configurações).
  *
  * "Cancelar" não mata o login do navegador (o fluxo existente não tem cancelar):
  * só devolve o card ao início e ignora o resultado que chegar depois.
@@ -24,7 +25,7 @@ interface Props {
   compact?: boolean
 }
 
-type KeyProvider = 'ollama' | 'deepseek'
+type KeyProvider = 'ollama' | 'deepseek' | 'kimi'
 type Phase =
   | { kind: 'idle' }
   | { kind: 'menu' }
@@ -34,7 +35,28 @@ type Phase =
 /** Onde gerar a chave de cada provedor por API key. */
 const KEY_LINK: Record<KeyProvider, { href: string; label: string }> = {
   ollama: { href: 'https://ollama.com/settings/keys', label: 'Gerar chave no ollama.com' },
-  deepseek: { href: 'https://platform.deepseek.com/api_keys', label: 'Gerar chave na DeepSeek' }
+  deepseek: { href: 'https://platform.deepseek.com/api_keys', label: 'Gerar chave na DeepSeek' },
+  kimi: { href: 'https://www.kimi.ai/code/console', label: 'Gerar chave no console do Kimi Code' }
+}
+
+/** Config gravada para a chave de cada provedor. A do Kimi só vale depois do
+ *  teste de conexão (região, janela e modelos que o plano libera). */
+async function keyConfig(provider: KeyProvider, apiKey: string): Promise<Parameters<typeof window.api.setConfig>[0]> {
+  if (provider === 'ollama') return { ollama: { enabled: true, apiKey } }
+  if (provider === 'deepseek') return { deepseek: { enabled: true, apiKey } }
+  const r = await window.api.kimiTestConnection(apiKey)
+  if (!r.ok) throw new Error(r.message)
+  const current = (await window.api.getConfig()).kimi
+  return {
+    kimi: {
+      ...current,
+      enabled: true,
+      apiKey,
+      region: r.region ?? current.region,
+      contextWindow: r.contextWindow ?? current.contextWindow,
+      models: r.models ?? []
+    }
+  }
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
@@ -95,7 +117,9 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
     const token = ++attempt.current
     setSaving(true)
     try {
-      await window.api.setConfig(provider === 'ollama' ? { ollama: { enabled: true, apiKey } } : { deepseek: { enabled: true, apiKey } })
+      const patch = await keyConfig(provider, apiKey)
+      if (token !== attempt.current) return
+      await window.api.setConfig(patch)
       if (token !== attempt.current) return
       setApiKeyInput('')
       await confirm(provider, token)
@@ -122,6 +146,7 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
           <button className="btn" onClick={() => void login('gpt')}>GPT</button>
           <button className="btn" onClick={() => setPhase({ kind: 'key', provider: 'ollama' })}>Ollama</button>
           <button className="btn" onClick={() => setPhase({ kind: 'key', provider: 'deepseek' })}>DeepSeek</button>
+          <button className="btn" onClick={() => setPhase({ kind: 'key', provider: 'kimi' })}>Kimi</button>
           <button className="btn ghost" onClick={() => setPhase({ kind: 'idle' })} aria-label="Voltar">
             Voltar
           </button>

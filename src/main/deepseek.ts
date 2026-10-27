@@ -6,7 +6,7 @@
  *
  * Fica fora do agentSession.ts (já enorme): o env da sessão mora aqui.
  */
-import { DEEPSEEK_BASE_URL, isDeepSeekModel, type DeepSeekBalance, type TokenUsage } from '../shared/ipc'
+import { DEEPSEEK_BASE_URL, isDeepSeekModel, isKimiModel, type DeepSeekBalance, type TokenUsage } from '../shared/ipc'
 
 /** Preço do V4.1 Flash em USD por 1M de tokens, no horário de pico (o mais
  *  caro): o custo mostrado é "estimado" e nunca fica abaixo do real. Único
@@ -54,10 +54,11 @@ export async function fetchDeepSeekBalance(
   }
 }
 
-/** Read de um .pdf numa sessão DeepSeek: a API compatível não aceita bloco
- *  `document`, então o PreToolUse nega e manda para o `ler_pdf` do app. */
+/** Read de um .pdf numa sessão DeepSeek ou Kimi: as APIs compatíveis não aceitam
+ *  bloco `document` (Kimi: sonda de 26/10/2026, 400), então o PreToolUse nega e
+ *  manda para o `ler_pdf` do app. */
 export function pdfReadDenied(model: string | undefined, toolName: string, toolInput: unknown): boolean {
-  if (toolName !== 'Read' || !isDeepSeekModel(model)) return false
+  if (toolName !== 'Read' || !(isDeepSeekModel(model) || isKimiModel(model))) return false
   const path = (toolInput as { file_path?: unknown } | null)?.file_path
   return typeof path === 'string' && /\.pdf\s*$/i.test(path)
 }
@@ -92,7 +93,8 @@ export function deepseekSessionEnv(
     ANTHROPIC_DEFAULT_SONNET_MODEL: model,
     ANTHROPIC_DEFAULT_OPUS_MODEL: model,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-    ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+    // Sem ANTHROPIC_DEFAULT_FABLE_MODEL: com ele = modelo o CLI apresenta o modelo
+    // como "Claude Fable 5" no prompt de sistema (captura de 26/10/2026).
     CLAUDE_CODE_SUBAGENT_MODEL: model
   }
 }

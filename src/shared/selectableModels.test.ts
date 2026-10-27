@@ -6,12 +6,14 @@ import {
   isDeepSeekModel,
   isNonClaudeModel,
   MODEL_EFFORT,
+  modelSupportsFastMode,
   modelSupportsVision,
   OLLAMA_MODELS,
-  OPENAI_MODELS
+  OPENAI_MODELS,
+  setKimiContextWindow
 } from './ipc'
 import { modelDisplayName } from './modelLabel'
-import { deepseekSelectable, ollamaSelectable, selectableModelIds } from './selectableModels'
+import { deepseekSelectable, kimiSelectable, ollamaSelectable, selectableModelIds, selectableModels } from './selectableModels'
 
 describe('selectableModels — a lista do seletor, também a do MCP de entrada', () => {
   it('Claude sempre; Ollama com integração ligada e chave; GPT com login do ChatGPT', () => {
@@ -50,5 +52,40 @@ describe('selectableModels — a lista do seletor, também a do MCP de entrada',
     expect(isNonClaudeModel('deepseek-flash')).toBe(true)
     expect(modelSupportsVision('deepseek-flash')).toBe(true)
     expect(modelDisplayName('deepseek-flash')).toBe('DeepSeek V4.1 Flash')
+  })
+
+  it('Kimi: só os ids que o plano libera, com ligado + chave + conexão testada', () => {
+    const cfg = { enabled: true, apiKey: 'k', region: 'intl' as const, contextWindow: 262_144, models: ['k3.1-pro'] }
+    expect(kimiSelectable(cfg)).toEqual(['k3.1-pro'])
+    expect(kimiSelectable({ ...cfg, enabled: false })).toEqual([])
+    expect(kimiSelectable({ ...cfg, apiKey: ' ' })).toEqual([])
+    expect(kimiSelectable({ ...cfg, models: [] })).toEqual([])
+    expect(kimiSelectable({ ...cfg, models: ['k3.1-pro', 'modelo-estranho'] })).toEqual(['k3.1-pro'])
+    expect(selectableModelIds({ ollama: false, codex: false, kimi: ['k3.1-pro'] })).toContain('k3.1-pro')
+    expect(selectableModelIds({ ollama: false, codex: false, kimi: ['k3.1-pro'] })).not.toContain('k3.1-pro-highspeed')
+    expect(selectableModelIds({ ollama: false, codex: false, kimi: ['k3.1-pro', 'k3.1-pro-highspeed'] })).toContain('k3.1-pro-highspeed')
+    expect(selectableModelIds({ ollama: false, codex: false })).not.toContain('k3.1-pro')
+  })
+
+  it('Kimi: rótulos, 3 níveis de esforço, sem fast mode, janela detectada', () => {
+    // O seletor mostra o rótulo inteiro; a tela do modelo que respondeu, sem o parêntese.
+    const label = (id: string) => selectableModels({ ollama: false, codex: false, kimi: [id] }).find((m) => m.id === id)?.label
+    expect(label('k3.1-pro')).toBe('Kimi K3.1 Pro (assinatura)')
+    expect(label('k3.1-pro-highspeed')).toBe('Kimi K3.1 Pro Highspeed (assinatura · 2× cota)')
+    expect(modelDisplayName('k3.1-pro')).toBe('Kimi K3.1 Pro')
+    expect(MODEL_EFFORT['k3.1-pro']).toEqual(['low', 'high', 'max'])
+    expect(clampEffortToModel('k3.1-pro', 'medium')).toBe('high')
+    expect(clampEffortToModel('k3.1-pro', 'xhigh')).toBe('max')
+    expect(modelSupportsFastMode('k3.1-pro')).toBe(false)
+    expect(modelSupportsVision('k3.1-pro')).toBe(true)
+    try {
+      expect(contextLimitFor('k3.1-pro')).toBe(1_000_000)
+      setKimiContextWindow(262_144)
+      expect(contextLimitFor('k3.1-pro')).toBe(262_144)
+      expect(contextLimitFor('k3.1-pro[1m]')).toBe(262_144)
+      expect(contextLimitFor('claude-opus-5-5')).toBe(1_000_000)
+    } finally {
+      setKimiContextWindow(undefined)
+    }
   })
 })

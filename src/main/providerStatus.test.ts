@@ -13,19 +13,22 @@ describe('providerStatusWith', () => {
       claude: true,
       gpt: false,
       ollama: true,
-      deepseek: false
+      deepseek: false,
+      kimi: false
     })
     expect(await providerStatusWith({ claude: no, gpt: no, ollama: () => false, deepseek: () => false })).toEqual({
       claude: false,
       gpt: false,
       ollama: false,
-      deepseek: false
+      deepseek: false,
+      kimi: false
     })
     expect(await providerStatusWith({ claude: no, gpt: yes, ollama: () => false, deepseek: () => false })).toEqual({
       claude: false,
       gpt: true,
       ollama: false,
-      deepseek: false
+      deepseek: false,
+      kimi: false
     })
   })
 
@@ -34,7 +37,8 @@ describe('providerStatusWith', () => {
       claude: false,
       gpt: false,
       ollama: false,
-      deepseek: true
+      deepseek: true,
+      kimi: false
     })
   })
 
@@ -46,7 +50,14 @@ describe('providerStatusWith', () => {
       claude: false,
       gpt: true,
       ollama: false,
-      deepseek: false
+      deepseek: false,
+      kimi: false
     })
+  })
+
+  it('Kimi conectado (ligado + chave + teste) entra no status; consulta que falha conta false', async () => {
+    const base = { claude: no, gpt: no, ollama: () => false, deepseek: () => false }
+    expect((await providerStatusWith({ ...base, kimi: () => true })).kimi).toBe(true)
+    expect((await providerStatusWith({ ...base, kimi: boom })).kimi).toBe(false)
   })
 })

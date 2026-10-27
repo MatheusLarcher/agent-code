@@ -14,7 +14,7 @@ describe('claudeConnectedForCard', () => {
   it('checagem indeterminada (sem JSON válido) não desliga o Claude: sem card', async () => {
     const extraConnected = vi.fn(async () => false)
     const status = await providerStatusWith({ ...off, claude: () => claudeConnectedForCard({ probe: async () => null, extraConnected }) })
-    expect(status).toEqual({ claude: true, gpt: false, ollama: false, deepseek: false })
+    expect(status).toEqual({ claude: true, gpt: false, ollama: false, deepseek: false, kimi: false })
     expect(extraConnected).not.toHaveBeenCalled()
   })
 

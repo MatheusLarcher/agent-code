@@ -40,7 +40,9 @@ import { isRemoteIpcEventChannel } from '../shared/remoteIpc'
 import { McpInbound, type LiveSessionState, type McpSend } from './mcpInbound/mcpInbound'
 import { MCP_NO_CONTINUE_WARNING, NO_LIVE_SESSION } from '../shared/mcpInbound'
 import type { AccountSwitchDeps } from './accounts/switchDeps'
-import { deepseekSelectable, ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
+import { deepseekSelectable, kimiSelectable, ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
+import { isKimiConnected } from './kimi/kimiAuth'
+import { testKimiConnection } from './kimi/kimiConnection'
 import { registerProviderStatusIpc } from './providerStatus'
 import { fetchDeepSeekBalance } from './deepseek'
 import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
@@ -1498,14 +1500,16 @@ export const mcpInbound = new McpInbound({
   // A mesma lista do seletor da conversa (shared/selectableModels).
   models: {
     now: () => selectableModelIds({
-      ollama: ollamaSelectable(loadConfig().ollama), codex: isCodexConnected(), deepseek: deepseekSelectable(loadConfig().deepseek)
+      ollama: ollamaSelectable(loadConfig().ollama), codex: isCodexConnected(), deepseek: deepseekSelectable(loadConfig().deepseek),
+      kimi: kimiSelectable(loadConfig().kimi)
     }),
     fresh: async () => {
       await ensureConfigLoaded()
       return selectableModelIds({
         ollama: ollamaSelectable(loadConfig().ollama),
         codex: (await codexStatus()).connected,
-        deepseek: deepseekSelectable(loadConfig().deepseek)
+        deepseek: deepseekSelectable(loadConfig().deepseek),
+        kimi: kimiSelectable(loadConfig().kimi)
       })
     }
   },
@@ -1867,9 +1871,14 @@ export function registerIpc(): void {
       claude: () => claudeConnectedForCard({ probe: () => claudeAuthProbe(), extraConnected: extraClaudeAccountConnected }),
       gpt: async () => (await codexStatus()).connected,
       ollama: () => ollamaSelectable(loadConfig().ollama),
-      deepseek: () => deepseekSelectable(loadConfig().deepseek)
+      deepseek: () => deepseekSelectable(loadConfig().deepseek),
+      kimi: () => isKimiConnected(loadConfig().kimi)
     }
   })
+  // Testar conexão do Kimi: a chave digitada vai só no cabeçalho do pedido ao Kimi.
+  ipcMain.handle(Channels.kimiTestConnection, (_e, apiKey: unknown) =>
+    testKimiConnection(typeof apiKey === 'string' ? apiKey : '', { appVersion: app.getVersion() })
+  )
   // Saldo DeepSeek para o badge: a chave fica no main, o renderer só vê o número.
   ipcMain.handle(Channels.deepseekBalance, async () => {
     await ensureConfigLoaded()
@@ -1881,7 +1890,7 @@ export function registerIpc(): void {
   // Config, Windows e Chrome: só o SQLite local — salvam com o banco fora do ar.
   ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
     const result = await updateAppConfig(patch)
-    if (patch && ('ollama' in patch || 'deepseek' in patch)) providersChanged()
+    if (patch && ('ollama' in patch || 'deepseek' in patch || 'kimi' in patch)) providersChanged()
     return result
   })
   ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())

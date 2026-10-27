@@ -25,6 +25,7 @@ import { ScrumMasterSettingsSection } from './ScrumMasterSettingsSection'
 import { SkillCatalogSection } from './SkillCatalogSection'
 import { AndroidToolchainSection } from './AndroidToolchainSection'
 import { DeepSeekSettingsSection } from './DeepSeekSettingsSection'
+import { KimiSettingsSection } from './KimiSettingsSection'
 import { RevealButton } from './RevealButton'
 import { AppUpdateStatus } from './AppUpdateStatus'
 import { ipcErrorMessage } from '../ipcError'
@@ -795,6 +796,7 @@ export function SettingsModal({
                     </label>
                   </section>
                   <DeepSeekSettingsSection cfg={cfg} setCfg={setCfg} loaded={loaded} />
+                  <KimiSettingsSection cfg={cfg} setCfg={setCfg} loaded={loaded} />
                 </fieldset>
               </>
             )}

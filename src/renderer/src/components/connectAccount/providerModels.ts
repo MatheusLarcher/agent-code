@@ -6,6 +6,8 @@ import {
   CLAUDE_MODELS,
   DEEPSEEK_MODELS,
   isDeepSeekModel,
+  isKimiModel,
+  KIMI_MODELS,
   OLLAMA_MODELS,
   OPENAI_MODELS,
   type ProvidersStatus
@@ -17,18 +19,20 @@ export const PROVIDER_LABEL: Record<ProviderId, string> = {
   claude: 'Claude',
   gpt: 'GPT',
   ollama: 'Ollama',
-  deepseek: 'DeepSeek'
+  deepseek: 'DeepSeek',
+  kimi: 'Kimi'
 }
 
 const FIRST_MODEL: Record<ProviderId, string> = {
   claude: CLAUDE_MODELS[0].id,
   gpt: OPENAI_MODELS[0].id,
   ollama: OLLAMA_MODELS[0].id,
-  deepseek: DEEPSEEK_MODELS[0].id
+  deepseek: DEEPSEEK_MODELS[0].id,
+  kimi: KIMI_MODELS[0].id
 }
 
 /** Ordem de preferência para a conversa nova sem provedor do modelo herdado. */
-const PROVIDER_ORDER: readonly ProviderId[] = ['claude', 'gpt', 'ollama', 'deepseek']
+const PROVIDER_ORDER: readonly ProviderId[] = ['claude', 'gpt', 'kimi', 'ollama', 'deepseek']
 
 export function hasAnyProvider(status: ProvidersStatus): boolean {
   return PROVIDER_ORDER.some((p) => status[p] === true)
@@ -40,6 +44,7 @@ export function providerOfModel(model: string | undefined): ProviderId {
   if (model && OPENAI_MODELS.some((m) => m.id === model)) return 'gpt'
   if (model && OLLAMA_MODELS.some((m) => m.id === model)) return 'ollama'
   if (isDeepSeekModel(model)) return 'deepseek'
+  if (isKimiModel(model)) return 'kimi'
   return 'claude'
 }
 
@@ -57,7 +62,7 @@ export function modelAfterConnect(
 }
 
 /** Modelo de uma conversa NOVA: o herdado, se o provedor dele está conectado;
- *  senão o primeiro de um provedor conectado (Claude, GPT, Ollama, DeepSeek nessa ordem).
+ *  senão o primeiro de um provedor conectado (Claude, GPT, Kimi, Ollama, DeepSeek nessa ordem).
  *  Nenhum conectado → o herdado (o card "Conectar conta" resolve depois). */
 export function modelForNewConversation(model: string, status: ProvidersStatus | null): string {
   if (!status || !hasAnyProvider(status) || status[providerOfModel(model)]) return model

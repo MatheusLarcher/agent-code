@@ -44,4 +44,14 @@ describe('providerModels', () => {
     expect(modelForNewConversation(CLAUDE, NONE)).toBe(CLAUDE)
     expect(modelForNewConversation(CLAUDE, null)).toBe(CLAUDE)
   })
+
+  it('Kimi: provedor próprio, K3.1 Pro como primeiro, antes de Ollama/DeepSeek na conversa nova', () => {
+    expect(providerOfModel('k3.1-pro')).toBe('kimi')
+    expect(providerOfModel('k3.1-pro-highspeed')).toBe('kimi')
+    // O Kimi do Ollama continua sendo Ollama.
+    expect(providerOfModel('kimi-k3:cloud')).toBe('ollama')
+    expect(modelAfterConnect(CLAUDE, { ...NONE, kimi: true }, 'kimi')).toBe('k3.1-pro')
+    expect(modelForNewConversation(CLAUDE, { ...NONE, kimi: true, ollama: true, deepseek: true })).toBe('k3.1-pro')
+    expect(hasAnyProvider({ ...NONE, kimi: true })).toBe(true)
+  })
 })

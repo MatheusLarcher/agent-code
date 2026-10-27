@@ -70,10 +70,12 @@ describe('deepseekSessionEnv', () => {
     expect(env.CLAUDE_CONFIG_DIR).toBe('/cache/cli-config-sem-login')
   })
 
-  it('todos os apelidos e os subagentes vão para o modelo DeepSeek', () => {
-    for (const k of ['SONNET', 'OPUS', 'HAIKU', 'FABLE']) {
+  it('os apelidos e os subagentes vão para o modelo DeepSeek, menos o FABLE', () => {
+    for (const k of ['SONNET', 'OPUS', 'HAIKU']) {
       expect(env[`ANTHROPIC_DEFAULT_${k}_MODEL`]).toBe('deepseek-flash')
     }
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('deepseek-flash')
+    // Com o FABLE = modelo, o CLI apresenta o modelo como "Claude Fable 5" (captura de 26/10/2026).
+    expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_FABLE_MODEL')
   })
 })

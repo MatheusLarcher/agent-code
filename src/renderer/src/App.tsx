@@ -15,7 +15,8 @@ import type {
   RateLimitStatus,
   RepositoryChange,
   StorageStatusDto,
-  TabKind
+  TabKind,
+  AppConfig
 } from '@shared/ipc'
 import {
   AUTO_EFFORT,
@@ -25,7 +26,9 @@ import {
   isAutoEffort,
   isAutoModel,
   isDeepSeekModel,
+  isKimiModel,
   isNonClaudeModel,
+  setKimiContextWindow,
   isOpenAIModel,
   modelSupportsFastMode,
   MODEL_EFFORT,
@@ -113,6 +116,7 @@ import { roomIdFor } from './office/adapter/model'
 import { Sidebar, type SidebarProject } from './components/Sidebar'
 import { UsageBadge, type UsageProviders } from './components/UsageBadge'
 import { DeepSeekUsageBadge, useDeepSeekBalance } from './components/DeepSeekUsageBadge'
+import { KimiUsageBadge } from './components/KimiUsageBadge'
 import { AccountsUsageBadge } from './components/AccountsUsageBadge'
 import { UpdateBadge } from './components/UpdateBadge'
 import { useAppUpdate } from './components/useAppUpdate'
@@ -157,7 +161,7 @@ import { findManagerConversation, runRemotePlanningAction } from './planning/rem
 import { applyRemoteModelChange, remoteModelFields, type RemoteModelControls } from './remote/remoteModel'
 import { reportMcpDropped, reportMcpFailed, useMcpInbound } from './useMcpInbound'
 import { isMcpTaskGone, isNoLiveSession, MCP_TASK_GONE_WARNING } from '@shared/mcpInbound'
-import { deepseekSelectable, selectableModels } from '@shared/selectableModels'
+import { deepseekSelectable, kimiSelectable, selectableModels } from '@shared/selectableModels'
 import { effortLevelsFor, remoteEffortCatalog, runningEffort, withAutoModelOption } from './effortOptions'
 import { effortForModelChange, isEffortLevel } from '@shared/autoEffort'
 import {
@@ -673,6 +677,18 @@ export function App(): JSX.Element {
   const [ollamaReady, setOllamaReady] = useState(false)
   // Whether DeepSeek is enabled with a key — adds DEEPSEEK_MODELS to the selector.
   const [deepseekReady, setDeepSeekReady] = useState(false)
+  // Kimi: os ids que o plano libera (ligado + chave + "Testar conexão" feito) e a janela detectada.
+  const [kimiModels, setKimiModels] = useState<string[]>([])
+  const [kimiWindow, setKimiWindow] = useState<number | undefined>(undefined)
+  const applyKimiConfig = useCallback((cfg: AppConfig['kimi'] | undefined): void => {
+    setKimiModels((prev) => {
+      const next = kimiSelectable(cfg)
+      return prev.join(',') === next.join(',') ? prev : next
+    })
+    // A barra de contexto (contextLimitFor) passa a usar a janela do plano.
+    setKimiContextWindow(cfg?.contextWindow)
+    setKimiWindow(cfg?.contextWindow)
+  }, [])
   // Whether a Codex (ChatGPT subscription) login exists — adds GPT models to the selector.
   const [codexReady, setCodexReady] = useState(false)
   // Models offered in the selector: Claude always, Ollama Cloud / GPT when
@@ -680,8 +696,8 @@ export function App(): JSX.Element {
   // `withAutoModelOption` — only with TypeSafe ready or when it's the saved value.
   // A regra mora em @shared/selectableModels: o MCP de entrada aceita a mesma lista.
   const models = useMemo(
-    () => selectableModels({ ollama: ollamaReady, codex: codexReady, deepseek: deepseekReady }),
-    [ollamaReady, codexReady, deepseekReady]
+    () => selectableModels({ ollama: ollamaReady, codex: codexReady, deepseek: deepseekReady, kimi: kimiModels }),
+    [ollamaReady, codexReady, deepseekReady, kimiModels]
   )
   // Read-aloud (TTS): id of the message currently playing, and the player (one
   // audio output kept open across the parts — see ui/clipPlayer.ts).
@@ -1890,6 +1906,7 @@ export function App(): JSX.Element {
           setWindowsControlEnabled(config.windowsControlEnabled === true)
           setOllamaReady(config.ollama.enabled && Boolean(config.ollama.apiKey.trim()))
           setDeepSeekReady(deepseekSelectable(config.deepseek))
+          applyKimiConfig(config.kimi)
           void window.api.isTypeSafeConfigured?.().then(setTypesafeReady).catch(() => undefined)
         }).catch(() => undefined)
       }
@@ -1939,6 +1956,7 @@ export function App(): JSX.Element {
           setWindowsControlEnabled(c.windowsControlEnabled === true)
           setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
           setDeepSeekReady(deepseekSelectable(c.deepseek))
+          applyKimiConfig(c.kimi)
         })
         .catch(() => undefined)
       if (cancelled) return
@@ -3723,6 +3741,7 @@ export function App(): JSX.Element {
     void window.api.getConfig().then((c) => {
       setOllamaReady(!!c.ollama?.enabled && !!c.ollama?.apiKey?.trim())
       setDeepSeekReady(deepseekSelectable(c.deepseek))
+      applyKimiConfig(c.kimi)
       setObserversOn({
         po: c.board?.po?.enabled !== false,
         vigia: c.vigia?.enabled !== false,
@@ -4007,6 +4026,7 @@ export function App(): JSX.Element {
   const showBusy = activeId !== null && busyIds.has(activeId)
   // DeepSeek: saldo ao abrir a conversa e a cada fim de turno (a saída da conversa cresce).
   const activeDeepSeek = !!active && !activeCentral && isDeepSeekModel(active.model)
+  const activeKimi = !!active && !activeCentral && isKimiModel(active.model)
   const deepseekBalance = useDeepSeekBalance(
     activeDeepSeek,
     active ? `${active.id}:${active.tokens.output}:${active.tokens.cost}` : '',
@@ -4865,6 +4885,7 @@ export function App(): JSX.Element {
             <UsageBadge limits={usageLimits} providers={usageProviders} onProvidersChange={setUsageProviders} />
           )}
           {activeDeepSeek && active && <DeepSeekUsageBadge balance={deepseekBalance} convCostUsd={active.tokens.cost} />}
+          {activeKimi && <KimiUsageBadge contextWindow={kimiWindow} />}
           <UpdateBadge
             state={update.state}
             onInstallNow={() => void update.installNow()}

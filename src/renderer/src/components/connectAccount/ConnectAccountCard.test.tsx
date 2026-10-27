@@ -138,6 +138,37 @@ describe('ConnectAccountCard', () => {
     expect(onConnected).toHaveBeenCalledWith('deepseek')
   })
 
+  it('Kimi: testa a conexão antes e grava janela e modelos detectados', async () => {
+    const kimiTestConnection = vi.fn(async () => ({ ok: true, message: 'ok', region: 'intl', contextWindow: 262_144, models: ['k3.1-pro'] }))
+    ;(api as unknown as { kimiTestConnection: typeof kimiTestConnection }).kimiTestConnection = kimiTestConnection
+    api.getConfig.mockResolvedValue({ kimi: { enabled: false, apiKey: '', region: 'intl', contextWindow: 1_048_576, models: [] } })
+    api.providersStatus.mockResolvedValue({ ...NONE, kimi: true })
+    const { onConnected } = renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar conta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kimi' }))
+    expect((screen.getByRole('link', { name: 'Gerar chave no console do Kimi Code' }) as HTMLAnchorElement).href).toBe('https://www.kimi.ai/code/console')
+    fireEvent.change(screen.getByLabelText('API key do Kimi'), { target: { value: ' chave-falsa ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() =>
+      expect(api.setConfig).toHaveBeenCalledWith({
+        kimi: { enabled: true, apiKey: 'chave-falsa', region: 'intl', contextWindow: 262_144, models: ['k3.1-pro'] }
+      })
+    )
+    expect(kimiTestConnection).toHaveBeenCalledWith('chave-falsa')
+    await waitFor(() => expect(onConnected).toHaveBeenCalledWith('kimi'))
+  })
+
+  it('Kimi: chave recusada no teste não grava nada e mostra o motivo', async () => {
+    ;(api as unknown as { kimiTestConnection: unknown }).kimiTestConnection = vi.fn(async () => ({ ok: false, message: 'Chave do Kimi inválida.' }))
+    renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar conta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kimi' }))
+    fireEvent.change(screen.getByLabelText('API key do Kimi'), { target: { value: 'ruim' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('erro', expect.stringContaining('Chave do Kimi inválida.')))
+    expect(api.setConfig).not.toHaveBeenCalled()
+  })
+
   it('Ollama: falha ao gravar avisa com erro', async () => {
     api.setConfig.mockRejectedValue(new Error('disco cheio'))
     renderCard()

@@ -128,7 +128,7 @@ export interface ContextTurnSummary {
   /** Quem respondeu, na ordem da primeira resposta de cada (nó, modelo). Vazio =
    *  sem resposta ainda, ou turno gravado antes deste campo: a tela não chuta. */
   models: ContextTurnModel[]
-  provider: 'claude' | 'gpt' | 'ollama' | 'deepseek'
+  provider: 'claude' | 'gpt' | 'ollama' | 'deepseek' | 'kimi'
   /** Pedido do usuário resumido (até ~120 caracteres). */
   request: string
   blockCount: number

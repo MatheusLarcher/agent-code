@@ -15,6 +15,8 @@ export interface ProviderStatusDeps {
   gpt: () => Promise<boolean>
   ollama: () => boolean | Promise<boolean>
   deepseek: () => boolean | Promise<boolean>
+  /** Kimi ligado + chave + conexão testada. Opcional: ausente = desligado. */
+  kimi?: () => boolean | Promise<boolean>
 }
 
 async function safe(query: () => boolean | Promise<boolean>): Promise<boolean> {
@@ -26,10 +28,10 @@ async function safe(query: () => boolean | Promise<boolean>): Promise<boolean> {
 }
 
 export async function providerStatusWith(deps: ProviderStatusDeps): Promise<ProvidersStatus> {
-  const [claude, gpt, ollama, deepseek] = await Promise.all([
-    safe(deps.claude), safe(deps.gpt), safe(deps.ollama), safe(deps.deepseek)
+  const [claude, gpt, ollama, deepseek, kimi] = await Promise.all([
+    safe(deps.claude), safe(deps.gpt), safe(deps.ollama), safe(deps.deepseek), deps.kimi ? safe(deps.kimi) : false
   ])
-  return { claude, gpt, ollama, deepseek }
+  return { claude, gpt, ollama, deepseek, kimi }
 }
 
 /** Registra `providersStatus` e devolve o `changed()` que o index chama depois

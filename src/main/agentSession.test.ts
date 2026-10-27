@@ -13,6 +13,8 @@ const configState = vi.hoisted(() => ({
   chromeControlEnabled: false as unknown,
   ollama: { enabled: false, apiKey: '' },
   deepseek: { enabled: false, apiKey: '' },
+  kimi: { enabled: false, apiKey: '', region: 'intl' as const, contextWindow: 262_144, models: [] as string[] },
+  externalOrgInstructions: '',
   skillCatalog: undefined as { tiered: boolean; overrides: Record<string, never> } | undefined,
   // 'typesafe' aqui: os testes do TypeSafe abaixo só ligam `typeSafeState.active`.
   // O padrão do app ('haiku') tem teste próprio.
@@ -37,6 +39,8 @@ vi.mock('./config', () => ({
     ollama: configState.ollama,
     memorySelector: configState.memorySelector,
     deepseek: configState.deepseek,
+    kimi: configState.kimi,
+    externalOrgInstructions: configState.externalOrgInstructions,
     ...(configState.skillCatalog ? { skillCatalog: configState.skillCatalog } : {})
   })
 }))
@@ -47,6 +51,8 @@ vi.mock('./codexProxy', () => ({
   // auth token to request fast mode for this conversation.
   FAST_MODE_TOKEN_SUFFIX: '+fast'
 }))
+const ensureKimiRouterMock = vi.hoisted(() => vi.fn(async () => ({ baseUrl: 'http://127.0.0.1:45678/segredo' })))
+vi.mock('./kimi/kimiRouter', () => ({ ensureKimiRouterRunning: ensureKimiRouterMock }))
 vi.mock('./store', () => ({
   getCacheInfo: () => ({ ...cacheState })
 }))
@@ -1472,6 +1478,60 @@ describe('AgentSession — o esforço Automático nunca chega ao SDK', () => {
   })
 })
 
+describe('AgentSession — Kimi pelo roteador, logado na conta Claude', () => {
+  const optionsOfLastQuery = (): Record<string, unknown> =>
+    (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
+  const KEY = 'sk-kimi-nunca-no-env'
+
+  it('sem chave: erro claro e nenhuma sessão', async () => {
+    configState.kimi = { enabled: true, apiKey: '', region: 'intl', contextWindow: 262_144, models: ['k3.1-pro'] }
+    const calls = queryMock.mock.calls.length
+    const { s, emit } = makeSession({ model: 'k3.1-pro' })
+    expect(await s.start()).toBe(false)
+    expect(queryMock.mock.calls.length).toBe(calls)
+    expect(JSON.stringify(emit.mock.calls)).toContain('chave do Kimi não está configurada')
+  })
+
+  it('env do CLI: roteador, janelas, lembrete de tokens; sem apelidos, sem FABLE e sem a chave do Kimi', async () => {
+    configState.kimi = { enabled: true, apiKey: KEY, region: 'intl', contextWindow: 262_144, models: ['k3.1-pro'] }
+    const { s } = makeSession({ model: 'k3.1-pro', effort: 'xhigh' })
+    await s.start()
+    const options = optionsOfLastQuery()
+    const env = options.env as Record<string, string | undefined>
+    expect(options).toMatchObject({
+      model: 'k3.1-pro',
+      effort: 'max',
+      thinking: { type: 'adaptive', display: 'summarized' },
+      agentProgressSummaries: true,
+      settingSources: ['user', 'project', 'local'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' }
+    })
+    expect(options).not.toHaveProperty('maxTurns')
+    expect(env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:45678/segredo',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'k3.1-pro',
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS: '262144',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+      CLAUDE_CODE_TOTAL_TOKENS_REMINDER: 'padded-countdown',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000'
+    })
+    for (const k of Object.keys(env)) expect(k).not.toMatch(/^ANTHROPIC_DEFAULT_\w+_MODEL$/)
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain(KEY)
+    expect(env.CLAUDE_CONFIG_DIR ?? '').not.toContain('cli-config-sem-login')
+  })
+
+  it('plano de 1M: modelo com [1m] e compactação em 400K', async () => {
+    configState.kimi = { enabled: true, apiKey: KEY, region: 'intl', contextWindow: 1_048_576, models: ['k3.1-pro'] }
+    const { s } = makeSession({ model: 'k3.1-pro' })
+    await s.start()
+    const options = optionsOfLastQuery()
+    expect(options.model).toBe('k3.1-pro[1m]')
+    expect((options.env as Record<string, string>).CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('400000')
+    configState.kimi = { enabled: false, apiKey: '', region: 'intl', contextWindow: 262_144, models: [] }
+  })
+})
+
 describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
   const optionsOfLastQuery = (): Record<string, unknown> =>
     (queryMock.mock.calls.at(-1)?.[0] as { options: Record<string, unknown> }).options
@@ -1505,9 +1565,10 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-6-sol',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-6-sol',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-6-sol',
-      ANTHROPIC_DEFAULT_FABLE_MODEL: 'gpt-6-sol',
       CLAUDE_CODE_SUBAGENT_MODEL: 'gpt-6-sol'
     })
+    // Sem o FABLE: com ele = modelo o CLI apresenta o GPT como "Claude Fable 5".
+    expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_FABLE_MODEL')
   })
 
   it('expõe a pasta de skills do cache ao GPT mesmo quando a conversa usa outro projeto', async () => {

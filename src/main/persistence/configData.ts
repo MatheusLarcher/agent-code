@@ -10,6 +10,7 @@ import {
   isAutoEffort,
   isVoiceId,
   isWhisperModelId,
+  KIMI_CONTEXT_WINDOWS,
   normalizeVoiceSpeed,
   PLANNING_MODELS,
   scrumMasterConfig,
@@ -22,6 +23,7 @@ import {
   type SkillTier,
   type EffortChoice,
   type EffortLevel,
+  type KimiConfig,
   type MemorySelectorMode,
   type PlanningConfig,
   type TranscribeEngine,
@@ -124,6 +126,21 @@ const partialConfigSchema = z
     localSpeech: z.object({ model: z.string().min(1).optional() }).strict().optional(),
     ollama: z.object({ enabled: z.boolean().optional(), apiKey: z.string().optional() }).strict().optional(),
     deepseek: z.object({ enabled: z.boolean().optional(), apiKey: z.string().optional() }).strict().optional(),
+    // Região/janela fora do conjunto voltam ao padrão em vez de derrubar o boot.
+    kimi: z
+      .object({
+        enabled: z.boolean().optional(),
+        apiKey: z.string().optional(),
+        region: z.unknown().transform((v): KimiConfig['region'] => (v === 'cn' ? 'cn' : 'intl')).optional(),
+        contextWindow: z
+          .unknown()
+          .transform((v): number => ((KIMI_CONTEXT_WINDOWS as readonly unknown[]).includes(v) ? (v as number) : KIMI_CONTEXT_WINDOWS[0]))
+          .optional(),
+        models: z.array(z.string().min(1)).optional()
+      })
+      .strict()
+      .optional(),
+    externalOrgInstructions: z.string().optional(),
     skipPermissions: z.boolean().optional(),
     windowsControlEnabled: z.boolean().optional(),
     chromeControlEnabled: z.boolean().optional(),
@@ -200,6 +217,7 @@ export function defaultAppConfig(): AppConfig {
     localSpeech: { ...DEFAULT_CONFIG.localSpeech },
     ollama: { ...DEFAULT_CONFIG.ollama },
     deepseek: { ...DEFAULT_CONFIG.deepseek },
+    kimi: { ...DEFAULT_CONFIG.kimi, models: [...DEFAULT_CONFIG.kimi.models] },
     vigia: { ...DEFAULT_CONFIG.vigia },
     memorista: { ...DEFAULT_CONFIG.memorista },
     planning: { ...DEFAULT_CONFIG.planning },
@@ -225,6 +243,11 @@ export function mergeAppConfig(current: AppConfig, patch: unknown): AppConfig {
     localSpeech: { ...current.localSpeech, ...(parsed.data.localSpeech ?? {}) },
     ollama: { ...current.ollama, ...(parsed.data.ollama ?? {}) },
     deepseek: { ...current.deepseek, ...(parsed.data.deepseek ?? {}) },
+    kimi: (() => {
+      const kimi = { ...current.kimi, ...(parsed.data.kimi ?? {}) }
+      return { ...kimi, models: [...kimi.models] }
+    })(),
+    externalOrgInstructions: parsed.data.externalOrgInstructions ?? current.externalOrgInstructions,
     vigia: { ...current.vigia, ...(parsed.data.vigia ?? {}) },
     memorista: { ...current.memorista, ...(parsed.data.memorista ?? {}) },
     planning: normalizePlanningConfig({ ...current.planning, ...(parsed.data.planning ?? {}) }),
