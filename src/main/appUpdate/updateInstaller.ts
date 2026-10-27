@@ -55,6 +55,13 @@ export interface UpdateInstallerDeps {
   quitApp: () => void
   /** Espera o log chegar ao disco antes de o app sair (as últimas linhas são as que explicam a falha). */
   flushLog?: () => Promise<void>
+  /**
+   * Atualização rápida (fastSwap.ts): espera a extração em segundo plano terminar
+   * (ou começa, se ainda não começou) e diz se a pasta nova está pronta para a troca.
+   */
+  prepareFastSwap?: () => Promise<boolean>
+  /** Sobe o script que troca as pastas depois que o app sair; lança se não subir. */
+  launchFastSwap?: () => void
   /** Ensaio: tudo menos o instalador; o app sai sem instalar. */
   dryRun: boolean
   wait?: (ms: number) => Promise<void>
@@ -65,6 +72,8 @@ export interface UpdateInstallerDeps {
 /** Quanto tempo os processos da pasta têm para sumir sozinhos antes de serem forçados. */
 export const ORPHAN_GRACE_MS = 10_000
 const ORPHAN_POLL_MS = 500
+/** Quanto o clique espera a extração em andamento antes de desistir dela. */
+export const FAST_PREPARE_MAX_MS = 180_000
 
 function errorText(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').trim().slice(0, 300)
@@ -110,6 +119,9 @@ export class UpdateInstaller {
     this.running = true
     deps.hold()
     const version = deps.pendingVersion() ?? '?'
+    // Com a retenção já valendo: a extração costuma ter terminado logo depois do download;
+    // se o clique veio antes, esperar ~1 min ainda é muito menos que o instalador inteiro.
+    const fast = !deps.dryRun && deps.prepareFastSwap && deps.launchFastSwap ? await this.prepareFast() : false
     const steps = deps.steps()
     deps.log(`instalação da ${version} (${origin}): fechamento ordenado em ${steps.length} passos`)
     for (const step of steps) await this.runStep(step)
@@ -140,6 +152,18 @@ export class UpdateInstaller {
     }
 
     deps.rememberAttempt(version)
+    if (fast && deps.launchFastSwap) {
+      try {
+        deps.launchFastSwap()
+        deps.log('troca rápida disparada; o app sai agora e volta na versão nova em segundos')
+        await this.flushLog()
+        deps.markQuitReady()
+        deps.quitApp()
+        return { ok: true }
+      } catch (error) {
+        deps.log(`troca rápida não subiu (${errorText(error)}); usando o instalador`)
+      }
+    }
     deps.log('instalador disparado; o app sai agora e volta na versão nova')
     await this.flushLog()
     deps.markQuitReady()
@@ -163,6 +187,24 @@ export class UpdateInstaller {
     if (!flush) return
     const wait = this.deps.wait ?? defaultWait
     await Promise.race([flush().catch(() => undefined), wait(2_000)])
+  }
+
+  /** Nunca lança nem segura além de FAST_PREPARE_MAX_MS: no pior caso, vai o instalador. */
+  private async prepareFast(): Promise<boolean> {
+    const { deps } = this
+    const wait = deps.wait ?? defaultWait
+    try {
+      const ready = await Promise.race([deps.prepareFastSwap!(), wait(FAST_PREPARE_MAX_MS).then(() => 'prazo' as const)])
+      if (ready === 'prazo') {
+        deps.log(`atualização rápida: extração passou de ${FAST_PREPARE_MAX_MS / 1000} s; usando o instalador`)
+        return false
+      }
+      if (!ready) deps.log('atualização rápida indisponível; usando o instalador')
+      return ready
+    } catch (error) {
+      deps.log(`atualização rápida falhou ao preparar (${errorText(error)}); usando o instalador`)
+      return false
+    }
   }
 
   private refuse(message: string, transient = false): InstallResult {

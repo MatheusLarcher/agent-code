@@ -146,6 +146,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Confere o 7-Zip da atualizacao rapida (sem ele, todo update cai no instalador lento) ---
+if not exist "dist\win-unpacked\resources\7zip\7za.exe" (
+    echo.
+    echo [ERRO] O instalador saiu sem resources\7zip\7za.exe.
+    echo.
+    pause
+    exit /b 1
+)
+
 REM --- Confere que toda lib do package.json foi embutida ---
 call node "%~dp0check-deps.mjs" --verify "dist\win-unpacked\resources\app"
 if errorlevel 1 (

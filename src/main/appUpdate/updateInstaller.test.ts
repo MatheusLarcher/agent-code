@@ -213,4 +213,69 @@ describe('UpdateInstaller', () => {
     release()
     expect(await first).toEqual({ ok: true })
   })
+
+  describe('atualização rápida', () => {
+    const never = (): Promise<void> => new Promise(() => undefined)
+
+    it('pasta pronta: troca rápida no lugar do instalador', async () => {
+      const h = harness({
+        wait: never,
+        prepareFastSwap: async () => (h.calls.push('prepare'), true),
+        launchFastSwap: () => void h.calls.push('swap')
+      })
+      expect(await h.installer.installNow('botão')).toEqual({ ok: true })
+      expect(h.calls).toEqual([
+        'list', 'markInstalling', 'hold', 'prepare',
+        'step:flush', 'step:persistência', 'step:voz', 'list',
+        'remember:0.2.0', 'swap', 'quitReady', 'quitApp'
+      ])
+      expect(h.calls).not.toContain('quitAndInstall')
+    })
+
+    it('extração indisponível: cai no instalador', async () => {
+      const h = harness({
+        wait: never,
+        prepareFastSwap: async () => false,
+        launchFastSwap: () => void h.calls.push('swap')
+      })
+      expect(await h.installer.installNow('botão')).toEqual({ ok: true })
+      expect(h.calls).not.toContain('swap')
+      expect(h.calls.at(-1)).toBe('quitAndInstall')
+      expect(h.lines.some((l) => l.includes('usando o instalador'))).toBe(true)
+    })
+
+    it('o script da troca não sobe: cai no instalador', async () => {
+      const h = harness({
+        wait: never,
+        prepareFastSwap: async () => true,
+        launchFastSwap: () => {
+          throw new Error('spawn falhou')
+        }
+      })
+      expect(await h.installer.installNow('botão')).toEqual({ ok: true })
+      expect(h.calls.at(-1)).toBe('quitAndInstall')
+      expect(h.lines.some((l) => l.includes('troca rápida não subiu (spawn falhou)'))).toBe(true)
+    })
+
+    it('extração demorando demais: desiste dela e usa o instalador', async () => {
+      const h = harness({
+        prepareFastSwap: () => new Promise<boolean>(() => undefined),
+        launchFastSwap: () => void h.calls.push('swap')
+      })
+      expect(await h.installer.installNow('botão')).toEqual({ ok: true })
+      expect(h.calls).not.toContain('swap')
+      expect(h.calls.at(-1)).toBe('quitAndInstall')
+    })
+
+    it('ensaio não prepara nem troca', async () => {
+      const h = harness({
+        dryRun: true,
+        prepareFastSwap: async () => (h.calls.push('prepare'), true),
+        launchFastSwap: () => void h.calls.push('swap')
+      })
+      await h.installer.installNow('botão')
+      expect(h.calls).not.toContain('prepare')
+      expect(h.calls).not.toContain('swap')
+    })
+  })
 })

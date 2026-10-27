@@ -55,6 +55,10 @@ extraResources:
   # PostgreSQL 18.6 embutido, gerenciado pelo app (persistence/localPostgres.ts → resources/postgres)
   - from: out/postgres
     to: postgres
+  # 7-Zip do electron-builder (scripts/stage-7zip.mjs): extrai a versão nova em
+  # segundo plano para a atualização rápida (main/appUpdate/fastSwap.ts).
+  - from: out/7zip
+    to: 7zip
   # Extensão local do Chrome (chromeBridge/runtime.ts → resources/chrome-extension).
   # config.js é gerado por instalação (token), nunca empacotado.
   - from: src/chromeExtension

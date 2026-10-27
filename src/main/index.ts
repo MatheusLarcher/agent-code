@@ -199,6 +199,7 @@ import { AppUpdateService, type UpdaterLike } from './appUpdate/appUpdateService
 import { createUpdateLog } from './appUpdate/updateLog'
 import { devUpdateDryInstall, devUpdateFeedConfigPath } from './appUpdate/devUpdateFeed'
 import { UpdateInstaller, type ShutdownStep } from './appUpdate/updateInstaller'
+import { FastUpdateStager, launchSwap } from './appUpdate/fastSwap'
 import { killProcessTree, listInstallDirProcesses } from './appUpdate/installDirProcesses'
 import { INSTALL_MARKER_FILENAME, describeInstallOutcome, readAndClearInstallMarker, writeInstallMarker } from './appUpdate/installMarker'
 import { setupTarefasApp } from './tarefas/appWiring'
@@ -951,7 +952,12 @@ function appUpdateService(): AppUpdateService {
     currentVersion: app.getVersion(),
     log: updateLog,
     blockedBy: updateBlockedBy,
-    onChange: (state) => send(Channels.updateStateChanged, state),
+    onChange: (state) => {
+      send(Channels.updateStateChanged, state)
+      // Setup baixado e conferido: já extrai a versão nova para o clique só trocar as pastas.
+      const file = state.phase === 'pronta' ? appUpdate?.pendingInstaller() : null
+      if (file && state.version) void fastUpdateStager()?.stage(file, state.version)
+    },
     devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath())
   })
   return appUpdate
@@ -963,6 +969,52 @@ function installRootDir(): string {
   return app.isPackaged ? dirname(process.execPath) : app.getAppPath()
 }
 const updateMarkerPath = (): string => join(app.getPath('userData'), 'logs', INSTALL_MARKER_FILENAME)
+
+// Atualização rápida (appUpdate/fastSwap.ts): só no app instalado — em desenvolvimento a
+// "pasta de instalação" é o repositório.
+let fastStager: FastUpdateStager | null = null
+function fastUpdateStager(): FastUpdateStager | null {
+  if (!app.isPackaged || process.platform !== 'win32') return null
+  fastStager ??= new FastUpdateStager({
+    log: updateLog,
+    installDir: installRootDir(),
+    exeName: basename(process.execPath),
+    sevenZip: join(process.resourcesPath, '7zip', '7za.exe')
+  })
+  return fastStager
+}
+
+/** Prepara (ou espera) a extração da versão pendente; true = a troca pode ir. */
+async function prepareFastSwap(): Promise<boolean> {
+  const stager = fastUpdateStager()
+  const service = appUpdateService()
+  const file = service.pendingInstaller()
+  const version = service.snapshot().version
+  if (!stager || !file || !version) return false
+  if (stager.readyDir(version)) return true
+  return (await stager.stage(file, version)) && stager.readyDir(version) !== null
+}
+
+function launchFastSwap(): void {
+  const stager = fastUpdateStager()
+  const service = appUpdateService()
+  const version = service.snapshot().version
+  const stagedDir = stager?.readyDir(version)
+  const setupFile = service.pendingInstaller()
+  if (!stager || !version || !stagedDir || !setupFile) throw new Error('a versão nova não está extraída')
+  launchSwap(
+    {
+      appPid: process.pid,
+      installDir: installRootDir(),
+      stagedDir,
+      exeName: basename(process.execPath),
+      version,
+      setupFile,
+      logFile: join(app.getPath('userData'), 'logs', 'atualizacao.log')
+    },
+    app.getPath('temp')
+  )
+}
 
 /** Tudo o que `window-all-closed` e `before-quit` param hoje, mas esperado de verdade e com prazo. */
 function updateShutdownSteps(): ShutdownStep[] {
@@ -1071,6 +1123,8 @@ function updateInstaller(): UpdateInstaller {
     stillInstalling: () => appUpdateService().snapshot().phase === 'instalando',
     quitApp: () => app.quit(),
     flushLog: () => updateLog.flush(),
+    prepareFastSwap,
+    launchFastSwap,
     dryRun: devUpdateDryInstall(process.env, app.isPackaged)
   })
   return updateInstall
