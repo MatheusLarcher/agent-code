@@ -82,6 +82,87 @@ describe('AgentSession — tool-input-delta', () => {
   })
 })
 
+const thinks = (events: ChatEvent[]): Array<Extract<ChatEvent, { kind: 'thinking' }>> =>
+  events.filter((e): e is Extract<ChatEvent, { kind: 'thinking' }> => e.kind === 'thinking')
+
+const assistant = (content: unknown[], parent: string | null = null): unknown => ({
+  type: 'assistant',
+  message: { id: 'm1', role: 'assistant', model: 'claude-x', content },
+  parent_tool_use_id: parent,
+  uuid: 'a',
+  session_id: 's'
+})
+
+// Integração com thinkingStream.ts: o `thinking_delta` do principal vira
+// `thinking` parcial (final:false) e o bloco completo da mensagem `assistant`
+// reescreve a MESMA bolha (mesmo id), sem final:false.
+describe('AgentSession — thinking ao vivo', () => {
+  it('thinking_delta do principal sai como thinking parcial, e o bloco completo reusa o id', () => {
+    const { feed, events } = session()
+    feed(stream({ type: 'message_start', message: { id: 'm1' } }))
+    feed(stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }))
+    feed(stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Preciso ' } }))
+    feed(stream({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } }))
+    feed(stream({ type: 'content_block_stop', index: 0 }))
+    const live = thinks(events)
+    expect(live).toHaveLength(1)
+    expect(live[0]).toMatchObject({ kind: 'thinking', text: 'Preciso ', final: false })
+    const liveId = live[0].id
+    expect(typeof liveId).toBe('string')
+
+    feed(assistant([{ type: 'thinking', thinking: 'Preciso ler o arquivo', signature: 'sig' }]))
+    const full = thinks(events).at(-1)!
+    expect(full).toMatchObject({ kind: 'thinking', id: liveId, text: 'Preciso ler o arquivo' })
+    expect(full.final).toBeUndefined()
+  })
+
+  it('vários blocos thinking: cada bloco completo pega o id do seu bloco ao vivo, na ordem', () => {
+    const { feed, events } = session()
+    feed(stream({ type: 'message_start', message: { id: 'm1' } }))
+    feed(stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }))
+    feed(stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'um' } }))
+    feed(stream({ type: 'content_block_stop', index: 0 }))
+    feed(stream({ type: 'content_block_start', index: 1, content_block: { type: 'text' } }))
+    feed(stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'meio' } }))
+    feed(stream({ type: 'content_block_stop', index: 1 }))
+    feed(stream({ type: 'content_block_start', index: 2, content_block: { type: 'thinking' } }))
+    feed(stream({ type: 'content_block_delta', index: 2, delta: { type: 'thinking_delta', thinking: 'dois' } }))
+    feed(stream({ type: 'content_block_stop', index: 2 }))
+    const liveIds = thinks(events).map((e) => e.id)
+    expect(liveIds).toHaveLength(2)
+    expect(liveIds[0]).not.toBe(liveIds[1])
+
+    feed(assistant([
+      { type: 'thinking', thinking: 'um' },
+      { type: 'text', text: 'meio' },
+      { type: 'thinking', thinking: 'dois' }
+    ]))
+    const full = thinks(events).slice(2)
+    expect(full.map((e) => e.id)).toEqual(liveIds)
+    expect(full.map((e) => e.text)).toEqual(['um', 'dois'])
+    expect(full.every((e) => e.final === undefined)).toBe(true)
+  })
+
+  it('bloco thinking sem stream antes ganha id novo', () => {
+    const { feed, events } = session()
+    feed(assistant([{ type: 'thinking', thinking: 'direto' }]))
+    const out = thinks(events)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ text: 'direto' })
+    expect(out[0].id).toMatch(/^e/)
+  })
+
+  it('ignora thinking de subagente (parent_tool_use_id não nulo)', () => {
+    const { feed, events } = session()
+    const parent = 'task-1'
+    feed(stream({ type: 'message_start', message: { id: 'm1' } }, parent))
+    feed(stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }, parent))
+    feed(stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'x' } }, parent))
+    feed(stream({ type: 'content_block_stop', index: 0 }, parent))
+    expect(thinks(events)).toEqual([])
+  })
+})
+
 /** Um `result` do SDK: é onde a sessão marca o turno ocioso. */
 function feedTurnIdle(feed: (m: unknown) => void): void {
   feed({

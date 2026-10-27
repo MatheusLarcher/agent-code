@@ -285,6 +285,46 @@
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
+/* O tempo da atividade (ferramenta rodando / raciocínio aberto), colado ao rótulo. */
+.chat-live-elapsed {
+  flex: none;
+  margin-left: -4px;
+  color: var(--chat-faint);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* O trecho mais recente do raciocínio: uma linha, apagada, que encurta antes de tudo. */
+.chat-live-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--chat-faint);
+  font-size: 12px;
+  font-style: italic;
+}
+/* "último sinal há Xs": mono, apagado; passados 20 s em silêncio, na cor de aviso. */
+.chat-live-signal {
+  flex: none;
+  white-space: nowrap;
+  color: var(--chat-faint);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.chat-live-signal.quiet {
+  color: var(--warn);
+  opacity: 1;
+}
+/* Esperando o usuário (permissão/pergunta): o rótulo parado, sem shimmer. */
+.chat-live.waiting .chat-live-text {
+  animation: chat-live-in 0.3s ease-out;
+  background: none;
+  color: var(--muted);
+}
 @keyframes chat-live-shim {
   to {
     background-position: -200% 0;

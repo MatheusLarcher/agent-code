@@ -85,7 +85,25 @@ function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: nu
  * O texto afirma o que é observável ("sem resposta há X"), não um diagnóstico:
  * o turno continua vivo e pode terminar sozinho. Nada é cancelado por isto.
  */
-function WorkingBanner({ stalledSince, compacting, apiRetry }: { stalledSince?: number; compacting?: boolean; apiRetry?: ApiRetryState }): JSX.Element {
+/** O agente parou esperando o usuário (permissão ou pergunta): a faixa diz isso, sem relógio. */
+export type WaitingOn = 'permission' | 'question'
+
+const WAITING_TEXT: Record<WaitingOn, string> = {
+  permission: 'Agent aguarda sua permissão',
+  question: 'Agent aguarda sua resposta'
+}
+
+function WorkingBanner({
+  stalledSince,
+  compacting,
+  apiRetry,
+  waiting
+}: {
+  stalledSince?: number
+  compacting?: boolean
+  apiRetry?: ApiRetryState
+  waiting?: WaitingOn
+}): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   // O relógio só tique com algo a contar: o silêncio ou o prazo da nova tentativa.
   const ticking = !!stalledSince || !!apiRetry
@@ -104,6 +122,8 @@ function WorkingBanner({ stalledSince, compacting, apiRetry }: { stalledSince?: 
           <>Sem resposta há {fmtDuration(Math.max(0, now - stalledSince))}</>
         ) : apiRetry ? (
           <>{apiRetryText(apiRetry, now)}</>
+        ) : waiting ? (
+          <>{WAITING_TEXT[waiting]}</>
         ) : compacting ? (
           <>
             Agent está compactando a conversa<span className="working-dots" />
@@ -156,6 +176,10 @@ interface Props {
   /** Nova tentativa da API agendada pelo CLI (evento `api-retry`): a faixa diz o
    *  motivo e quanto falta. Perde só para o "sem resposta". */
   apiRetry?: ApiRetryState
+  /** O agente parou esperando o usuário (permissão pendente ou pergunta): a faixa
+   *  e a linha ao vivo dizem isso. Acima de "trabalhando"/compactando; abaixo de
+   *  "sem resposta" e da nova tentativa. */
+  waitingOn?: WaitingOn
   /** Independent high-risk permission warning, constrained to the chat column. */
   windowsControlEnabled: boolean
   onDisableWindowsControl: () => void
@@ -439,7 +463,7 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.topNotice}
 
-      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} apiRetry={props.apiRetry} />}
+      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} apiRetry={props.apiRetry} waiting={props.waitingOn} />}
 
       {messages.length === 0 && (
         <div className="empty-state">
@@ -468,6 +492,7 @@ export function ChatPanel(props: Props): JSX.Element {
         scrollSeq={props.scrollSeq}
         busy={busy}
         compactingSince={props.compactingSince}
+        waiting={props.waitingOn}
         tts={props.tts}
         onRetry={props.onRetry}
         onUseAccount={props.onUseAccount}

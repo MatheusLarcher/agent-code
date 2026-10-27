@@ -35,6 +35,8 @@ export interface ChatContent {
   live: ToolUseMessage | null
   /** Início da compactação em curso (só do agente principal): a linha ao vivo vira "Compactando a conversa…". */
   compactingSince?: number
+  /** A conversa (só do agente principal): a linha ao vivo mostra o "último sinal" e o raciocínio aberto. */
+  convId?: string
 }
 
 /** O que o modo Chat mostra do personagem. */
@@ -43,8 +45,14 @@ export function chatContent(feed: OfficeFeed | null, model: OfficeCharacterModel
   const messages = turnMessages(feed, info)
   const shown = live && !messages.some((m) => m.kind === 'tool-use' && m.id === live.toolUseId)
   // A compactação é da conversa: o subagente (trilha) não a mostra.
-  const compactingSince = info.role === 'principal' && !info.trackId ? feed?.compactingSince?.[info.convId] : undefined
-  return { messages, live: shown ? liveToolMessage(live) : null, ...(compactingSince !== undefined ? { compactingSince } : {}) }
+  const principal = info.role === 'principal' && !info.trackId
+  const compactingSince = principal ? feed?.compactingSince?.[info.convId] : undefined
+  return {
+    messages,
+    live: shown ? liveToolMessage(live) : null,
+    ...(compactingSince !== undefined ? { compactingSince } : {}),
+    ...(principal ? { convId: info.convId } : {})
+  }
 }
 
 export interface ChatPanelProps {
@@ -84,7 +92,7 @@ export function ChatPanel({ head, color, content, header, endSignal = 0, tts = n
     <div className="o3d-chat-screen">
       {header === undefined ? <TurnHeader head={head} color={color} /> : header}
       <div className="message-list o3d-chat-screen-body" ref={bodyRef} onScroll={onScroll}>
-        <TurnRows messages={content.messages} busy={head.busy} live={content.live} compactingSince={content.compactingSince} limit={SCREEN_MESSAGES} tts={tts} quote={quote} />
+        <TurnRows messages={content.messages} busy={head.busy} live={content.live} compactingSince={content.compactingSince} convId={content.convId} limit={SCREEN_MESSAGES} tts={tts} quote={quote} />
       </div>
     </div>
   )

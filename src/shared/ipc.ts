@@ -43,7 +43,11 @@ export type ChatEvent =
    *  observadores do main). É o que diz "este turno começou" mesmo sem saída. */
   | { kind: 'turn-start'; turnIds: string[] }
   | ({ kind: 'assistant-text'; id: string; text: string; final: boolean; aborted?: true } & TurnIds)
-  | ({ kind: 'thinking'; id: string; text: string } & TurnIds)
+  /** `final: false` = o raciocínio ainda chega em pedaços (stream `thinking_delta`,
+   *  mesmo `id` reescrito a cada pedaço, como o `assistant-text`); ausente ou
+   *  `true` = o bloco completo da resposta. É o que mostra o agente pensando ao
+   *  vivo em vez de "Pensando…" parado por minutos. */
+  | ({ kind: 'thinking'; id: string; text: string; final?: boolean } & TurnIds)
   | { kind: 'provider-switch'; id: string; fromModel: string; model: string; effort?: string; fastMode: boolean; text: string }
   /** Troca de conta Claude (várias contas). `turn-end` é a troca silenciosa de
    *  fim de turno, `exhausted` a do estouro (continua a tarefa), `manual` a do
@@ -117,6 +121,21 @@ export type ChatEvent =
    *  not content: the renderer must not turn it into a chat bubble.
    *  `since` is the epoch ms of the last sign of life. */
   | { kind: 'stall-status'; stalled: boolean; since: number }
+  /** Batimento do turno em andamento, a cada tique do vigia (STALL_POLL_MS)
+   *  enquanto o turno roda: `lastActivityAt` = epoch ms do ÚLTIMO sinal de vida
+   *  do CLI (mensagem do SDK, delta de streaming, ferramenta mudando de estado).
+   *  Estado, não conteúdo, como o `stall-status`: a linha ao vivo mostra "último
+   *  sinal há X" em vez de só o tempo desde o pedido; nunca vira bolha. */
+  | {
+      kind: 'heartbeat'
+      lastActivityAt: number
+      /** Epoch ms do início do bloco de raciocínio ABERTO do agente principal
+       *  (`content_block_start` thinking sem o `content_block_stop`), ou null.
+       *  Medido ao vivo: com `display: 'summarized'` o resumo do raciocínio só
+       *  chega em rajada no FIM do bloco, então durante minutos de raciocínio não
+       *  há delta nenhum — mas o bloco aberto prova que o modelo está gerando. */
+      thinkingSince: number | null
+    }
   /** O CLI está compactando a conversa (`system/status` 'compacting' do SDK) ou
    *  acabou (status nulo, `compact_boundary`, fim/erro/interrupção do turno).
    *  Estado, não conteúdo, como o `stall-status`: só acende/apaga a linha viva
@@ -2995,6 +3014,12 @@ export interface RemoteConversation {
   etapas?: RemoteEtapasProgress
   /** Epoch ms since the running turn went silent (stall watchdog), if stalled. */
   stalledSince?: number
+  /** Epoch ms do último sinal de vida do turno em curso (evento `heartbeat` e
+   *  saída do modelo): o celular mostra "último sinal há X". Só pelos eventos
+   *  da ponte — o `/api/state` não o publica (mudaria a cada 5 s). */
+  lastSignalAt?: number
+  /** Epoch ms do início do bloco de raciocínio aberto (heartbeat.thinkingSince), se houver. */
+  thinkingSince?: number
   /** Epoch ms do início da compactação da conversa em curso, se compactando. */
   compactingSince?: number
   /** Nova tentativa da API agendada pelo CLI no turno em curso (evento `api-retry`). */

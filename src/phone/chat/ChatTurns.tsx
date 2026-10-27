@@ -71,10 +71,65 @@ export function turnStart(rows: readonly Row[]): number | undefined {
   return undefined
 }
 
+/** O fim do turno em andamento: a última mensagem, a ferramenta que roda e quando chegou o último pedaço. */
+export interface TurnTail {
+  /** A última mensagem do turno (texto, pensamento ou ferramenta), se houver. */
+  last?: ChatMsg
+  /** Quando chegou a última mensagem do turno (o maior `ts` da última linha). */
+  lastTs?: number
+  /** A ferramenta principal em andamento (sem resultado): quando foi chamada. */
+  toolSince?: number
+}
+
+export function turnTail(rows: readonly Row[]): TurnTail {
+  const r = rows[rows.length - 1]
+  if (!r) return {}
+  if (r.type === 'msg') return { last: r.msg, lastTs: r.msg.ts || undefined }
+  const all = r.text ? [r.text, ...r.items] : r.items
+  const last = all[all.length - 1]
+  let lastTs = 0
+  for (const m of all) if (m.ts && m.ts > lastTs) lastTs = m.ts
+  let toolSince: number | undefined
+  if (r.running) {
+    const t = r.tools[r.tools.length - 1]
+    if (t && t.kind === 'tool-use' && !t.result) toolSince = t.ts || undefined
+  }
+  return { last, lastTs: lastTs || undefined, toolSince }
+}
+
+/** O detalhe da linha ao vivo: com o genérico "Trabalhando…" (ou "Pensando…"), a última linha do pensamento que chega. */
+export function liveDetail(text: string, last: ChatMsg | undefined, max = 90): string | undefined {
+  if ((text !== 'Trabalhando…' && text !== 'Pensando…') || !last || last.kind !== 'thinking' || !last.text) return undefined
+  const lines = last.text.split('\n').map((l) => l.trim()).filter(Boolean)
+  const line = lines[lines.length - 1]
+  if (!line) return undefined
+  return line.length > max ? line.slice(0, max - 1) + '…' : line
+}
+
+/** "há 12 s" até 1 min; depois "há 1:05". */
+export function fmtAgo(since: number, now = Date.now(), clock = false): string {
+  const s = Math.max(0, Math.round((now - since) / 1000))
+  if (s < 60 && !clock) return `há ${s} s`
+  return `há ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** Sem sinal há tanto tempo a linha fica em alerta. */
+export const QUIET_AFTER_MS = 20_000
+
 export interface Live {
   text: string
+  /** Uma linha discreta ao lado do texto (a última linha do pensamento, com o genérico). */
+  detail?: string
   /** Início do turno (o tempo ao lado). */
   since?: number
+  /** Último sinal do CLI (heartbeat ou saída): "último sinal há Xs". Ausente = não mostra. */
+  lastSignalAt?: number
+  /** A ferramenta principal em andamento: "há M:SS" dela (o sinal some). */
+  toolSince?: number
+  /** Bloco de raciocínio aberto (heartbeat): "Pensando…" com "há M:SS" (o sinal some); a ferramenta vence. */
+  thinkingSince?: number
+  /** O turno espera por você: permissão ou resposta a uma pergunta. */
+  waiting?: 'permission' | 'question' | null
   /** O turno emudeceu desde então: "Sem resposta há Xs" no lugar do texto. */
   stalledSince?: number
   /** A conversa está sendo compactada desde então: "Compactando a conversa…" e o tempo dela. */
@@ -86,17 +141,23 @@ export interface Live {
 /**
  * O único status do turno: o loading no trilho (ChatLoader, o mesmo do PC), o que
  * faz agora (ou a nova tentativa da API, ou "Compactando a conversa…", ou "sem
- * resposta há…"), o tempo e o "■ parar".
+ * resposta há…", ou "Aguardando sua permissão…"), o detalhe, o último sinal (ou o
+ * tempo da ferramenta que roda), o tempo do turno e o "■ parar".
  */
-export function LiveRow({ text, since, stalledSince, compactingSince, apiRetry }: Live): JSX.Element {
-  const now = useTick(!!since || !!stalledSince || !!compactingSince || !!apiRetry)
+export function LiveRow({ text, detail, since, lastSignalAt, toolSince, thinkingSince, waiting, stalledSince, compactingSince, apiRetry }: Live): JSX.Element {
+  const now = useTick(!!since || !!stalledSince || !!compactingSince || !!apiRetry || !!lastSignalAt || !!toolSince || !!thinkingSince)
   const stop = (): void => {
     client.interrupt().catch((err) => toast('Não consegui parar: ' + errorText(err)))
   }
   const retrying = !stalledSince && !!apiRetry
   const compacting = !stalledSince && !retrying && !!compactingSince
+  const plain = !stalledSince && !retrying && !compacting
   const clock = compacting ? compactingSince : since
-  const cls = `turn-item live${stalledSince ? ' stalled' : ''}${retrying ? ' retrying' : ''}${compacting ? ' compacting' : ''}`
+  // Atividade com tempo próprio: a ferramenta que roda ou o raciocínio aberto (a ferramenta vence).
+  const activity = toolSince || thinkingSince
+  const label = !toolSince && thinkingSince ? 'Pensando…' : text
+  const quiet = plain && !waiting && !activity && !!lastSignalAt && now - lastSignalAt > QUIET_AFTER_MS
+  const cls = `turn-item live${stalledSince ? ' stalled' : ''}${retrying ? ' retrying' : ''}${compacting ? ' compacting' : ''}${waiting ? ' waiting' : ''}${quiet ? ' quiet' : ''}`
   return (
     <div className={cls} aria-live="polite">
       <ChatLoader compacting={compacting} className="live-loader" />
@@ -105,11 +166,23 @@ export function LiveRow({ text, since, stalledSince, compactingSince, apiRetry }
           <span className="live-stalled">Sem resposta há {fmtElapsed(stalledSince, now)}</span>
         ) : retrying && apiRetry ? (
           <span className="live-retry">{apiRetryText(apiRetry, now)}</span>
+        ) : compacting ? (
+          <span className="live-compacting">{COMPACTING_LABEL}</span>
+        ) : waiting ? (
+          <span className="live-waiting">{waiting === 'question' ? 'Aguardando sua resposta…' : 'Aguardando sua permissão…'}</span>
         ) : (
-          <span className={compacting ? 'live-compacting' : 'shimmer'}>{compacting ? COMPACTING_LABEL : text}</span>
+          <>
+            <span className="shimmer">{label}</span>
+            {detail ? <span className="live-detail">{detail}</span> : null}
+            {activity ? (
+              <span className="live-tool">{fmtAgo(activity, now, true)}</span>
+            ) : lastSignalAt ? (
+              <span className={`live-signal${quiet ? ' quiet' : ''}`}>último sinal {fmtAgo(lastSignalAt, now)}</span>
+            ) : null}
+          </>
         )}
         {clock && !stalledSince && !retrying ? <span className="live-t">{fmtElapsed(clock, now)}</span> : null}
-        <button type="button" className="live-stop" title="Parar o turno" aria-label="Parar" onClick={stop}>
+        <button type="button" className="live-stop" aria-label="Parar" onClick={stop}>
           ■ parar
         </button>
       </div>

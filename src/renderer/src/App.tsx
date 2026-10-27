@@ -40,6 +40,7 @@ import type { AutoPrompt, AutoPromptTurn, EffortChoice, ProjectTree } from '@sha
 import type { ApiRetryState } from '@shared/apiRetry'
 import { fileTouches, turnsOf } from './projectActivity'
 import { liveInput } from './office/liveInput'
+import { liveness } from './liveness'
 import type { Conversation, TodoItem, TodoPlan, UIMessage } from './types'
 import { DEFAULT_TITLE } from './types'
 import { findBlankConversation } from './blankConversation'
@@ -948,6 +949,8 @@ export function App(): JSX.Element {
     // Ficou ociosa (fim de turno, erro esgotado, Stop, subagentes, fila mantida):
     // a fila do quadro da implantação confere se o próximo prompt sai (handoffQueue.ts).
     if (!on) setTimeout(() => void handoffQueueRef.current?.check(id), 0)
+    // Fim do turno: o "último sinal" e o raciocínio aberto da linha ao vivo zeram.
+    if (!on) liveness.clear(id)
   }, [])
   const setConnected = useCallback((id: string, on: boolean): void => {
     connectedRef.current = on ? withId(connectedRef.current, id) : withoutId(connectedRef.current, id)
@@ -1026,6 +1029,14 @@ export function App(): JSX.Element {
       // frequente e não pode custar um render do App.
       if (e.kind === 'tool-input-delta') {
         liveInput.push(cid, e)
+        liveness.note(cid)
+        return
+      }
+      // Sinal de vida do main (a cada 5 s): só a store da linha ao vivo — nunca
+      // vira bolha, nunca mexe no busy.
+      if (e.kind === 'heartbeat') {
+        liveness.note(cid, e.lastActivityAt)
+        liveness.setThinking(cid, e.thinkingSince)
         return
       }
       // Account-wide, not conversation-wide — skip patchConv entirely (no
@@ -1288,6 +1299,7 @@ export function App(): JSX.Element {
       // (queue dispatch, permission clearing, error marking) below.
       const isActivity =
         e.kind === 'assistant-text' || e.kind === 'thinking' || e.kind === 'tool-use' || e.kind === 'tool-result' || e.kind === 'status'
+      if (isActivity) liveness.note(cid) // o "último sinal" da linha ao vivo
       if (e.kind === 'assistant-text' && e.text.trim() && owner !== 'stale') {
         const inflight = inflightRef.current[cid]
         if (inflight) inflight.responseReceived = true
@@ -4574,6 +4586,7 @@ export function App(): JSX.Element {
       stalledSince={showBusy && active ? stalledSince[active.id] : undefined}
       compactingSince={showBusy && active ? compactingSince[active.id] : undefined}
       apiRetry={showBusy && active ? apiRetry[active.id] : undefined}
+      waitingOn={showBusy && activePermission ? (activePermission.questions ? 'question' : 'permission') : undefined}
       suggestion={active ? promptSuggestion[active.id] : undefined}
       onUseSuggestion={() => {
         if (active) setPromptSuggestion((m) => withSuggestion(m, active.id, null))

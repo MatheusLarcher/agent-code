@@ -87,16 +87,28 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
   )
 }
 
-/** Recolhido por padrão (como no PC): o raciocínio é longo e raramente é o que se quer ler no celular. Leve (cortado pelo PC): ao abrir, pede o inteiro. */
-function Thinking({ id, text, light }: { id?: string; text: string; light: boolean }): JSX.Element {
+/** O fim do raciocínio que ainda chega: os últimos ~140 caracteres, a partir do início de uma palavra. */
+export function thinkingPreview(text: string, max = 140): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= max) return flat
+  const tail = flat.slice(-max)
+  const cut = tail.indexOf(' ')
+  return '…' + (cut > 0 && cut < 40 ? tail.slice(cut + 1) : tail)
+}
+
+/** Recolhido por padrão (como no PC): o raciocínio é longo e raramente é o que se quer ler no celular. Leve (cortado pelo PC): ao abrir, pede o inteiro.
+ *  Ainda chegando (`final === false`): o cabeçalho mostra o fim do texto, acompanhando. */
+function Thinking({ id, text, light, final }: { id?: string; text: string; light: boolean; final: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (open && light && id) void client.loadDetails([id]).catch(() => undefined)
   }, [open, light, id])
+  const preview = !final && !open && text ? thinkingPreview(text) : ''
   return (
-    <div className={`msg thinking${open ? ' open' : ''}`}>
+    <div className={`msg thinking${open ? ' open' : ''}${final ? '' : ' streaming'}`}>
       <button type="button" className="thinking-head" onClick={() => setOpen((o) => !o)}>
         {open ? '▾' : '▸'} <Icon name="brain" size={14} className="thinking-brain" /> Pensando…
+        {preview ? <span className="thinking-preview">{preview}</span> : null}
       </button>
       {open && (
         <div className="thinking-body">
@@ -137,7 +149,7 @@ export const MessageItem = memo(function MessageItem({ m, flash, voiceReady, spe
         />
       )
     case 'thinking':
-      return <Thinking id={m.id} text={m.text} light={!!m.light} />
+      return <Thinking id={m.id} text={m.text} light={!!m.light} final={m.final !== false} />
     case 'system':
       return (
         <div className="msg system session-chips">

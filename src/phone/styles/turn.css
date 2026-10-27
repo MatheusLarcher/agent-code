@@ -78,6 +78,15 @@
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: shim 2.2s linear infinite;
 }
 .live-t { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+/* O detalhe (a última linha do raciocínio), o tempo da ferramenta/raciocínio e o último sinal do CLI. */
+.live-detail { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.live-tool, .live-signal { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.live-signal.quiet { color: var(--warn); }
+.turn-item.live.quiet > .live-loader { --cl-ink: var(--warn); }
+/* Esperando por você: texto normal, sem o brilho (nada está rodando). */
+.live-waiting { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+/* Raciocínio ainda chegando: o fim do texto ao lado do "Pensando…". */
+.thinking-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-weight: 400; margin-left: 6px; }
 .live-stalled { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--warn); }
 /* Nova tentativa da API agendada: o CLI espera, não travou — texto normal, sem o brilho. */
 .live-retry { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-variant-numeric: tabular-nums; }

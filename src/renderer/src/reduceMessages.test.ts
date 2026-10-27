@@ -46,3 +46,27 @@ describe('reduceMessages — o resultado do subagente gravado sem segredo', () =
     expect(run([use('t1', 'TodoWrite', null), use('t2', 'TaskCreate', null), result('t1', 'ok', null)])).toEqual([])
   })
 })
+
+describe('reduceMessages — o raciocínio ao vivo reescreve a mesma mensagem', () => {
+  const think = (id: string, text: string, final?: boolean): ChatEvent =>
+    ({ kind: 'thinking', id, text, ...(final === undefined ? {} : { final }), parentToolUseId: null }) as ChatEvent
+
+  it('mesmo id: substitui (uma só mensagem), com a hora da primeira', () => {
+    const first = run([think('th1', 'Vou olhar', false)])
+    expect(first).toHaveLength(1)
+    expect(typeof first[0].ts).toBe('number')
+    const stamped = [{ ...first[0], ts: 123 }]
+    const next = reduceMessages(stamped, think('th1', 'Vou olhar o arquivo', false))
+    expect(next).toHaveLength(1)
+    expect(next[0]).toMatchObject({ kind: 'thinking', id: 'th1', text: 'Vou olhar o arquivo', final: false, ts: 123 })
+    const done = reduceMessages(next, think('th1', 'Vou olhar o arquivo. Pronto.', true))
+    expect(done).toHaveLength(1)
+    expect(done[0]).toMatchObject({ text: 'Vou olhar o arquivo. Pronto.', final: true, ts: 123 })
+  })
+
+  it('id novo: entra no fim, com hora', () => {
+    const list = run([think('th1', 'a', true), think('th2', 'b')])
+    expect(list.map((m) => (m as { id?: string }).id)).toEqual(['th1', 'th2'])
+    expect(list.every((m) => typeof m.ts === 'number')).toBe(true)
+  })
+})

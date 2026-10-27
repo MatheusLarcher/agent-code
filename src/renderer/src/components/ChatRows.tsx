@@ -286,9 +286,14 @@ export function rowKey(m: UIMessage, idx: number): string {
  *  lista mantém `ctx` estável (useMemo) e a mensagem inalterada com a mesma referência. */
 /** Pensamento do agente: recolhido numa linha com o cérebro (como os cartões de
  *  ferramenta); clicar abre o texto embaixo. */
-export function ThinkingCard({ text }: { text: string }): JSX.Element {
+/** Tamanho da prévia do raciocínio ao vivo (o FIM do texto, que é o que muda). */
+const THINKING_TAIL = 140
+
+export function ThinkingCard({ text, streaming = false }: { text: string; streaming?: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
-  const preview = text.replace(/\s+/g, ' ').trim()
+  const flat = text.replace(/\s+/g, ' ').trim()
+  // Ao vivo, a prévia mostra o fim (o que o agente pensa AGORA); fechado, o começo.
+  const preview = streaming && flat.length > THINKING_TAIL ? `…${flat.slice(-THINKING_TAIL)}` : flat
   return (
     <div className="tool-card tool-thinking">
       <button type="button" className="tool-head" aria-expanded={open} title={open ? 'Esconder o pensamento' : 'Ver o que o agente pensou'} onClick={() => setOpen((o) => !o)}>
@@ -296,7 +301,7 @@ export function ThinkingCard({ text }: { text: string }): JSX.Element {
         <span className="thinking-icon" aria-hidden="true">
           <IconBrain size={14} />
         </span>
-        <span className="tool-name">Pensando</span>
+        <span className="tool-name">{streaming ? 'Pensando…' : 'Pensando'}</span>
         {!open && <span className="tool-detail">{preview}</span>}
       </button>
       {open && <div className="tool-body thinking-text">{text}</div>}
@@ -311,7 +316,7 @@ export const ChatRow = memo(function ChatRow({ m, ctx }: { m: UIMessage; ctx: Ch
     case 'assistant-text':
       return <AssistantRow m={m} ctx={ctx} />
     case 'thinking':
-      return <ThinkingCard text={m.text} />
+      return <ThinkingCard text={m.text} streaming={m.final === false} />
     case 'tool-use': {
       // Planejamento: arquivo que o agente criou no plano ganha link logo abaixo.
       const created = createdPlanFile(m.name, m.input, m.result, ctx.planDir)

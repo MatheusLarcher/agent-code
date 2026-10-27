@@ -5,9 +5,10 @@
  */
 import type { ChatMsg, ConvSummary, UserMsg } from './types'
 
-/** Eventos que são ESTADO, não conteúdo: uso da conta, "o turno emudeceu", plano e
- *  tarefas de fundo. No feed só engordariam a lista (a renderização é whitelist). */
-export const STATE_ONLY = new Set(['rate-limit', 'stall-status', 'compacting', 'api-retry', 'prompt-suggestion', 'task-list', 'background-tasks', 'llm-call', 'tool-input-delta', 'turn-start', 'mirror-repair', 'agent-task'])
+/** Eventos que são ESTADO, não conteúdo: uso da conta, "o turno emudeceu", plano,
+ *  tarefas de fundo e o `heartbeat` (último sinal do CLI). No feed só engordariam a
+ *  lista (a renderização é whitelist). */
+export const STATE_ONLY = new Set(['rate-limit', 'stall-status', 'compacting', 'api-retry', 'prompt-suggestion', 'task-list', 'background-tasks', 'llm-call', 'tool-input-delta', 'turn-start', 'mirror-repair', 'agent-task', 'heartbeat'])
 
 /** Chamadas que o PC desvia do feed: o plano de tarefas vira o card fixo. */
 export const PLAN_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate'])
@@ -26,13 +27,14 @@ export function isHiddenMessage(m: Loose | null | undefined): boolean {
   return m.kind === 'tool-use' && PLAN_TOOLS.has(m.name ?? '')
 }
 
-/** Junta um evento ao feed: texto em streaming substitui pelo id, resultado de
- *  ferramenta se acopla à chamada, `result` marca a última resposta como final. */
+/** Junta um evento ao feed: texto e pensamento em streaming substituem pelo id (o ts
+ *  da 1ª versão fica), resultado de ferramenta se acopla à chamada, `result` marca a
+ *  última resposta como final. Tudo que entra ganha `ts` (a linha ao vivo conta por ele). */
 export function reduce(list: ChatMsg[], e: ChatMsg): ChatMsg[] {
   if (STATE_ONLY.has(e.kind) || isSubagentEvent(e)) return list
   if (e.kind === 'tool-use' && PLAN_TOOLS.has(e.name)) return list
-  if (e.kind === 'assistant-text') {
-    const i = list.findIndex((m) => m.kind === 'assistant-text' && m.id === e.id)
+  if (e.kind === 'assistant-text' || e.kind === 'thinking') {
+    const i = list.findIndex((m) => m.kind === e.kind && m.id === e.id)
     if (i >= 0) return replaceAt(list, i, { ...e, ts: list[i].ts ?? e.ts ?? Date.now() })
     return [...list, { ...e, ts: e.ts ?? Date.now() }]
   }
@@ -47,7 +49,7 @@ export function reduce(list: ChatMsg[], e: ChatMsg): ChatMsg[] {
     }
     return list
   }
-  return [...list, e]
+  return [...list, e.ts ? e : { ...e, ts: Date.now() }]
 }
 
 function replaceAt(list: ChatMsg[], i: number, m: ChatMsg): ChatMsg[] {

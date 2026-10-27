@@ -482,6 +482,13 @@ export class RemoteClient {
       this.patchConv(msg.convId, { suggestion: ev.text ?? undefined })
       return
     }
+    // Último sinal do CLI (qualquer conversa): a linha ao vivo conta a partir dele (só avança)
+    // e sabe se há um bloco de raciocínio aberto (o resumo só chega no fim dele).
+    if (ev.kind === 'heartbeat') {
+      const cur = this.state.conversations.find((c) => c.id === msg.convId)?.lastSignalAt ?? 0
+      this.patchConv(msg.convId, { lastSignalAt: Math.max(cur, ev.lastActivityAt), thinkingSince: ev.thinkingSince ?? undefined })
+      return
+    }
     if (msg.convId === OFFICE_CONV_ID) {
       // Aviso de handoff (handoffNoticeBridge): só toast, com o app aberto.
       const notice = msg.event as unknown as { kind?: string }
@@ -508,7 +515,9 @@ export class RemoteClient {
     if (msg.convId === CENTRAL_CONV_ID) return
     this.store.set((s) => ({ messages: reduce(s.messages, ev as ChatMsg) }))
     const ended = ev.kind === 'result' || ev.kind === 'error'
-    this.patchConv(msg.convId, { busy: !ended })
+    // Saída do modelo também é sinal de vida (no mesmo patch do busy, sem custo extra por delta).
+    const output = ev.kind === 'assistant-text' || ev.kind === 'thinking' || ev.kind === 'tool-use' || ev.kind === 'tool-result'
+    this.patchConv(msg.convId, output ? { busy: true, lastSignalAt: Date.now() } : { busy: !ended })
     // Uma chamada de ferramenta costuma vir antes de permissão/pergunta/plano: lê já.
     if (ended || ev.kind === 'tool-use') void this.fetchState().catch(() => undefined)
   }

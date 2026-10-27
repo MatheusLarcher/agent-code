@@ -52,6 +52,16 @@ export function reduceMessages(prev: UIMessage[], e: ChatEvent): UIMessage[] {
     }
     return [...prev, { ...e, ts: Date.now() } as UIMessage]
   }
+  if (e.kind === 'thinking') {
+    // O raciocínio ao vivo (`final: false`) reescreve o mesmo id, como o texto.
+    const i = prev.findIndex((m) => m.kind === 'thinking' && m.id === e.id)
+    if (i >= 0) {
+      const copy = [...prev]
+      copy[i] = { ...e, ts: copy[i].ts ?? Date.now() }
+      return copy
+    }
+    return [...prev, { ...e, ts: Date.now() } as UIMessage]
+  }
   if (e.kind === 'tool-result') {
     const i = prev.findIndex((m) => m.kind === 'tool-use' && m.id === e.toolUseId)
     if (i >= 0) {

@@ -3,7 +3,7 @@
 // so it must run in the node env, not the default jsdom (which can't externalize
 // the newer node:sqlite builtin and tries to bundle it).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { STALL_THRESHOLD_MS, STALL_THRESHOLD_TOOL_MS } from './stallWatch'
+import { STALL_POLL_MS, STALL_THRESHOLD_MS, STALL_THRESHOLD_TOOL_MS } from './stallWatch'
 import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -2431,6 +2431,121 @@ describe('AgentSession — documentação do projeto em cada mensagem', () => {
       vi.advanceTimersByTime(STALL_THRESHOLD_MS * 3)
       // Um evento depois do dispose seria de uma conversa que não existe mais.
       expect(stalls(emit)).toHaveLength(0)
+    })
+
+    // O batimento é o que deixa a tela distinguir "main vivo e mudo" de
+    // "processo morto" antes do limiar de trava.
+    describe('batimento do turno (heartbeat)', () => {
+      type Beat = { kind: string; lastActivityAt: unknown; thinkingSince: unknown }
+      const beats = (emit: ReturnType<typeof vi.fn>): Beat[] =>
+        emit.mock.calls.map((c) => c[0]).filter((e: { kind?: string }) => e?.kind === 'heartbeat')
+
+      it('a cada STALL_POLL_MS do turno sai um heartbeat com lastActivityAt numérico', async () => {
+        const { emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        vi.advanceTimersByTime(STALL_POLL_MS)
+        expect(beats(emit)).toHaveLength(1)
+        expect(beats(emit)[0]).toEqual({ kind: 'heartbeat', lastActivityAt: expect.any(Number), thinkingSince: null })
+        vi.advanceTimersByTime(STALL_POLL_MS * 2)
+        expect(beats(emit)).toHaveLength(3)
+      })
+
+      it('sem turno em andamento não há batimento', async () => {
+        const { emit } = await started()
+        vi.advanceTimersByTime(STALL_POLL_MS * 4)
+        expect(beats(emit)).toHaveLength(0)
+      })
+
+      it('turno encerrado (result) para de bater', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        vi.advanceTimersByTime(STALL_POLL_MS)
+        expect(beats(emit)).toHaveLength(1)
+        handle(s, { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1 })
+        vi.advanceTimersByTime(STALL_POLL_MS * 4)
+        expect(beats(emit)).toHaveLength(1)
+      })
+
+      it('descartar a sessão para de bater', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        s.dispose()
+        vi.advanceTimersByTime(STALL_POLL_MS * 4)
+        expect(beats(emit)).toHaveLength(0)
+      })
+
+      it('permissão pendente suprime a trava mas não o batimento, e lastActivityAt acompanha a espera', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        const pending = (s as unknown as { pendingPermissions: Map<string, unknown> }).pendingPermissions
+        pending.set('perm-1', { toolName: 'Bash', input: {}, resolve: () => {} })
+        vi.advanceTimersByTime(STALL_THRESHOLD_MS * 2)
+        expect(stalls(emit)).toHaveLength(0)
+        const all = beats(emit)
+        expect(all.length).toBe(Math.floor((STALL_THRESHOLD_MS * 2) / STALL_POLL_MS))
+        // Esperando o usuário, o "último sinal" é agora — não o instante do prompt.
+        expect(all.at(-1)!.lastActivityAt).toBe(Date.now())
+      })
+
+      const thinkingStart = (index = 0): unknown => ({
+        type: 'stream_event',
+        event: { type: 'content_block_start', index, content_block: { type: 'thinking' } },
+        parent_tool_use_id: null
+      })
+      const thinkingStop = (index = 0): unknown => ({
+        type: 'stream_event',
+        event: { type: 'content_block_stop', index },
+        parent_tool_use_id: null
+      })
+      const lastBeat = (emit: ReturnType<typeof vi.fn>): Beat => beats(emit).at(-1)!
+
+      it('thinkingSince: null sem bloco, o instante do start com bloco aberto, null depois do stop e do fim do turno', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        vi.advanceTimersByTime(STALL_POLL_MS)
+        expect(lastBeat(emit).thinkingSince).toBeNull()
+
+        handle(s, { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } }, parent_tool_use_id: null })
+        const openedAt = Date.now()
+        handle(s, thinkingStart())
+        vi.advanceTimersByTime(STALL_POLL_MS * 3)
+        expect(lastBeat(emit).thinkingSince).toBe(openedAt)
+
+        handle(s, thinkingStop())
+        vi.advanceTimersByTime(STALL_POLL_MS)
+        expect(lastBeat(emit).thinkingSince).toBeNull()
+
+        // Bloco aberto de novo e o turno acaba no meio dele (Stop): zera.
+        handle(s, thinkingStart(1))
+        vi.advanceTimersByTime(STALL_POLL_MS)
+        expect(lastBeat(emit).thinkingSince).toBe(Date.now() - STALL_POLL_MS)
+        const before = beats(emit).length
+        handle(s, { type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1 })
+        expect((s as unknown as { thinking: { openSince(): number | null } }).thinking.openSince()).toBeNull()
+        // Fora do turno não bate mais — e o bloco já foi esquecido para o próximo.
+        vi.advanceTimersByTime(STALL_POLL_MS * 2)
+        expect(beats(emit)).toHaveLength(before)
+      })
+
+      it('bloco thinking aberto usa os limiares de ferramenta: 90 s mudo não avisa, 5 min+ avisa', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        handle(s, thinkingStart())
+        // Raciocínio summarized: minutos sem delta nenhum. Não é trava.
+        vi.advanceTimersByTime(90_000)
+        expect(stalls(emit)).toHaveLength(0)
+        vi.advanceTimersByTime(STALL_THRESHOLD_TOOL_MS - 90_000 + STALL_POLL_MS)
+        expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+      })
+
+      it('bloco thinking de subagente não alonga o limiar', async () => {
+        const { s, emit, prompt } = await started()
+        await prompt({ hook_event_name: 'UserPromptSubmit' })
+        handle(s, { ...(thinkingStart() as object), parent_tool_use_id: 'task-1' })
+        vi.advanceTimersByTime(STALL_THRESHOLD_MS + STALL_POLL_MS)
+        expect(stalls(emit)).toEqual([expect.objectContaining({ stalled: true })])
+        expect(lastBeat(emit).thinkingSince).toBeNull()
+      })
     })
   })
   // O usuário quer a senha no prompt, mas só quando ele marca a opção. O

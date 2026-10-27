@@ -29,6 +29,7 @@ export function MessageList({
   messages,
   busy,
   compactingSince,
+  waiting,
   tts,
   onRetry,
   onUseAccount,
@@ -41,6 +42,8 @@ export function MessageList({
   busy: boolean
   /** Epoch ms do início da compactação em curso: a linha ao vivo vira "Compactando a conversa…". */
   compactingSince?: number
+  /** O agente parou esperando o usuário: a linha ao vivo diz isso (ChatLive). */
+  waiting?: 'permission' | 'question'
   tts: TtsControls
   /** Resend a user message whose turn failed. */
   onRetry: (msgId: string) => void
@@ -211,7 +214,7 @@ export function MessageList({
           )}
         </LazyMarkdownProvider>
       </AnimGateProvider>
-      {busy && <ChatLive messages={messages} compactingSince={compactingSince} />}
+      {busy && <ChatLive messages={messages} compactingSince={compactingSince} convId={convId ?? undefined} waiting={waiting} />}
       <div ref={endRef} />
     </div>
       {showJump && (

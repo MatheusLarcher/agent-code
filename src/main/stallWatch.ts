@@ -11,7 +11,15 @@ export const STALL_THRESHOLD_MS = 60_000
 
 /** No activity for this long (ms) while a TOOL is in flight (e.g. a build or
  *  download) counts as stalled. Much longer than the plain threshold — legit
- *  tool calls can run for minutes without emitting anything. */
+ *  tool calls can run for minutes without emitting anything.
+ *
+ *  Um bloco de raciocínio ABERTO do principal (`content_block_start` thinking
+ *  sem `content_block_stop`) usa estes mesmos limiares (`toolInFlight` true em
+ *  `stallVerdict`). Medido ao vivo com sonda contra a conta real (Sonnet 5.5 e
+ *  Opus 5.5, `thinking: adaptive`, `display: 'summarized'`): todos os
+ *  `thinking_delta` chegam em rajada só no FIM do bloco, então raciocínio
+ *  legítimo passa minutos sem sinal nenhum — com o limiar de 60 s virava
+ *  "Sem resposta há X" (33 avisos nos logs, 5 falhas reais). */
 export const STALL_THRESHOLD_TOOL_MS = 5 * 60_000
 
 /** How often the session re-checks. Well under the shortest threshold, so the
@@ -38,7 +46,9 @@ export function isStalled(now: number, lastActivityAt: number, toolInFlight: boo
 }
 
 /** `ok` = sinal de vida recente; `warn` = só o aviso (`stall-status`); `abort` =
- *  travamento definitivo, o turno deve ser encerrado. */
+ *  travamento definitivo, o turno deve ser encerrado. `toolInFlight` = há
+ *  trabalho longo legítimo em curso: ferramenta em voo OU bloco thinking aberto
+ *  (ver STALL_THRESHOLD_TOOL_MS). */
 export type StallVerdict = 'ok' | 'warn' | 'abort'
 
 export function stallVerdict(now: number, lastActivityAt: number, toolInFlight: boolean): StallVerdict {

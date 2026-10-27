@@ -107,6 +107,21 @@ describe('redutor do feed', () => {
     expect(isHiddenMessage(list[1])).toBe(false)
   })
 
+  it('pensamento ao vivo substitui pelo id e fica com o ts da 1ª versão; tudo que entra ganha ts', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000)
+    let list: ChatMsg[] = []
+    list = reduce(list, { kind: 'thinking', id: 'th', text: 'Vou ver', final: false })
+    expect(list[0]).toMatchObject({ kind: 'thinking', text: 'Vou ver', ts: 1000 })
+    vi.spyOn(Date, 'now').mockReturnValue(2000)
+    list = reduce(list, { kind: 'thinking', id: 'th', text: 'Vou ver o arquivo', final: true })
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ kind: 'thinking', text: 'Vou ver o arquivo', final: true, ts: 1000 })
+    list = reduce(list, tool('t1'))
+    expect(list[1]).toMatchObject({ kind: 'tool-use', id: 't1', ts: 2000 })
+    list = reduce(list, tool('t2', { ts: 7 }))
+    expect(list[2]).toMatchObject({ id: 't2', ts: 7 })
+  })
+
   it('não muta a lista anterior (o React compara por referência)', () => {
     const before: ChatMsg[] = [{ kind: 'assistant-text', id: 'a', text: 'x', final: false }]
     const after = reduce(before, { kind: 'assistant-text', id: 'a', text: 'xy', final: false })
@@ -120,6 +135,8 @@ describe('redutor do feed', () => {
     expect(reduce(list, tool('p', { name: 'TodoWrite' }))).toBe(list)
     expect(reduce(list, { kind: 'stall-status', stalled: true, since: 1 })).toBe(list)
     expect(reduce(list, { kind: 'compacting', active: true, since: 1 } as ChatMsg)).toBe(list)
+    expect(reduce(list, { kind: 'heartbeat', lastActivityAt: 5, thinkingSince: null } as ChatMsg)).toBe(list)
+    expect(isHiddenMessage({ kind: 'heartbeat' })).toBe(true)
     expect(isHiddenMessage({ kind: 'compacting' })).toBe(true)
     expect(isHiddenMessage({ kind: 'tool-use', name: 'TaskCreate' })).toBe(true)
     expect(isHiddenMessage({ kind: 'tool-use', name: 'Read', parentToolUseId: null })).toBe(false)

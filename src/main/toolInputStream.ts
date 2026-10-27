@@ -38,7 +38,7 @@ export interface RawStreamEvent {
   index?: number
   message?: { id?: string }
   content_block?: { type?: string; id?: string; name?: string }
-  delta?: { type?: string; text?: string; partial_json?: string }
+  delta?: { type?: string; text?: string; partial_json?: string; thinking?: string }
 }
 
 const ESCAPES: Record<string, string> = {

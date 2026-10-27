@@ -284,6 +284,27 @@ describe('ChatPanel — faixa de trabalho', () => {
     expect(live.querySelector('.chat-live-text')?.textContent).toBe('Compactando a conversa…')
     expect(live.querySelector('.chat-live-loader.compacting')).toBeTruthy()
   })
+
+  it('esperando permissão/pergunta: a faixa e a linha ao vivo dizem isso, acima de "trabalhando" e da compactação', () => {
+    const { unmount } = renderPanel({ busy: true, waitingOn: 'permission', compactingSince: Date.now() - 2000 })
+    expect(document.querySelector('.working-banner')?.textContent).toBe('Agent aguarda sua permissão')
+    expect(document.querySelector('.working-banner.stalled')).toBeNull()
+    unmount()
+    renderPanel({ busy: true, waitingOn: 'question' })
+    expect(document.querySelector('.working-banner')?.textContent).toBe('Agent aguarda sua resposta')
+    const live = document.querySelector('.chat-live.waiting')!
+    expect(live.querySelector('.chat-live-text')?.textContent).toBe('Aguardando sua resposta…')
+    expect(live.querySelector('.chat-live-signal')).toBeNull()
+  })
+
+  it('"sem resposta" e a nova tentativa ainda vencem a espera', () => {
+    const { unmount } = renderPanel({ busy: true, waitingOn: 'permission', stalledSince: Date.now() - 65_000 })
+    expect(document.querySelector('.working-banner')?.textContent).toMatch(/^Sem resposta há /)
+    unmount()
+    const retry = { attempt: 1, maxRetries: 10, retryAt: Date.now() + 12_000, status: 529, error: 'overloaded' }
+    renderPanel({ busy: true, waitingOn: 'permission', apiRetry: retry })
+    expect(document.querySelector('.working-banner')?.textContent).toMatch(/nova tentativa em/)
+  })
 })
 
 describe('ChatPanel — sugestão do próximo prompt', () => {

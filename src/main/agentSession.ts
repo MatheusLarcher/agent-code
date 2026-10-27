@@ -19,6 +19,7 @@ import { promptSuggestionFrom } from './promptSuggestion'
 import type { ApiRetryState } from '../shared/apiRetry'
 import { logSession } from './sessionLog'
 import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
+import { ThinkingStreams } from './thinkingStream'
 import { withTodoTools } from './todoToolsEnv'
 import { AgentTaskTranslator } from './agentTasks'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
@@ -667,6 +668,9 @@ export class AgentSession {
   /** Código que o agente principal está escrevendo (Edit/Write…), lido dos
    *  `input_json_delta` para o monitor do escritório. Efêmero: ver toolInputStream.ts. */
   private readonly toolInput = new ToolInputStreams((e) => this.emit(e))
+  /** Raciocínio do principal ao vivo (`thinking_delta`), com o id que o bloco
+   *  completo reusa em `handleAssistant`. Ver thinkingStream.ts. */
+  private readonly thinking = new ThinkingStreams((e) => this.emit({ kind: 'thinking', ...e, final: false }), nextId)
   /** Text lookup for UUIDs returned by the SDK interrupt receipt. Bounded so a
    *  long-lived session cannot retain every prompt forever. */
   private submittedMessages = new Map<string, string>()
@@ -882,8 +886,13 @@ export class AgentSession {
     // Esperando o usuário (permissão/pergunta) ou a nova tentativa da API: nem
     // aviso nem abort. A espera pelo usuário também não conta como silêncio do
     // CLI — respondida, a contagem recomeça dali, e não acusa "sem resposta" na hora.
-    if (stallSuppressed({ pendingPermissions: this.pendingPermissions.size, retryAt: this.apiRetry?.retryAt, now })) {
-      if (this.pendingPermissions.size > 0) this.lastActivityAt = now
+    const suppressed = stallSuppressed({ pendingPermissions: this.pendingPermissions.size, retryAt: this.apiRetry?.retryAt, now })
+    if (suppressed && this.pendingPermissions.size > 0) this.lastActivityAt = now
+    // Batimento do turno: a tela sabe que o main está vivo mesmo sem saída do
+    // CLI (também durante permissão/retry — só não fora do turno nem descartado).
+    const thinkingSince = this.thinking.openSince()
+    this.emit({ kind: 'heartbeat', lastActivityAt: this.lastActivityAt, thinkingSince })
+    if (suppressed) {
       if (this.stalled) {
         this.stalled = false
         this.emit({ kind: 'stall-status', stalled: false, since: now })
@@ -891,7 +900,9 @@ export class AgentSession {
       return
     }
     const toolInFlight = this.toolsInFlight.size > 0
-    const verdict = stallVerdict(now, this.lastActivityAt, toolInFlight)
+    // Bloco thinking aberto conta como trabalho longo (limiares de ferramenta):
+    // com display summarized os deltas só chegam no fim — ver STALL_THRESHOLD_TOOL_MS.
+    const verdict = stallVerdict(now, this.lastActivityAt, toolInFlight || thinkingSince !== null)
     if (verdict === 'abort') {
       this.abortStalledTurn(toolInFlight)
       return
@@ -3087,6 +3098,8 @@ ${lines}
     // Fora do turno nenhum bloco de ferramenta segue aberto: um Stop no meio de
     // um Write nunca manda `content_block_stop`, e o monitor ficaria "escrevendo".
     this.toolInput.finishAll()
+    // Idem o bloco de raciocínio: fora do turno não há "pensando desde".
+    this.thinking.reset()
     // Fim, erro, interrupção ou travamento: a linha "Compactando…" nunca fica presa.
     this.setCompacting(false)
     // Nem a espera da nova tentativa da API (o `result` passa por aqui também).
@@ -3112,7 +3125,10 @@ ${lines}
     // Entrada ao vivo de Edit/Write/MultiEdit/NotebookEdit (toolInputStream.ts).
     // Só do principal: subagente não manda stream_event hoje, e se passar a
     // mandar, o `index` dele colidiria com o do principal no mesmo mapa de blocos.
-    if (parentToolUseId === null) this.toolInput.handle(ev)
+    if (parentToolUseId === null) {
+      this.toolInput.handle(ev)
+      this.thinking.handle(ev)
+    }
     if (ev.type === 'message_start') {
       this.liveId = ev.message?.id ?? nextId()
       this.liveText = ''
@@ -3137,6 +3153,10 @@ ${lines}
   /** Emite os blocos de uma resposta; devolve os ids das bolhas de texto (a recusa do modelo as reescreve). */
   private handleAssistant(blocks: AssistantBlock[], aborted = false, track: TrackInfo = EMPTY_TRACK, model = ''): string[] {
     const textIds: string[] = []
+    // Ids dos blocos thinking que já apareceram ao vivo, na ordem: o bloco
+    // completo reescreve a mesma bolha. Do subagente não há stream, e a lista
+    // é do principal — não consumir.
+    const thinkingIds = track.parentToolUseId ? [] : this.thinking.takeIds()
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
         // Text/thinking from a SUBAGENT must never land in the chat feed — it
@@ -3155,7 +3175,7 @@ ${lines}
         })
       } else if (block.type === 'thinking' && block.thinking) {
         if (track.parentToolUseId) continue
-        this.emit({ kind: 'thinking', id: nextId(), text: block.thinking })
+        this.emit({ kind: 'thinking', id: thinkingIds.shift() ?? nextId(), text: block.thinking })
       } else if (block.type === 'tool_use') {
         // O plano declarado abre a trava do quadro. Marcado aqui, e não no gate,
         // porque a ferramenta de plano é auto-aprovada e pode nem chegar lá.

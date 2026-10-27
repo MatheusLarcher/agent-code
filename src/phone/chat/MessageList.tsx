@@ -13,7 +13,7 @@ import { isHiddenMessage } from '../core/reducer'
 import { useStore } from '../core/store'
 import { Icon } from '../ui/icons'
 import { toggleSpeak, tts } from '../voice/tts'
-import { groupTurns, liveText, Turn, turnStart, type Row } from './ChatTurns'
+import { groupTurns, liveDetail, liveText, Turn, turnStart, turnTail, type Live, type Row } from './ChatTurns'
 import { MessageItem } from './MessageItem'
 import { QuestionMap } from './QuestionMap'
 import { StepItem } from './StepItem'
@@ -44,8 +44,23 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
   const stalledSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.stalledSince)
   const compactingSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.compactingSince)
   const apiRetry = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.apiRetry)
+  const lastSignalAt = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.lastSignalAt)
+  const thinkingSince = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.thinkingSince)
+  const waiting = useStore(client.store, (s): Live['waiting'] => {
+    const p = s.conversations.find((c) => c.id === s.convId)?.permission
+    return p?.questions ? 'question' : p ? 'permission' : null
+  })
   // O chat resumido (o mesmo agrupamento do PC): cada resposta com a sua linha-resumo.
   const rows = useMemo(() => buildChatRows(messages.filter((m) => !isHiddenMessage(m)), { busy }), [messages, busy])
+  // A linha ao vivo: o que faz agora, o detalhe do raciocínio, a ferramenta que roda e o último sinal.
+  const live = useMemo((): Live | null => {
+    if (!busy) return null
+    const text = liveText(rows)
+    const tail = turnTail(rows)
+    const signal = Math.max(lastSignalAt ?? 0, tail.lastTs ?? 0) || undefined
+    const label = !tail.toolSince && thinkingSince ? 'Pensando…' : text
+    return { text, detail: liveDetail(label, tail.last), since: turnStart(rows), lastSignalAt: signal, toolSince: tail.toolSince, thinkingSince, waiting, stalledSince, compactingSince, apiRetry }
+  }, [busy, rows, lastSignalAt, thinkingSince, waiting, stalledSince, compactingSince, apiRetry])
   const blocks = useMemo(() => groupTurns(rows, busy && !loading), [rows, busy, loading])
   const lastBlock = blocks[blocks.length - 1]
   const model = useStore(client.store, (s) => s.conversations.find((c) => c.id === s.convId)?.model)
@@ -221,7 +236,7 @@ export function MessageList({ onRefresh, resolveRef }: { onRefresh: () => Promis
                   key={b.key}
                   rows={b.rows}
                   model={model}
-                  live={busy && b === lastBlock ? { text: liveText(rows), since: turnStart(rows), stalledSince, compactingSince, apiRetry } : null}
+                  live={b === lastBlock ? live : null}
                   isFresh={isFresh}
                   renderRow={renderRow}
                 />
