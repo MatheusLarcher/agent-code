@@ -43,6 +43,7 @@ import type { AccountSwitchDeps } from './accounts/switchDeps'
 import { deepseekSelectable, kimiSelectable, ollamaSelectable, selectableModelIds } from '../shared/selectableModels'
 import { isKimiConnected } from './kimi/kimiAuth'
 import { testKimiConnection } from './kimi/kimiConnection'
+import { fetchKimiUsage } from './kimi/kimiUsage'
 import { registerProviderStatusIpc } from './providerStatus'
 import { fetchDeepSeekBalance } from './deepseek'
 import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
@@ -1933,6 +1934,11 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.kimiTestConnection, (_e, apiKey: unknown) =>
     testKimiConnection(typeof apiKey === 'string' ? apiKey : '', { appVersion: app.getVersion() })
   )
+  // Uso da assinatura do Kimi para a bolinha: a chave fica no main.
+  ipcMain.handle(Channels.kimiUsage, () => {
+    const k = loadConfig().kimi
+    return fetchKimiUsage(k.apiKey, k.region, { appVersion: app.getVersion() })
+  })
   // Saldo DeepSeek para o badge: a chave fica no main, o renderer só vê o número.
   ipcMain.handle(Channels.deepseekBalance, async () => {
     await ensureConfigLoaded()

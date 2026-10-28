@@ -1548,6 +1548,18 @@ export interface KimiConnectionResult {
   models?: string[]
 }
 
+/** Uma janela de uso da assinatura do Kimi Code (`usedRatio` 0..1, reset em ms). */
+export interface KimiUsageWindow {
+  usedRatio: number
+  resetsAt?: number
+}
+
+/** Uso da assinatura do Kimi Code: janela de 5h e total do mês. */
+export interface KimiUsage {
+  session?: KimiUsageWindow
+  month?: KimiUsageWindow
+}
+
 /** Vigia — a second, cheap session that watches the conversation and asks ONE
  *  question: does a premise of this work depend on something only the user
  *  knows and hasn't confirmed? It never talks to the main agent and never stops
@@ -2787,6 +2799,8 @@ export const Channels = {
   codexLogout: 'codex:logout',
   /** "Testar conexão" do Kimi: região, janela e modelos do plano (grava na config). */
   kimiTestConnection: 'kimi:test-connection',
+  /** Uso da assinatura do Kimi Code (5h e mês); null sem chave ou com erro. */
+  kimiUsage: 'kimi:usage',
   /** Raiz do modo sandbox (`<localDir>\sandbox`). */
   sandboxInfo: 'sandbox:info',
   /** Cria uma subpasta nova do sandbox para uma conversa. */

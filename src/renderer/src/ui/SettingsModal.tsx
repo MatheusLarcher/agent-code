@@ -173,8 +173,18 @@ export function SettingsModal({
     if (deepseek.enabled && !deepseek.apiKey) {
       notify('aviso', 'Informe a API key da DeepSeek para habilitar a integração.')
     }
+    const kimi = { ...cfg.kimi, apiKey: cfg.kimi.apiKey.trim() }
+    if (kimi.enabled && !kimi.apiKey) {
+      notify('aviso', 'Informe a chave do Kimi Code para habilitar a integração.')
+    }
     // Save only the keys we edit here so we never clobber other settings (e.g. "Permitir tudo").
-    await window.api.setConfig({ voice: cfg.voice, ollama, deepseek })
+    await window.api.setConfig({
+      voice: cfg.voice,
+      ollama,
+      deepseek,
+      kimi,
+      externalOrgInstructions: cfg.externalOrgInstructions
+    })
     notify('sucesso', 'Configurações salvas. Reconecte a conversa para aplicar.')
     onClose()
   }
@@ -855,7 +865,7 @@ export function SettingsModal({
 
         <div className="modal-actions settings-actions">
           <span className="settings-actions-note">
-            Interruptores e contas aplicam na hora. <strong>Salvar</strong> grava chaves, voz, Ollama e DeepSeek.
+            Interruptores e contas aplicam na hora. <strong>Salvar</strong> grava chaves, voz, Ollama, DeepSeek e Kimi.
           </span>
           <button className="btn ghost" onClick={onClose}>
             Cancelar

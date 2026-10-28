@@ -28,6 +28,7 @@ import type {
   ProvidersStatus,
   DeepSeekBalance,
   KimiConnectionResult,
+  KimiUsage,
   SandboxCreateResult,
   FileAttachment,
   FileBytes,
@@ -612,6 +613,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** "Testar conexão" do Kimi com a chave digitada: região, janela e modelos do
    *  plano (a tela aplica e o Salvar grava). Nunca lança; o resultado não traz a chave. */
   kimiTestConnection(apiKey: string): Promise<KimiConnectionResult>
+  /** Uso da assinatura do Kimi (5h e mês) com a chave salva; null sem chave ou com falha. */
+  kimiUsage(): Promise<KimiUsage | null>
 
   startAgent(opts: StartAgentOptions): Promise<{ ok: boolean; claudeAccountId?: string }>
   /** Fila de espera gravada no banco: tudo, no boot. */

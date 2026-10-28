@@ -93,6 +93,7 @@ import type {
   ProvidersStatus,
   DeepSeekBalance,
   KimiConnectionResult,
+  KimiUsage,
   SandboxCreateResult,
   FileAttachment,
   FileBytes,
@@ -477,6 +478,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   providersStatus: (): Promise<ProvidersStatus> => ipcRenderer.invoke(Channels.providersStatus),
   onProvidersChanged: (cb: (status: ProvidersStatus) => void): (() => void) => on(Channels.providersChanged, cb),
   deepseekBalance: (): Promise<DeepSeekBalance | null> => ipcRenderer.invoke(Channels.deepseekBalance),
+  kimiUsage: (): Promise<KimiUsage | null> => ipcRenderer.invoke(Channels.kimiUsage),
   kimiTestConnection: (apiKey: string): Promise<KimiConnectionResult> =>
     ipcRenderer.invoke(Channels.kimiTestConnection, apiKey),
 

@@ -53,7 +53,7 @@ const EXPLAIN: Record<RateLimitStatus['rateLimitType'], string> = {
 const PROVIDER_LABEL: Record<UsageProvider, string> = { claude: 'Claude', gpt: 'GPT' }
 const PROVIDER_ORDER: UsageProvider[] = ['claude', 'gpt']
 
-function fmtResetsAt(ms: number): string {
+export function fmtResetsAt(ms: number): string {
   const diff = ms - Date.now()
   if (diff <= 0) return 'já resetou'
   const mins = Math.round(diff / 60_000)

@@ -113,6 +113,33 @@ describe('Configurações: leitura que falha e gravação só do campo alterado'
   })
 })
 
+// Regressão: o Salvar mandava só voz/Ollama/DeepSeek — a chave do Kimi e as
+// instruções para modelos não Claude sumiam ao reabrir as Configurações.
+describe('Configurações → Salvar: Kimi', () => {
+  it('grava a chave do Kimi (sem espaços) e as instruções da organização', async () => {
+    const api = stubApi({ ...DEFAULT_CONFIG })
+    await view()
+    fireEvent.click(await screen.findByText('Modelos e contas'))
+    const input = await screen.findByLabelText('Chave do Kimi Code')
+    await waitFor(() => expect(input.matches(':disabled')).toBe(false))
+
+    fireEvent.change(input, { target: { value: ' sk-kimi-teste ' } })
+    fireEvent.change(screen.getByLabelText('Instruções da organização para modelos não Claude'), {
+      target: { value: 'Responda em português.' }
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    })
+
+    expect(api.setConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kimi: expect.objectContaining({ apiKey: 'sk-kimi-teste' }),
+        externalOrgInstructions: 'Responda em português.'
+      })
+    )
+  })
+})
+
 describe('usePlanningModel — o seletor do chat de planejamento', () => {
   function Probe(): JSX.Element {
     const { config, setModel, setEffort } = usePlanningModel()

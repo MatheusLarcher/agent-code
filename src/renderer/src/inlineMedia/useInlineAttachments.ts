@@ -41,36 +41,61 @@ function diskPath(file: File): string {
 /** Resultados guardados de itens fora da tela (troca de conversa). */
 const MAX_PARKED = 64
 
-/** Read an image File as a base64 attachment (strips the data-URL prefix). */
-function fileToAttachment(file: File): Promise<ImageAttachment> {
+/**
+ * Teto para a leitura de um File em memória. Um arquivo real (até 25 MB) lê em
+ * fração de segundo; só estoura quando o FileReader PENDURA — p.ex. uma PASTA
+ * cujo caminho não foi reconhecido escorrega para cá e, no Windows/Electron,
+ * `readAsDataURL` numa pasta pode não disparar `onload` NEM `onerror`. Sem este
+ * teto o item ficava "resolvendo" para sempre e travava o envio inteiro.
+ */
+const READ_TIMEOUT_MS = 30_000
+
+/** Lê o File como data URL, com teto de tempo e `abort`: nunca pendura. */
+function readDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () => {
-      const m = /^data:([^;]+);base64,(.*)$/.exec(String(reader.result))
-      if (m) resolve({ mediaType: m[1], data: m[2] })
-      else reject(new Error('imagem inválida'))
+    let done = false
+    const finish = (fn: () => void): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      fn()
     }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
+    const timer = setTimeout(() => {
+      try {
+        reader.abort()
+      } catch {
+        // abort pode lançar se já terminou — ignora
+      }
+      finish(() => reject(new Error('Tempo esgotado ao ler o arquivo (pode ser uma pasta sem caminho).')))
+    }, READ_TIMEOUT_MS)
+    reader.onload = () => finish(() => resolve(String(reader.result)))
+    reader.onerror = () => finish(() => reject(reader.error ?? new Error('Falha ao ler o arquivo.')))
+    reader.onabort = () => finish(() => reject(new Error('Leitura do arquivo cancelada.')))
+    try {
+      reader.readAsDataURL(file)
+    } catch (err) {
+      finish(() => reject(err instanceof Error ? err : new Error(String(err))))
+    }
   })
 }
 
+/** Read an image File as a base64 attachment (strips the data-URL prefix). */
+async function fileToAttachment(file: File): Promise<ImageAttachment> {
+  const m = /^data:([^;]+);base64,(.*)$/.exec(await readDataUrl(file))
+  if (!m) throw new Error('imagem inválida')
+  return { mediaType: m[1], data: m[2] }
+}
+
 /** Read any file as a base64 FileAttachment (keeps name/type/size for the chip). */
-function fileToFileAttachment(file: File): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const m = /^data:([^;]*);base64,(.*)$/.exec(String(reader.result))
-      resolve({
-        name: file.name || 'arquivo',
-        mediaType: m?.[1] || file.type || 'application/octet-stream',
-        data: m?.[2] || '',
-        size: file.size
-      })
-    }
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
+async function fileToFileAttachment(file: File): Promise<FileAttachment> {
+  const m = /^data:([^;]*);base64,(.*)$/.exec(await readDataUrl(file))
+  return {
+    name: file.name || 'arquivo',
+    mediaType: m?.[1] || file.type || 'application/octet-stream',
+    data: m?.[2] || '',
+    size: file.size
+  }
 }
 
 interface Options {
