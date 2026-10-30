@@ -9,6 +9,8 @@ import { memo, useEffect, useMemo, type ReactNode } from 'react'
 import type { CentralActivity } from '@shared/central'
 import { sameStep, stepActivity, stepFallback, stepHasLine, type ChatStep } from '@renderer/components/chatSteps'
 import type { CardRefResolver } from '@renderer/components/Markdown'
+import { savedMemories } from '@renderer/components/memorySaved'
+import { MemorySavedNote } from '@renderer/components/MemorySavedNote'
 import { StepPillRow } from '@renderer/components/StepPillRow'
 import { stepPills, type StepPill } from '@renderer/components/stepPills'
 import { useStepOpen } from '@renderer/components/useStepOpen'
@@ -74,6 +76,7 @@ function StepLine({ step, voiceReady, speakingId, onSpeak, resolveRef, fresh }: 
   const [open, toggle] = useStepOpen(step.id)
   const activity = useMemo(() => stepActivity(step), [step])
   const pills = useMemo(() => stepPills(step.tools), [step])
+  const saved = useMemo(() => savedMemories(step.tools), [step])
   // Sem o "agora" (ele fica na linha ao vivo): rodando sem nada pronto, "usou 1 ferramenta".
   const fallback = stepFallback({ segments: activity.segments, now: undefined }, step.tools.length, step.items.length - step.tools.length)
   // O histórico vem LEVE: ao abrir a resposta, pede ao PC o detalhe inteiro das ações dela (uma chamada só).
@@ -84,6 +87,7 @@ function StepLine({ step, voiceReady, speakingId, onSpeak, resolveRef, fresh }: 
   return (
     <>
       <ActLine activity={activity} running={step.running} open={open} onToggle={toggle} fallback={fallback} animate={fresh} quiet pills={pills} />
+      <MemorySavedNote items={saved} animate={fresh} />
       {open && (
         <div className="c-tools">
           {step.items.map((m, i) =>

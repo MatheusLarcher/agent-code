@@ -23,7 +23,10 @@ import { useFreshOnce } from '../chatAnim'
 import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
 import type { UIMessage } from '../types'
 import { ChatRow, rowKey, type ChatRowContext } from './ChatRows'
+import { ChatMemoryPreview, useMemoryPreviewReader } from './ChatMemoryPreview'
 import { ChatStepLine } from './ChatStepLine'
+import { savedMemories } from './memorySaved'
+import { MemorySavedNote } from './MemorySavedNote'
 import { ChatSubagentRow } from './ChatSubagent'
 import { sameStep, stepActivity, stepFallback, stepHasLine, type ChatStep } from './chatSteps'
 import { stepIcon, stepPills } from './stepPills'
@@ -38,6 +41,13 @@ function CreatedPlanFiles({ tools, planDir }: { tools: UIMessage[]; planDir: Cha
     return created ? [created] : []
   })
   return paths.length ? <>{paths.map((p) => <PlanFileLink key={p} path={p} />)}</> : null
+}
+
+/** O que a resposta gravou na memória: a linha da pena, com a amostra no hover. */
+function SavedMemories({ tools, animate }: { tools: UIMessage[]; animate: boolean }): JSX.Element | null {
+  const items = useMemo(() => savedMemories(tools), [tools])
+  const read = useMemoryPreviewReader()
+  return <MemorySavedNote items={items} animate={animate} wrapName={(relPath, label) => <ChatMemoryPreview relPath={relPath} read={read}>{label}</ChatMemoryPreview>} />
 }
 
 function StepBody({ step, ctx, animate }: { step: ChatStep<UIMessage>; ctx: ChatRowContext; animate: boolean }): JSX.Element {
@@ -62,6 +72,7 @@ function StepBody({ step, ctx, animate }: { step: ChatStep<UIMessage>; ctx: Chat
       />
       {/* Planejamento: o "Abrir" do arquivo criado no plano fica à vista mesmo recolhido (aberto, vai com o cartão). */}
       {!open && <CreatedPlanFiles tools={step.tools} planDir={ctx.planDir} />}
+      <SavedMemories tools={step.tools} animate={animate} />
       {open && (
         <div className="central-tools">
           {step.items.map((m, i) => (
