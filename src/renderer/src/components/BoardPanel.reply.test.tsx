@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
-import { BOARD_AUTHORIZE_MESSAGE, BOARD_PO_AWAITING_REASON, BOARD_TURN_END_REASON, type BoardItem, type ProjectBoard } from '@shared/ipc'
+import { BOARD_PO_AWAITING_REASON, BOARD_TURN_END_REASON, type BoardItem, type ProjectBoard } from '@shared/ipc'
 import { BoardPanel } from './BoardPanel'
 import type { BoardCardReplyHandler } from './BoardCardReply'
 
@@ -39,6 +39,9 @@ function card(over: Partial<BoardItem> = {}): BoardItem {
     ...over
   }
 }
+
+// O "Pode fazer" leva o cartão a que se refere: o agente sabe qual foi autorizado.
+const AUTH_MSG = 'Pode fazer.\n\nCartão do quadro: "publicar a versão" (pedido: Autorizar o deploy na VPS)'
 
 function mockApi(board: ProjectBoard) {
   const listeners: (() => void)[] = []
@@ -84,7 +87,7 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
     expect(btn.closest('.board-card-wrap')).not.toBeNull()
     fireEvent.click(btn)
 
-    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-2', BOARD_AUTHORIZE_MESSAGE))
+    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-2', AUTH_MSG))
     expect(await screen.findByRole('button', { name: 'Enviado' })).toHaveProperty('disabled', true)
     expect(container.querySelector('.board-detail')).toBeNull()
   })
@@ -109,7 +112,7 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
     expect(reply).not.toHaveBeenCalled()
 
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', 'use a 8080'))
+    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', 'use a 8080\n\nCartão do quadro: "publicar a versão" (pedido: Qual porta usar?)'))
     expect(await screen.findByRole('button', { name: 'Enviado' })).toHaveProperty('disabled', true)
   })
 
@@ -125,7 +128,7 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
     const input = await screen.findByPlaceholderText('Responder ao agente…')
     fireEvent.change(input, { target: { value: 'sim' } })
     fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
-    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', 'sim'))
+    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', 'sim\n\nCartão do quadro: "publicar a versão"'))
   })
 
   it('sem controle: fim de turno sem ação ("Parado"), ou cartão que não espera você', async () => {
@@ -197,6 +200,6 @@ describe('BoardPanel — resposta pelo cartão "Aguardando você"', () => {
     const btn = screen.getByRole('button', { name: 'Pode fazer' })
     expect(btn.closest('.board-row')).toBeNull()
     fireEvent.click(btn)
-    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', BOARD_AUTHORIZE_MESSAGE))
+    await waitFor(() => expect(reply).toHaveBeenCalledWith('conv-1', AUTH_MSG))
   })
 })

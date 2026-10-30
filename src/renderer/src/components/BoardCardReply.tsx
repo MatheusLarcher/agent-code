@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
-import { BOARD_AUTHORIZE_MESSAGE, boardItemReplyKind, type BoardItem } from '@shared/ipc'
+import { BOARD_AUTHORIZE_MESSAGE, boardItemReplyKind, boardReplyMessage, type BoardItem } from '@shared/ipc'
 
 /**
  * A resposta do usuário direto no cartão "Aguardando você", no controle que o PO
@@ -65,7 +65,7 @@ export function BoardCardReply({
     setError(null)
     let outcome: BoardReplyOutcome
     try {
-      outcome = await onReply(item.conversationId, body)
+      outcome = await onReply(item.conversationId, boardReplyMessage(item, body))
     } catch {
       outcome = 'failed'
     }

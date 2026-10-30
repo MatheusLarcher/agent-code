@@ -312,6 +312,18 @@ export type BoardReplyKind = 'authorize' | 'answer'
 export const BOARD_AUTHORIZE_MESSAGE = 'Pode fazer.'
 
 /**
+ * A mensagem que a resposta pelo cartão manda: o texto do usuário com o cartão
+ * a que ele se refere. Sem isto, um "Pode fazer." solto deixa o agente sem
+ * saber QUAL cartão foi autorizado quando há mais de um esperando.
+ */
+export function boardReplyMessage(item: BoardItem, body: string): string {
+  const title = boardItemTitle(item).trim()
+  const action = (item.poUserAction ?? '').trim()
+  const ref = `Cartão do quadro: "${title}"${action ? ` (pedido: ${action})` : ''}`
+  return `${body.trim()}\n\n${ref}`
+}
+
+/**
  * A sobreposição das duas camadas do cartão. Mora aqui, e não no main, porque
  * é a MESMA regra dos dois lados: o main ordena o quadro por ela e a tela pinta
  * por ela. Em duas cópias, o dia em que a regra ganhar um caso novo o main
