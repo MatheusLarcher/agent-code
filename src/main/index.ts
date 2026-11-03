@@ -49,6 +49,7 @@ import { fetchDeepSeekBalance } from './deepseek'
 import { isSandboxPath, sandboxCreateResult, sandboxRoot } from './sandbox'
 import { secondInstanceReveal, wantsMinimized } from './mcpInbound/windowStartup'
 import { watchRendererGone } from './mcpInbound/rendererLifecycle'
+import { initScreenLog, logChildProcessGone, watchRendererRecovery, type RendererRecovery } from './rendererRecovery'
 import { RelayClient } from './remote/relayClient'
 import { RemotePairingStore } from './remote/remotePairing'
 import { buildRemoteApk, resolveRemoteRoot } from './remote/buildApk'
@@ -285,6 +286,9 @@ setPlanningDataRoot(() => getCacheInfo().dir)
 let closeRequested = false
 let closeReady = false
 let closeRequestTimer: ReturnType<typeof setInterval> | null = null
+// Tela morta (renderer caiu) ou travada: recarga sozinha e fechamento sem esperá-la.
+let rendererRecovery: RendererRecovery | null = null
+let windowCloseInFlight = false
 let quitRequested = false
 let quitReady = false
 let storageClosePromise: Promise<void> | null = null
@@ -730,10 +734,39 @@ function requestRendererCloseFlush(): void {
     closeRequested = true
     send(Channels.appCloseRequested, null)
   }
+  // Tela morta ou travada nunca responde ao pedido: o X ficava sem efeito e só
+  // matando o processo. A fila de gravação mora no main e é drenada igual.
+  if (rendererRecovery?.isDown()) {
+    void completeWindowClose()
+    return
+  }
   if (!closeRequestTimer) {
     closeRequestTimer = setInterval(() => send(Channels.appCloseRequested, null), 100)
     closeRequestTimer.unref?.()
   }
+}
+
+/** A tela já entregou tudo à fila (ou não existe mais): fecha a janela e, no quit, o app. */
+async function completeWindowClose(): Promise<void> {
+  if (!closeRequested || !mainWindow || windowCloseInFlight) return
+  windowCloseInFlight = true
+  if (closeRequestTimer) clearInterval(closeRequestTimer)
+  closeRequestTimer = null
+  const windowToClose = mainWindow
+  if (quitRequested) {
+    // Some na hora, e o fechamento da persistência (prazo de ~2 s, o resto
+    // no diário) corre por trás.
+    if (!windowToClose.isDestroyed()) windowToClose.hide()
+    await closeStorageForQuit()
+  }
+  closeReady = true
+  setImmediate(() => {
+    if (!windowToClose.isDestroyed()) windowToClose.close()
+    if (quitRequested) {
+      quitReady = true
+      app.quit()
+    }
+  })
 }
 
 // O PostgreSQL embutido: binários em resources/postgres (instalado) ou
@@ -1718,6 +1751,7 @@ function createWindow(startMinimized = false): void {
   closeRequestTimer = null
   closeRequested = false
   closeReady = false
+  windowCloseInFlight = false
   mainWindow = new BrowserWindow({
     // `--minimizado`: nasce escondida e aparece minimizada, sem pegar o foco.
     show: !startMinimized,
@@ -1761,6 +1795,13 @@ function createWindow(startMinimized = false): void {
   // Recarregou (F5) ou o renderer morreu: até ele avisar de novo que está
   // pronto, as tarefas do MCP de entrada esperam no main em vez de se perder.
   watchRendererGone(mainWindow.webContents, () => mcpInbound.markRendererGone())
+  // Renderer morto (Windows sem memória, travamento): a tela volta sozinha em vez
+  // de ficar vazia, e o motivo vai para logs/tela.log (rendererRecovery.ts).
+  rendererRecovery?.dispose()
+  rendererRecovery = watchRendererRecovery(mainWindow, {
+    isClosing: () => closeRequested || quitRequested,
+    onDownWhileClosing: () => void completeWindowClose()
+  })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     // Mockup .html local: navegador padrão, mesmo com .html associado ao VS Code.
@@ -1812,9 +1853,12 @@ function createWindow(startMinimized = false): void {
     officeMockup?.release()
     if (closeRequestTimer) clearInterval(closeRequestTimer)
     closeRequestTimer = null
+    rendererRecovery?.dispose()
+    rendererRecovery = null
     mainWindow = null
     closeRequested = false
     closeReady = false
+    windowCloseInFlight = false
   })
 }
 
@@ -1957,26 +2001,7 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.typesafePauseStatus, () => typeSafePause.status())
   // Aviso único ao ENTRAR na pausa; o renderer mostra o toast amarelo.
   typeSafePause.setOnPause((status) => send(Channels.typesafePaused, status))
-  ipcMain.handle(Channels.appCloseReady, async () => {
-    if (!closeRequested || !mainWindow) return
-    if (closeRequestTimer) clearInterval(closeRequestTimer)
-    closeRequestTimer = null
-    if (quitRequested) {
-      // A tela já entregou tudo à fila: some na hora, e o fechamento da
-      // persistência (prazo de ~2 s, o resto no diário) corre por trás.
-      if (!mainWindow.isDestroyed()) mainWindow.hide()
-      await closeStorageForQuit()
-    }
-    closeReady = true
-    const windowToClose = mainWindow
-    setImmediate(() => {
-      windowToClose.close()
-      if (quitRequested) {
-        quitReady = true
-        app.quit()
-      }
-    })
-  })
+  ipcMain.handle(Channels.appCloseReady, () => completeWindowClose())
 
   ipcMain.handle(Channels.appReloadReady, () => {
     if (!mainWindow || mainWindow.isDestroyed()) return
@@ -3431,6 +3456,10 @@ app.whenReady().then(async () => {
   initSessionLog(app.getPath('userData'))
   // Travadas da tela em <userData>/logs/travadas.log (freezeLog.ts).
   initFreezeLog(app.getPath('userData'))
+  // Tela que morre/trava e queda de GPU e outros processos filhos em
+  // <userData>/logs/tela.log (rendererRecovery.ts).
+  initScreenLog(app.getPath('userData'))
+  app.on('child-process-gone', (_event, details) => logChildProcessGone(details))
   // Memória do processo principal em <userData>/logs/memoria.log + perfil de heap
   // perto do teto (memoryWatch.ts): o app fechava sem aviso por estouro de heap.
   stopMemoryWatch = startMemoryWatch({ userDataDir: app.getPath('userData') })
