@@ -18,8 +18,9 @@
  * ou resultado, estado de "rodando") ou o contexto — o pedaço novo do texto em
  * andamento não redesenha as outras respostas.
  */
-import { memo, useMemo } from 'react'
+import { memo, useContext, useMemo } from 'react'
 import { useFreshOnce } from '../chatAnim'
+import { UiContext } from '../ui/UiProvider'
 import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
 import type { UIMessage } from '../types'
 import { ChatRow, rowKey, type ChatRowContext } from './ChatRows'
@@ -43,11 +44,21 @@ function CreatedPlanFiles({ tools, planDir }: { tools: UIMessage[]; planDir: Cha
   return paths.length ? <>{paths.map((p) => <PlanFileLink key={p} path={p} />)}</> : null
 }
 
-/** O que a resposta gravou na memória: a linha da pena, com a amostra no hover. */
+/** O que a resposta gravou na memória: o selo, com a amostra no hover e o botão da pasta. */
 function SavedMemories({ tools, animate }: { tools: UIMessage[]; animate: boolean }): JSX.Element | null {
   const items = useMemo(() => savedMemories(tools), [tools])
   const read = useMemoryPreviewReader()
-  return <MemorySavedNote items={items} animate={animate} wrapName={(relPath, label) => <ChatMemoryPreview relPath={relPath} read={read}>{label}</ChatMemoryPreview>} />
+  const notify = useContext(UiContext)?.notify
+  const reveal = async (memory: string): Promise<void> => {
+    try {
+      const r = await window.api.revealFile({ mode: 'folder', memory })
+      if (!r.ok) notify?.('aviso', r.message)
+    } catch {
+      notify?.('erro', 'Não foi possível mostrar a memória na pasta. Tente novamente.')
+    }
+  }
+  return <MemorySavedNote items={items} animate={animate} onReveal={(p) => void reveal(p)}
+    wrapName={(relPath, label) => <ChatMemoryPreview relPath={relPath} read={read}>{label}</ChatMemoryPreview>} />
 }
 
 function StepBody({ step, ctx, animate }: { step: ChatStep<UIMessage>; ctx: ChatRowContext; animate: boolean }): JSX.Element {

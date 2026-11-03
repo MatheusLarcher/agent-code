@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { memorySavedLabel, savedMemories } from './memorySaved'
 import { MemorySavedNote } from './MemorySavedNote'
 
@@ -36,11 +36,21 @@ describe('savedMemories', () => {
 describe('MemorySavedNote', () => {
   it('mostra o verbo e o título; nada quando vazio', () => {
     const { container, rerender } = render(<MemorySavedNote items={[{ op: 'create', relPath: 'a.md', title: 'Regra A' }, { op: 'retire', relPath: 'b.md', title: 'Velha' }]} animate />)
-    expect(screen.getByText(/Anotei na memória/)).toBeTruthy()
+    expect(screen.getByText(/Memória salva/)).toBeTruthy()
     expect(screen.getByText('Regra A')).toBeTruthy()
-    expect(screen.getByText(/Aposentei a memória/)).toBeTruthy()
+    expect(screen.getByText(/Memória aposentada/)).toBeTruthy()
     expect(container.querySelector('.mem-saved.fresh')).toBeTruthy()
     rerender(<MemorySavedNote items={[]} />)
     expect(container.querySelector('.mem-saved')).toBeNull()
+  })
+
+  it('botão da pasta só com onReveal; manda o relPath da memória', () => {
+    const items = [{ op: 'create' as const, relPath: '2D/regra.md', title: 'Regra' }]
+    const { rerender } = render(<MemorySavedNote items={items} />)
+    expect(screen.queryByRole('button', { name: /na pasta/ })).toBeNull()
+    const revealed: string[] = []
+    rerender(<MemorySavedNote items={items} onReveal={(p) => revealed.push(p)} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar 2D/regra.md na pasta' }))
+    expect(revealed).toEqual(['2D/regra.md'])
   })
 })

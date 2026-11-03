@@ -33,7 +33,7 @@ export function savedMemories(tools: readonly unknown[]): MemorySaved[] {
   return [...out.values()]
 }
 
-const VERB: Record<MemorySaveOp, string> = { create: 'Anotei na memória', update: 'Atualizei a memória', retire: 'Aposentei a memória' }
+const VERB: Record<MemorySaveOp, string> = { create: 'Memória salva', update: 'Memória atualizada', retire: 'Memória aposentada' }
 
 export function memorySavedVerb(op: MemorySaveOp): string {
   return VERB[op]
