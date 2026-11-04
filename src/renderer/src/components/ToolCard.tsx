@@ -73,6 +73,11 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
   const preview = async (e: MouseEvent): Promise<void> => {
     e.stopPropagation()
     if (!rawFilePath) return
+    // Mockup .html: navegador do usuário (o window.open cai no setWindowOpenHandler → openUrlExternally).
+    if (/\.html?$/i.test(rawFilePath)) {
+      window.open(fileUrl(rawFilePath), '_blank')
+      return
+    }
     try {
       const res = await window.api.newTab('file', fileUrl(rawFilePath))
       if (res && res !== 'sucesso' && !res.toLowerCase().includes('abrindo') && !res.toLowerCase().includes('aberta')) {
@@ -98,7 +103,7 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
         </span>
       )}
       {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
-        <span className="tool-download" onClick={preview} title="Abrir em uma Janela de Arquivo">
+        <span className="tool-download" onClick={preview} title={/\.html?$/i.test(rawFilePath) ? 'Abrir no seu navegador' : 'Abrir em uma Janela de Arquivo'}>
           Preview
         </span>
       )}
