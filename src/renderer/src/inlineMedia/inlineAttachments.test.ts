@@ -132,8 +132,8 @@ describe('rascunho com anexos', () => {
     expect(fromDraft('oi {{midia:2}}', [{ kind: 'image', name: 'a', mediaType: 'image/png', data: 'A' }]).value).toBe(
       'oi {{midia:2}}'
     )
-    // lixo vindo do banco é ignorado
-    expect(fromDraft('x {{midia:1}}', [{ kind: 'bomba' }]).value).toBe('x {{midia:1}}')
+    // lixo vindo do banco é ignorado, e o marcador dele não fica preso no campo
+    expect(fromDraft('x {{midia:1}}', [{ kind: 'bomba' }]).value).toBe('x ')
   })
 })
 

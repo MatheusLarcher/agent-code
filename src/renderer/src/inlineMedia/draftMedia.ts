@@ -137,14 +137,18 @@ export function fromDraft(
   text: string,
   media: readonly unknown[] | undefined
 ): { value: string; order: string[]; atts: InlineAtt[]; restore: DraftRestore[] } {
-  const list = (media ?? []).filter(isDraftMedia)
+  // O índice N é o da lista GRAVADA: item inválido não desloca os outros, e o
+  // marcador dele sai do texto (antes ficava "{{midia:N}}" preso no campo).
+  const raw = media ?? []
   const restore: DraftRestore[] = []
-  if (list.length === 0) return { value: text, order: [], atts: [], restore }
+  if (raw.length === 0) return { value: text, order: [], atts: [], restore }
   const atts: InlineAtt[] = []
   const order: string[] = []
   const value = text.replace(new RegExp(MEDIA_MARKER_SOURCE, 'g'), (m, n: string) => {
-    const d = list[Number(n) - 1]
-    if (!d) return m
+    const i = Number(n) - 1
+    if (i < 0 || i >= raw.length) return m // não veio do rascunho: texto do usuário
+    const d = raw[i]
+    if (!isDraftMedia(d)) return ''
     let att: InlineAtt
     if (d.kind === 'element') {
       // O número certo vem na renumeração do campo (Composer).

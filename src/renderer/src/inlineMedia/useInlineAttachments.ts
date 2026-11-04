@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { FOLDER_MEDIA_TYPE, type FileAttachment, type ImageAttachment } from '@shared/ipc'
+import { FOLDER_MEDIA_TYPE } from '@shared/ipc'
 import { looksLikeFileUrl, looksLikeLocalPath } from '@shared/mime'
 import type { EditorElement } from './InlineEditor'
 import {
@@ -21,6 +21,7 @@ import {
   type DraftRefMedia,
   type DraftRestore
 } from './draftMedia'
+import { diskPath, fileToAttachment, fileToFileAttachment } from './readFile'
 
 /** Max size for a single non-image attachment read into memory (keeps the IPC payload sane). */
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -30,73 +31,10 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024
  */
 export const MAX_INLINE_IMAGE_BYTES = Math.floor((5 * 1024 * 1024 * 3) / 4)
 
-/** Caminho do arquivo no disco (escolhido/arrastado); '' para print colado. */
-function diskPath(file: File): string {
-  try {
-    return window.api.getPathForFile(file) || ''
-  } catch {
-    return ''
-  }
-}
 /** Resultados guardados de itens fora da tela (troca de conversa). */
 const MAX_PARKED = 64
-
-/**
- * Teto para a leitura de um File em memória. Um arquivo real (até 25 MB) lê em
- * fração de segundo; só estoura quando o FileReader PENDURA — p.ex. uma PASTA
- * cujo caminho não foi reconhecido escorrega para cá e, no Windows/Electron,
- * `readAsDataURL` numa pasta pode não disparar `onload` NEM `onerror`. Sem este
- * teto o item ficava "resolvendo" para sempre e travava o envio inteiro.
- */
-const READ_TIMEOUT_MS = 30_000
-
-/** Lê o File como data URL, com teto de tempo e `abort`: nunca pendura. */
-function readDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    let done = false
-    const finish = (fn: () => void): void => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      fn()
-    }
-    const timer = setTimeout(() => {
-      try {
-        reader.abort()
-      } catch {
-        // abort pode lançar se já terminou — ignora
-      }
-      finish(() => reject(new Error('Tempo esgotado ao ler o arquivo (pode ser uma pasta sem caminho).')))
-    }, READ_TIMEOUT_MS)
-    reader.onload = () => finish(() => resolve(String(reader.result)))
-    reader.onerror = () => finish(() => reject(reader.error ?? new Error('Falha ao ler o arquivo.')))
-    reader.onabort = () => finish(() => reject(new Error('Leitura do arquivo cancelada.')))
-    try {
-      reader.readAsDataURL(file)
-    } catch (err) {
-      finish(() => reject(err instanceof Error ? err : new Error(String(err))))
-    }
-  })
-}
-
-/** Read an image File as a base64 attachment (strips the data-URL prefix). */
-async function fileToAttachment(file: File): Promise<ImageAttachment> {
-  const m = /^data:([^;]+);base64,(.*)$/.exec(await readDataUrl(file))
-  if (!m) throw new Error('imagem inválida')
-  return { mediaType: m[1], data: m[2] }
-}
-
-/** Read any file as a base64 FileAttachment (keeps name/type/size for the chip). */
-async function fileToFileAttachment(file: File): Promise<FileAttachment> {
-  const m = /^data:([^;]*);base64,(.*)$/.exec(await readDataUrl(file))
-  return {
-    name: file.name || 'arquivo',
-    mediaType: m?.[1] || file.type || 'application/octet-stream',
-    data: m?.[2] || '',
-    size: file.size
-  }
-}
+/** Teto do anexo inteiro (inclui download de URL colada); passou disso, o item sai do campo. */
+const SETTLE_TIMEOUT_MS = 120_000
 
 interface Options {
   editorRef: RefObject<EditorElement | null>
@@ -250,10 +188,18 @@ export function useInlineAttachments({ editorRef, convIdRef, notify, initialDraf
     if (inflight.current.has(id)) return
     inflight.current.add(id)
     let result: InlineAtt | string
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      result = await work()
+      // Um pedido ao main (stat, download, leitura) que nunca responde deixava o
+      // item "resolvendo" para sempre e travava o envio: aqui ele tem teto.
+      const timeout = new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve('Falha ao anexar: tempo esgotado.'), SETTLE_TIMEOUT_MS)
+      })
+      result = await Promise.race([work(), timeout])
     } catch (err) {
       result = `Falha ao anexar: ${err instanceof Error ? err.message : String(err)}`
+    } finally {
+      clearTimeout(timer)
     }
     inflight.current.delete(id)
     // O item não está no campo agora (a conversa dele saiu da tela): guarda.

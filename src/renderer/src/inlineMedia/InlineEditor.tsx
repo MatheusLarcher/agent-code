@@ -2,15 +2,14 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
-  useState,
   type HTMLAttributes,
   type MouseEvent as ReactMouseEvent,
   type RefObject
 } from 'react'
 import { createPortal } from 'react-dom'
-import { fmtSize } from '../files'
 import { TOKEN, isTokenNode, offsetFromPoint, pointFromOffset, renderEditor, scanEditor, tokenAtCaret, type Scan } from './editorModel'
 import { attAlt, type InlineAtt } from './inlineAttachments'
+import { MediaPreview, mediaNumber, useTokenHover } from './MediaPreview'
 
 /**
  * Campo do composer com anexos no meio do texto (contenteditable).
@@ -84,7 +83,7 @@ export function InlineEditor({ value, order, atts, editable, editorRef, onEdit, 
   const composing = useRef(false)
   const pendingCaret = useRef<number | null>(null)
   const lastCaret = useRef<number | null>(null)
-  const [hover, setHover] = useState<{ att: InlineAtt; n: number; rect: DOMRect } | null>(null)
+  const tokenHover = useTokenHover(elRef)
   // Uma varredura do DOM por edição: o resultado vale até o DOM mudar. O
   // MutationObserver diz se mudou (takeRecords é síncrono, então nunca se usa
   // uma varredura velha entre a mudança e o callback).
@@ -436,20 +435,17 @@ export function InlineEditor({ value, order, atts, editable, editorRef, onEdit, 
   }, [])
 
   // Prévia ampliada no hover: flutua por cima (portal, fixed), sem mexer no texto.
+  // Lê o anexo ATUAL pelo id (o "resolvendo" vira o anexo pronto na prévia também).
   const onOver = (e: ReactMouseEvent<HTMLDivElement>): void => {
     rest.onMouseOver?.(e)
-    const t = e.target as Node
-    if (!isTokenNode(t)) return
-    const id = t.getAttribute('data-att-id') ?? ''
-    const att = props.current.atts.get(id)
-    // midia:N conta só as mídias (o trecho citado tem numeração própria, no nome).
-    const media = last.current.order.filter((x) => props.current.atts.get(x)?.kind !== 'quote')
-    if (att) setHover({ att, n: media.indexOf(id) + 1, rect: t.getBoundingClientRect() })
+    tokenHover.over(e.target as Node)
   }
   const onOut = (e: ReactMouseEvent<HTMLDivElement>): void => {
     rest.onMouseOut?.(e)
-    if (isTokenNode(e.target as Node)) setHover(null)
+    tokenHover.out(e.target as Node)
   }
+  const hover = tokenHover.hover
+  const hoverAtt = hover && hover.node.isConnected && order.includes(hover.id) ? atts.get(hover.id) : undefined
 
   return (
     <>
@@ -464,46 +460,7 @@ export function InlineEditor({ value, order, atts, editable, editorRef, onEdit, 
         onMouseOver={onOver}
         onMouseOut={onOut}
       />
-      {hover && createPortal(<MediaPreview {...hover} />, document.body)}
+      {hover && hoverAtt && createPortal(<MediaPreview att={hoverAtt} n={mediaNumber(hover.id, order, atts)} rect={hover.rect} />, document.body)}
     </>
-  )
-}
-
-function MediaPreview({ att, n, rect }: { att: InlineAtt; n: number; rect: DOMRect }): JSX.Element {
-  const style = {
-    left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
-    bottom: Math.max(8, window.innerHeight - rect.top + 8)
-  }
-  const size = att.kind === 'file' ? att.file.size : att.kind === 'ref' ? att.ref.size : 0
-  if (att.kind === 'element') {
-    return (
-      <div className="inline-att-preview" style={style} role="tooltip">
-        <div className="inline-att-preview-cap">
-          <b>{att.name}</b> · {att.el.tabName || 'web'}
-          <div className="inline-att-preview-path">{att.el.selector}</div>
-          {att.el.text.trim() && <div className="inline-att-preview-path">{att.el.text.slice(0, 200)}</div>}
-        </div>
-      </div>
-    )
-  }
-  if (att.kind === 'quote') {
-    return (
-      <div className="inline-att-preview" style={style} role="tooltip">
-        <div className="inline-att-preview-cap">
-          <b>{att.name}</b> · mensagem {att.quote.messageId}
-          <div className="inline-att-preview-path qc-preview-text">{att.quote.text}</div>
-        </div>
-      </div>
-    )
-  }
-  return (
-    <div className="inline-att-preview" style={style} role="tooltip">
-      {att.kind === 'image' ? <img src={att.src} alt="" /> : <img className="chip" src={att.src} alt="" />}
-      <div className="inline-att-preview-cap">
-        <b>midia:{n}</b> {att.name}
-        {size > 0 && ` · ${fmtSize(size)}`}
-        {att.kind === 'ref' && <div className="inline-att-preview-path">{att.ref.path}</div>}
-      </div>
-    </div>
   )
 }
