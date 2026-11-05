@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   boardItemStatus as effectiveStatus,
+  boardItemSummary,
   boardItemTitle as effectiveTitle,
   isBoardItemPoCorrected as isPoCorrected,
   type BoardItem,
@@ -161,17 +162,21 @@ export function BoardCardDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item.revision, attempt])
 
+  const summary = boardItemSummary(item)
   return (
-    <div className="board-detail">
+    <div className={`board-detail ${status}`}>
       <header className="board-detail-head">
-        <h3>{effectiveTitle(item)}</h3>
-        <button type="button" className="nav-btn" onClick={onClose} title="Fechar">
+        <div className="board-detail-heading">
+          <span className={`board-detail-pill ${status}`}>{statusLabel(status)}</span>
+          <h3>{effectiveTitle(item)}</h3>
+        </div>
+        <button type="button" className="nav-btn" onClick={onClose} title="Fechar" aria-label="Fechar">
           ×
         </button>
       </header>
+      {/* Do que o cartão se trata — a primeira coisa a ler depois do título. */}
+      {summary && <p className="board-detail-summary">{summary}</p>}
       <dl className="board-detail-kv">
-        <dt>Status</dt>
-        <dd className={`board-status ${status}`}>{statusLabel(status)}</dd>
         <dt>Origem</dt>
         <dd>
           <button type="button" className="board-link" onClick={() => onOpenConversation(item.conversationId)}>
@@ -199,16 +204,11 @@ export function BoardCardDetail({
             </dd>
           </>
         )}
-        {item.poTitle && (
+        {/* O título original só quando o resumo já não é ele (sem repetir a mesma frase). */}
+        {item.poTitle && summary !== item.sourceTitle.trim() && (
           <>
             <dt>Título do agente</dt>
             <dd className="board-muted">{item.sourceTitle}</dd>
-          </>
-        )}
-        {item.poNote && (
-          <>
-            <dt>Observação</dt>
-            <dd>{item.poNote}</dd>
           </>
         )}
       </dl>

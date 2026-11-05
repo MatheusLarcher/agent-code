@@ -1308,7 +1308,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
       const userAction = boardUserActionText(input.userAction)
       db.prepare(
         `INSERT INTO board_items(${BOARD_COLUMNS.trimEnd()}, parent_id, po_user_action, po_reply_kind)
-         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, NULL, 1, ?, ?, ?, ?, ?)`
+         VALUES(?, ?, ?, ?, 'po', NULL, ?, ?, NULL, ?, NULL, ?, NULL, ?, ?, NULL, 1, ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.projectId,
@@ -1317,6 +1317,7 @@ export class SqliteRepository implements PersistenceRepository, SqliteStoreIo {
         input.title,
         input.status,
         seq,
+        input.note?.trim() || null,
         input.reason,
         now,
         now,

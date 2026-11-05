@@ -5,6 +5,7 @@ import { etapaIdFromTitle } from '../handoffTracking/handoffCardMatch'
 import { parseEtapaLine } from './poEtapas'
 import { clamp, PO_MAX_TITLE_CHARS, type PoPhase } from './poPrompt'
 import { PO_MAX_OPS } from './poPromptText'
+import { fitTitle, splitSummary } from './poSummary'
 
 /**
  * A LEITURA do veredito do PO — o lado de volta de poPrompt.ts, que monta o
@@ -22,7 +23,7 @@ export type PoOp =
   /** ANDAMENTO: o pedido é coberto por um cartão que já existe. */
   | { kind: 'start'; id: string; reason: string }
   /** TITULO: título novo SEMPRE com motivo — toda alteração do PO se justifica. */
-  | { kind: 'retitle'; id: string; title: string; reason: string }
+  | { kind: 'retitle'; id: string; title: string; reason: string; summary?: string }
   /** PENDENTE: o que faltou no cartão que o fim do turno devolve para "a
    *  fazer". Não muda o status — só troca a frase genérica pelo motivo real.
    *  `userAction`: o campo VOCÊ (ver `splitUserAction`); ausente, o cartão espera o agente.
@@ -48,6 +49,8 @@ export type PoOp =
       userAction?: string
       replyKind?: BoardReplyKind
       etapaId?: string
+      /** O RESUMO (poSummary.ts): do que o cartão se trata, em uma frase. */
+      summary?: string
     }
 
 /**
@@ -156,7 +159,9 @@ export function parsePoVerdict(
     if (!clean || /^OK\b/i.test(clean)) continue
     // O VOCÊ sai de toda linha (num CONCLUIR ele só sujaria o motivo), mas só
     // o PENDENTE e a NOVA que nasce "a fazer" o guardam.
-    const { body: text, userAction, replyKind } = splitUserAction(clean)
+    // O RESUMO sai antes do VOCÊ: ele pode vir depois do motivo ou da ação.
+    const { body: unsummarized, summary } = splitSummary(clean)
+    const { body: text, userAction, replyKind } = splitUserAction(unsummarized)
 
     // O placar: a linha fala da etapa, a operação é no cartão dela. O CONCLUIR
     // e a contestação do mesmo cartão valem uma vez, venham de onde vierem.
@@ -207,7 +212,8 @@ export function parsePoVerdict(
       const [, id, title, reason] = retitle
       if (!ids.has(id) || seen.has(`t:${id}`) || !title.trim() || !reason.trim()) continue
       seen.add(`t:${id}`)
-      ops.push({ kind: 'retitle', id, title: clamp(title, PO_MAX_TITLE_CHARS), reason: clamp(reason, 160) })
+      const fit = fitTitle(title, summary)
+      ops.push({ kind: 'retitle', id, title: fit.title, reason: clamp(reason, 160), ...(fit.summary ? { summary: fit.summary } : {}) })
       continue
     }
 
@@ -240,7 +246,9 @@ export function parsePoVerdict(
       if (!title.trim() || !reason.trim()) continue
       if (orphan && seen.has(`e:${orphan}`)) continue
       // O corte guarda o começo: o prefixo `[id]` da etapa fica no título.
-      const cleanTitle = clamp(title, PO_MAX_TITLE_CHARS)
+      // Etapa órfã: o corte simples preserva o `[id]`, e o resto vai no resumo.
+      const fit = orphan ? { title: clamp(title, PO_MAX_TITLE_CHARS), summary } : fitTitle(title, summary)
+      const cleanTitle = fit.title
       const key = `n:${normalizeTitle(cleanTitle)}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -259,7 +267,8 @@ export function parsePoVerdict(
         ...(parentId ? { parentId } : {}),
         ...(userAction && status === 'pending' ? { userAction } : {}),
         ...(userAction && replyKind && status === 'pending' ? { replyKind } : {}),
-        ...(orphan ? { etapaId: orphan } : {})
+        ...(orphan ? { etapaId: orphan } : {}),
+        ...(fit.summary ? { summary: fit.summary } : {})
       })
     }
   }

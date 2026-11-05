@@ -538,6 +538,8 @@ export interface BoardPoCreate {
   userAction?: string | null
   /** O controle para a ação (`BoardItem.poReplyKind`); só vale com `userAction`. */
   replyKind?: BoardReplyKind | null
+  /** O resumo curto do cartão (`BoardItem.poNote`): do que se trata, em uma frase. */
+  note?: string | null
 }
 
 export interface BoardQuery {

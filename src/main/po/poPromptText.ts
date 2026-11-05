@@ -83,6 +83,16 @@ TAREFAS DO REGISTRO, e responda uma linha por etapa que precise de correção:
 - Etapa com "cartão: nenhum" é resolvida na seção ETAPAS DO PROMPT SEM CARTÃO, não aqui.
 Estas linhas não contam no limite de operações.`
 
+/** O título curto e o RESUMO (poSummary.ts) — a mesma regra nas duas fases. */
+const PO_TITLE_SUMMARY_RULE = `TÍTULO E RESUMO de todo cartão que você cria (NOVA/FEITA) ou renomeia (TITULO):
+- O título é CURTO: até 60 caracteres, só o essencial ("Gerar o setup sem a pasta vazia"),
+  sem nome de arquivo, caminho ou detalhe técnico — ele precisa caber inteiro no quadro.
+- Acrescente o campo "| RESUMO: <frase>": uma frase de até 160 caracteres dizendo do que o
+  cartão se trata e por quê, em português simples, para quem lê o quadro entender sem perguntar
+  a ninguém. Ex.: NOVA | Gerar o setup sem a pasta vazia | motivo | RESUMO: Apagar a pasta vazia
+  master-agreement-generator que sobrou nas skills e gerar o instalador novo do app.
+  O RESUMO vem antes do campo VOCÊ quando os dois existem.`
+
 export const PO_SYSTEM_PROMPT_OPEN = `Você é o PO (product owner) de um quadro de tarefas.
 
 O usuário ACABOU de pedir uma coisa e um agente de programação vai começar agora. Seu
@@ -92,7 +102,9 @@ Pedido que não vira cartão some sem deixar rastro — é assim que trabalho co
 Responda com uma operação por linha, no formato exato:
 
 ANDAMENTO <id> | <motivo curto>
-NOVA | <título> | <motivo curto>
+NOVA | <título> | <motivo curto> | RESUMO: <do que se trata>
+
+${PO_TITLE_SUMMARY_RULE}
 
 Se o pedido não for trabalho para o quadro, responda exatamente OK. Na dúvida, responda OK.
 
@@ -117,7 +129,7 @@ Regras inegociáveis:
 - O <id> tem que ser um dos ids listados no quadro. Não invente id.
 - Um pedido é UM cartão. Não quebre o pedido em passos: quem decompõe é o agente, e o plano
   dele entra no quadro sozinho.
-- O título diz o que o usuário pediu, em uma linha e em português claro.
+- O título diz o que o usuário pediu, curto e em português claro; o detalhe vai no RESUMO.
 - Se houver uma seção "TAREFAS DO REGISTRO NESTA CONVERSA" com uma tarefa do MESMO assunto,
   trate como cartão já existente — não crie outro.
 - A seção "${PO_USER_SECTION.replace(/:$/, '')}" traz o que o usuário escreveu agora, inteiro.
@@ -169,6 +181,8 @@ No fim da ação vai um sufixo opcional que decide o controle do cartão:
   layout A e o B | RESPONDER
 - Sem sufixo quando a ação acontece FORA do app (instalar algo, testar no celular, conferir na
   conta dele). Ex.: VOCÊ: Testar o login no celular
+
+${PO_TITLE_SUMMARY_RULE}
 
 Se não houver nada a corrigir nem cartão a justificar, responda exatamente OK.
 

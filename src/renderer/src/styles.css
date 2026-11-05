@@ -6964,18 +6964,22 @@ img.inline-att[data-caret] {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
-  padding: 1px 2px 4px;
+  padding: 1px 2px 7px;
+  border-bottom: 1px dashed var(--line);
 }
 .board-column-count {
   margin-left: auto;
-  font-size: 11px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 6px;
-  line-height: 16px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1;
 }
 .board-key {
   width: 8px;
@@ -7114,7 +7118,80 @@ img.inline-att[data-caret] {
 }
 .board-card-title {
   font-size: 13px;
+  font-weight: 550;
   line-height: 1.35;
+  /* O título vai inteiro: quebra nomes longos (pasta.arquivo-sem-espaço) em vez de cortar. */
+  overflow-wrap: anywhere;
+  padding-right: 16px;
+}
+/* "Do que se trata": o RESUMO do PO, em até 3 linhas no cartão (inteiro no detalhe). */
+.board-card-summary {
+  margin-left: 23px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.board-card.completed .board-card-summary {
+  -webkit-line-clamp: 1;
+  opacity: 0.75;
+}
+
+/* A lombada do cartão: a cor conta o estado antes de ler qualquer palavra.
+   A fazer = traço apagado; fazendo = âmbar que respira; feito = verde;
+   esperando você = âmbar tracejado (o único que pede a sua mão). */
+.board-card {
+  position: relative;
+  overflow: hidden;
+  padding-left: 13px;
+}
+.board-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #4a4744;
+}
+.board-card.in_progress::before {
+  background: var(--warn);
+  animation: board-spine-breathe 2.4s ease-in-out infinite;
+}
+.board-card.completed::before {
+  background: color-mix(in srgb, var(--ok) 70%, transparent);
+}
+.board-card.awaits::before {
+  background: repeating-linear-gradient(180deg, var(--warn) 0 6px, transparent 6px 10px);
+}
+.board-card.awaits {
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+  background: linear-gradient(100deg, color-mix(in srgb, var(--warn) 7%, var(--bg-3)) 0%, var(--bg-3) 55%);
+}
+.board-card.completed {
+  background: color-mix(in srgb, var(--bg-3) 60%, var(--bg-2));
+}
+@keyframes board-spine-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(224, 164, 88, 0);
+  }
+  50% {
+    box-shadow: 0 0 10px 1px rgba(224, 164, 88, 0.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-card.in_progress::before {
+    animation: none;
+  }
+}
+.board-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .board-card.completed .board-card-title {
   color: var(--muted);
@@ -7248,10 +7325,10 @@ img.inline-att[data-caret] {
 }
 .board-row-title {
   flex: 1;
+  min-width: 0;
   font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .board-row-title.completed {
   color: var(--muted);
@@ -7458,11 +7535,66 @@ span.board-agent-dot {
   align-items: flex-start;
   gap: 10px;
 }
-.board-detail-head h3 {
-  margin: 0 0 8px;
-  font-size: 14.5px;
+.board-detail-heading {
   flex: 1;
+  min-width: 0;
+}
+.board-detail-head h3 {
+  margin: 6px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+/* A faixa de cima do detalhe tem a cor do estado, a mesma da lombada do cartão. */
+.board-detail {
+  border-top: 3px solid #4a4744;
+}
+.board-detail.in_progress {
+  border-top-color: var(--warn);
+}
+.board-detail.completed {
+  border-top-color: var(--ok);
+}
+.board-detail-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.board-detail-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: #5b5854;
+}
+.board-detail-pill.in_progress {
+  color: var(--warn);
+}
+.board-detail-pill.in_progress::before {
+  background: var(--warn);
+}
+.board-detail-pill.completed {
+  color: var(--ok);
+}
+.board-detail-pill.completed::before {
+  background: var(--ok);
+}
+.board-detail-summary {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  border-left: 2px solid var(--accent-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 .board-detail-kv {
   display: grid;

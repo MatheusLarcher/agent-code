@@ -334,6 +334,20 @@ export function boardItemTitle(item: BoardItem): string {
   return item.poTitle ?? item.sourceTitle
 }
 
+/**
+ * A frase curta "do que se trata" o cartão, mostrada embaixo do título: o
+ * RESUMO do PO (`poNote`) ou, sem ele, o título original do agente quando o PO
+ * o reescreveu (é o detalhe técnico que o título legível escondeu). `null`
+ * quando não há nada além do próprio título.
+ */
+export function boardItemSummary(item: BoardItem): string | null {
+  const note = item.poNote?.trim()
+  if (note) return note
+  const source = item.sourceTitle?.trim()
+  if (item.poTitle && source && source !== item.poTitle.trim()) return source
+  return null
+}
+
 export function boardItemStatus(item: BoardItem): BoardItemStatus {
   return item.poStatus ?? item.sourceStatus
 }

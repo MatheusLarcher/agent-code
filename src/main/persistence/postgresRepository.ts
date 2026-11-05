@@ -1284,10 +1284,10 @@ export class PostgresRepository implements PersistenceRepository {
     return transaction(this.pool, async (client) => {
       await client.query(
         `INSERT INTO board_items(id, project_id, project_cwd, conversation_id, origin, source_id,
-           source_title, source_status, seq, po_reason, po_at)
+           source_title, source_status, seq, po_reason, po_at, po_note)
          VALUES($1, $2, $3, $4, 'po', NULL, $5, $6,
            (SELECT COALESCE(MAX(seq), -1) + 1 FROM board_items WHERE conversation_id = $4),
-           $7, clock_timestamp())`,
+           $7, clock_timestamp(), $8)`,
         [
           id,
           input.projectId,
@@ -1295,7 +1295,8 @@ export class PostgresRepository implements PersistenceRepository {
           input.conversationId,
           encodePostgresText(input.title),
           input.status,
-          encodePostgresText(input.reason)
+          encodePostgresText(input.reason),
+          input.note?.trim() ? encodePostgresText(input.note.trim()) : null
         ]
       )
       // As aditivas só gravam com a coluna presente; sem ela, o cartão nasce sem

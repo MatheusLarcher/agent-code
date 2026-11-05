@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragE
 import {
   boardItemAwaitingBadge,
   boardItemAwaitsUser,
+  boardItemSummary,
   boardItemStatus as effectiveStatus,
   boardItemTitle as effectiveTitle,
   isBoardItemPoCorrected as isPoCorrected,
@@ -480,11 +481,12 @@ function Card({
 }): JSX.Element {
   const status = effectiveStatus(item)
   const awaiting = boardItemAwaitingBadge(item)
+  const summary = boardItemSummary(item)
   return (
     <div className="board-card-wrap">
       <button
         type="button"
-        className={`board-card ${status}${dragging ? ' dragging' : ''}`}
+        className={`board-card ${status}${boardItemAwaitsUser(item) ? ' awaits' : ''}${dragging ? ' dragging' : ''}`}
         draggable={draggable}
         onDragStart={draggable ? (e) => onDragStart?.(e, item) : undefined}
         onDragEnd={draggable ? onDragEnd : undefined}
@@ -496,6 +498,8 @@ function Card({
           </span>
           <span className="board-card-title">{effectiveTitle(item)}</span>
         </span>
+        {/* Do que o cartão se trata, sem precisar perguntar (RESUMO do PO). */}
+        {summary && <span className="board-card-summary">{summary}</span>}
         {status === 'in_progress' && item.activeForm && (
           <span className="board-card-detail">{item.activeForm}</span>
         )}

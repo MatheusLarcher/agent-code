@@ -6,7 +6,7 @@
  * fecha primeiro o que estiver por cima.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { boardItemStatus, boardItemTitle, type BoardItem } from '@shared/ipc'
+import { boardItemStatus, boardItemSummary, boardItemTitle, type BoardItem } from '@shared/ipc'
 import { COLUMNS, fmtAgo } from '@renderer/components/BoardCardDetail'
 import { client, nav, openConversation } from '../app/runtime'
 import { CENTRAL_CONV_ID } from '../core/client'
@@ -68,9 +68,11 @@ function Topbar({ onScrum }: { onScrum: () => void }): JSX.Element {
 }
 
 function CardRow({ item, convTitle, now, onOpen }: { item: BoardItem; convTitle: string | undefined; now: number; onOpen: () => void }): JSX.Element {
+  const summary = boardItemSummary(item)
   return (
     <button type="button" className={`bd-card ${boardItemStatus(item)}${item.dismissedAt ? ' dismissed' : ''}`} onClick={onOpen}>
       <span className="bd-card-title">{boardItemTitle(item)}</span>
+      {summary ? <span className="bd-card-summary">{summary}</span> : null}
       <span className="bd-card-meta">
         {convTitle ? <span className="bd-card-conv">{convTitle}</span> : null}
         <span>{fmtAgo(item.updatedAt, now)}</span>

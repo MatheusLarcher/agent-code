@@ -237,10 +237,11 @@ export async function applyPoVerdict(
       // (a lista `cards` é a de antes da consulta).
       const card = byId.get(op.id)
       const keepReason = !card || boardItemStatus(card) === 'in_progress' || parseBoardTurnEndReason(card.poReason)
+      const note = op.summary ? { poNote: op.summary } : {}
       await deps.board.applyPo(
         keepReason
-          ? { id: op.id, poTitle: op.title, eventNote: op.reason }
-          : { id: op.id, poTitle: op.title, poReason: op.reason }
+          ? { id: op.id, poTitle: op.title, ...note, eventNote: op.reason }
+          : { id: op.id, poTitle: op.title, ...note, poReason: op.reason }
       )
       progress.touched.push(op.id)
     } else if (op.kind === 'justify') {
@@ -284,7 +285,8 @@ export async function applyPoVerdict(
         reason: routine ? PO_ROUTINE_REASON : op.reason,
         ...(op.parentId ? { parentId: op.parentId } : {}),
         ...(userAction ? { userAction } : {}),
-        ...(userAction && replyKind ? { replyKind } : {})
+        ...(userAction && replyKind ? { replyKind } : {}),
+        ...(op.summary ? { note: op.summary } : {})
       })
       if (created) progress.touched.push(created.id)
       if (created && op.status === 'in_progress') await linkLedgerTaskToCard(deps, convId, created.id, startedAt)
