@@ -7,6 +7,8 @@ import { poGitSince, type PoGitEvidence } from './poGit'
 import type { PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import type { PoAuthorizationOp } from './poAuthorization'
+import { defaultScheduleFlush, newConvState, type ConvState } from './poConvState'
+import { listPoBoard, releaseAdopted, settleAdoption } from './poForeign'
 import { listConvTasks, type PoLedgerDeps } from './poLedger'
 import {
   PO_COOLDOWN_MS,
@@ -80,50 +82,6 @@ export interface PoDeps extends PoProviderDeps, PoLedgerDeps {
   envioEtapas?(convId: string): Promise<PoEnvioEtapa[]>
 }
 
-interface ConvState {
-  userText: string | null
-  cwd: string
-  calls: PoCall[]
-  fired: boolean
-  /** A resposta final do turno (o texto do `result` ou o último bloco): vai
-   *  inteira para o fechamento e, quando a próxima mensagem chega, para a
-   *  abertura como a do turno ANTERIOR — e zera. */
-  reply: string | null
-  /** Os blocos de texto final do agente principal neste turno, em ordem. */
-  texts: string[]
-  /** Uma janela de cooldown por FASE: a abertura não pode gastar a do
-   *  fechamento, senão o turno que acabou de ser aberto nunca seria auditado. */
-  lastRunAt: Record<PoPhase, number>
-  /** Uma fila por FASE, pelo mesmo motivo do cooldown ser por fase: o turno
-   *  que a abertura pulou tem que voltar numa abertura futura, não ser
-   *  engolido pelo fechamento que rodar primeiro (e vice-versa) — cada fase
-   *  audita a evidência da SUA fila, nunca a da outra. Um pedido que nunca
-   *  passou pelo PO é exatamente o buraco que este recurso existe para fechar. */
-  deferred: Record<PoPhase, PoDeferred | null>
-  /** Cancelador do flush agendado para o fim do cooldown desta fase (null: nada
-   *  agendado), para o acumulado não esperar um próximo turno que pode nunca
-   *  chegar. Um só por fase, e a retentativa usa o MESMO lugar: as duas coisas
-   *  são "julgar a fila desta fase mais tarde". */
-  flushCancel: Record<PoPhase, (() => void) | null>
-  /** Retentativas SEGUIDAS já agendadas nesta fase (teto: PO_MAX_RETRIES).
-   *  Zera numa auditoria que chega ao fim — inclusive o "não" do gate — e
-   *  quando um turno real dispara a análise: aí a falha anterior é passado. */
-  retries: Record<PoPhase, number>
-  /** O que ainda roda em SEGUNDO PLANO (descrições do último snapshot
-   *  `background-tasks`, vazio = nada). Estado vivo, não evidência de turno:
-   *  o fechamento real o congela no `result`; o flush usa o de agora. */
-  background: readonly string[]
-}
-
-/** `PoDeps.scheduleFlush` padrão: `setTimeout`/`clearTimeout` reais, sem
- *  segurar o processo vivo (`unref`) — um flush pendente não pode ser o que
- *  impede o app de fechar. */
-function defaultScheduleFlush(delayMs: number, fn: () => void): () => void {
-  const timer = setTimeout(fn, delayMs)
-  timer.unref?.()
-  return () => clearTimeout(timer)
-}
-
 export class Po {
   private readonly state = new Map<string, ConvState>()
   /** As análises em voo por conversa — é o que `settled` espera. */
@@ -193,7 +151,11 @@ export class Po {
       this.start(convId, 'close', turn)
       return
     }
-    if (event.kind === 'error' || event.kind === 'result') conv.userText = null
+    if (event.kind === 'error' || event.kind === 'result') {
+      conv.userText = null
+      // Turno interrompido não tem fechamento: o adotado volta como o fim de turno faria.
+      void releaseAdopted(this.deps.board, conv.cwd, conv.adopted, 'error')
+    }
   }
 
   /**
@@ -275,19 +237,7 @@ export class Po {
   private conv(convId: string): ConvState {
     let conv = this.state.get(convId)
     if (!conv) {
-      conv = {
-        userText: null,
-        cwd: '',
-        calls: [],
-        fired: false,
-        reply: null,
-        texts: [],
-        lastRunAt: { open: 0, close: 0 },
-        deferred: { open: null, close: null },
-        flushCancel: { open: null, close: null },
-        retries: { open: 0, close: 0 },
-        background: []
-      }
+      conv = newConvState()
       this.state.set(convId, conv)
     }
     return conv
@@ -373,12 +323,12 @@ export class Po {
     const touched: string[] = []
     try {
       await this.deps.board.settled(convId)
-      const cards = await this.deps.board.list(turn.cwd, { conversationId: convId })
-      // `null` é quadro INDISPONÍVEL (sem repositório, pasta fora do ar): não há
-      // o que ler nem onde escrever. `[]` é quadro VAZIO, e esse é justamente o
-      // caso que a abertura existe para consertar — desistir dele era desistir
-      // do pedido que nunca virou tarefa.
-      if (!cards) {
+      // A conversa + os "a fazer" das outras do projeto (poForeign.ts). `null` é
+      // quadro INDISPONÍVEL: não há o que ler nem onde escrever. `[]` é quadro
+      // VAZIO, justamente o caso que a abertura existe para consertar.
+      const view = await listPoBoard(this.deps.board, turn.cwd, convId, conv.adopted)
+      const cards = view?.cards
+      if (!view || !cards) {
         outcome = 'quadro-indisponivel'
         return
       }
@@ -441,7 +391,7 @@ export class Po {
       const authorization = await this.deps.authorization?.(convId).catch(() => null)
       const request = buildPoRequest({
         config: cfg, convId, cwd: turn.cwd, projectId, phase, cards, userText: merged.userText, calls: merged.calls,
-        reply: merged.reply, messages: merged.messages, earlier: merged.earlier, ledgerTasks, background, returned, git, next, authorization, orphans, envioEtapas, correlationId: this.nextCorrelationId()
+        reply: merged.reply, messages: merged.messages, earlier: merged.earlier, ledgerTasks, background, returned, git, next, authorization, orphans, envioEtapas, foreign: view.foreign, correlationId: this.nextCorrelationId()
       })
 
       diagnostic(this.deps, request, 'claude-started', 'claude')
@@ -467,8 +417,13 @@ export class Po {
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
-        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans, envioEtapas }
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans, envioEtapas, foreign: view.foreign, outside: view.outside }
         await applyPoVerdict(this.deps, target, text, cards, progress)
+        // Com trabalho delegado (ou um turno novo rodando) o adotado continua em andamento.
+        const stillWorking = background.length > 0 || (force && conv.userText !== null && !conv.fired)
+        if (phase === 'open' || !stillWorking) {
+          await settleAdoption(this.deps.board, { cwd: turn.cwd, phase, adopted: conv.adopted, foreign: view.foreign, touched })
+        }
         // Daqui em diante a análise chegou ao fim: o que ela tirou da fila foi
         // julgado e escrito, e não volta.
         audited = true

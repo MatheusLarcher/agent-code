@@ -19,13 +19,16 @@ export interface PoDigestCard {
   id: string
   title: string
   status: BoardItemStatus
+  /** Cartão "a fazer" de OUTRA conversa do projeto (poForeign.ts). */
+  foreign?: boolean
 }
 
-export function poDigestCards(cards: readonly BoardItem[]): PoDigestCard[] {
+export function poDigestCards(cards: readonly BoardItem[], foreign?: ReadonlySet<string>): PoDigestCard[] {
   return cards.map((card) => ({
     id: card.id,
     title: card.poTitle ?? card.sourceTitle,
-    status: card.poStatus ?? card.sourceStatus
+    status: card.poStatus ?? card.sourceStatus,
+    ...(foreign?.has(card.id) ? { foreign: true } : {})
   }))
 }
 
@@ -56,6 +59,8 @@ export interface PoRequestInput {
   orphans?: readonly PoOrphanEtapa[]
   /** Só no fechamento: o placar do envio corrente (`PoDeps.envioEtapas`); vazio, sem seção. */
   envioEtapas?: readonly PoEnvioEtapa[]
+  /** Os cartões "a fazer" de outra conversa (poForeign.ts): saem marcados no digest. */
+  foreign?: ReadonlySet<string>
   correlationId: string
 }
 
@@ -72,7 +77,7 @@ function extraSections(input: PoRequestInput): string[] {
 export function buildPoRequest(input: PoRequestInput): PoObserverRequest {
   const base = buildPoPrompt({
     userText: input.userText,
-    cards: poDigestCards(input.cards),
+    cards: poDigestCards(input.cards, input.foreign),
     calls: [...input.calls],
     phase: input.phase,
     ledgerTasks: input.ledgerTasks,

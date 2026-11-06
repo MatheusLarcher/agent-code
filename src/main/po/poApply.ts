@@ -10,6 +10,7 @@ import { defaultCompletions, PO_DEFAULT_COMPLETE_REASON, untouchedSinceTurnEnd }
 import { parsePoHold, type PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
 import { parsePoAuthorization, PO_ROUTINE_REASON, routineFor, type PoAuthorizationOp } from './poAuthorization'
+import { keepForeignSafe, withForeignCards } from './poForeign'
 import { linkLedgerTaskToCard, type PoLedgerDeps } from './poLedger'
 import { poEnvioEtapaMap } from './poEtapas'
 import { shapePendencies } from './poPendency'
@@ -64,6 +65,11 @@ export interface PoApplyTarget {
   /** Só no fechamento: o placar do envio corrente que o digest listou — é por
    *  ele que `ETAPA [id]` chega ao cartão da etapa (poEtapas.ts). */
   envioEtapas?: readonly PoEnvioEtapa[]
+  /** Os cartões "a fazer" de OUTRA conversa que o digest mostrou (poForeign.ts):
+   *  neles só valem ANDAMENTO (abertura) e CONCLUIR (fechamento). */
+  foreign?: ReadonlySet<string>
+  /** Todo id de outra conversa no digest, adotados incluídos (poForeign.ts). */
+  outside?: ReadonlySet<string>
 }
 
 /** O que já foi escrito. Mutável de propósito: se uma escrita lança no meio,
@@ -156,7 +162,8 @@ export async function confirmCreates(deps: PoApplyDeps, ops: PoOp[], target: PoA
   // está "a fazer". Falha fechada: duplicar ou reabrir é pior do que registrar
   // depois, e o que ficou de fora volta na próxima auditoria.
   if (!fresh) return ops.filter((op) => !needsFreshList(op))
-  return confirmOrphans(deps, rejectUnsafeOps(ops, fresh, target.phase), target.convId)
+  const checked = await withForeignCards(deps.board, target.cwd, fresh, target.outside, ops)
+  return confirmOrphans(deps, rejectUnsafeOps(ops, checked, target.phase), target.convId)
 }
 
 /**
@@ -196,7 +203,7 @@ export async function applyPoVerdict(
   const defaults = target.phase === 'close' ? defaultCompletions(text, target.returned ?? [], etapaMap) : []
   const orphanIds = (target.orphans ?? []).map((orphan) => orphan.etapaId)
   const parsed = parsePoVerdict(text, cards.map((card) => card.id), target.phase, orphanIds, etapaMap)
-  const verdict = rejectUnsafeOps(shapePendencies(parsed, defaults, cards), cards, target.phase)
+  const verdict = keepForeignSafe(rejectUnsafeOps(shapePendencies(parsed, defaults, cards), cards, target.phase), target.foreign, target.phase)
   const ops = await confirmCreates(deps, verdict, target)
   const { convId, cwd, projectId, startedAt } = target
   const byId = new Map(cards.map((card) => [card.id, card]))

@@ -125,7 +125,8 @@ export const BOARD_GATE_CLOSE_QUESTION =
   'Este turno mudou o estado de algum trabalho — terminou, começou ou revelou uma tarefa que não está ' +
   'registrada no QUADRO — ou existe cartão no QUADRO com status errado diante das AÇÕES DO TURNO, das ' +
   'TAREFAS DO REGISTRO e da RESPOSTA DO AGENTE? Conta como sim quando o agente entregou o pedido e ' +
-  'terminou perguntando se faz um passo novo (há um cartão a concluir e outro a criar). Responda não só ' +
+  'terminou perguntando se faz um passo novo (há um cartão a concluir e outro a criar), e quando a ' +
+  'RESPOSTA DO AGENTE diz que fez o trabalho de um cartão "a fazer" do QUADRO. Responda não só ' +
   'quando o turno foi conversa, sem trabalho nenhum.'
 
 /** Descrições dos dois lados, por fase: o Jev calibra melhor com o que cada

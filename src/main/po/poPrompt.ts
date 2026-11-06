@@ -11,6 +11,7 @@ export { summarizeCall } from '../vigia/vigiaPrompt'
 import {
   PO_ETAPA_RULES,
   PO_ETAPA_SECTION,
+  PO_FOREIGN_MARK,
   PO_MESSAGES_SECTION,
   PO_ORPHAN_RULES,
   PO_ORPHAN_SECTION,
@@ -28,6 +29,7 @@ export {
   PO_AWAITING_AUTHORIZATION_REASON,
   PO_ETAPA_RULES,
   PO_ETAPA_SECTION,
+  PO_FOREIGN_MARK,
   PO_MAX_OPS,
   PO_MESSAGES_SECTION,
   PO_ORPHAN_RULES,
@@ -262,7 +264,7 @@ export function pickLedgerTasks(tasks: readonly PoLedgerTask[]): PoLedgerTask[] 
  *  quem chamava antes da abertura existir continua recebendo o mesmo prompt. */
 export function buildPoDigest(input: {
   userText: string
-  cards: { id: string; title: string; status: BoardItemStatus }[]
+  cards: { id: string; title: string; status: BoardItemStatus; foreign?: boolean }[]
   calls: PoCall[]
   phase?: PoPhase
   ledgerTasks?: PoLedgerTask[]
@@ -300,7 +302,10 @@ export function buildPoDigest(input: {
     ...(cards.length === 0
       ? ['(vazio)']
       : cards.map((card) =>
-          clamp(`${card.id} [${statusLabel(card.status)}] ${clamp(card.title, PO_MAX_TITLE_CHARS)}`, PO_MAX_CARD_LINE_CHARS)
+          clamp(
+            `${card.id} [${statusLabel(card.status)}]${card.foreign ? ` ${PO_FOREIGN_MARK}` : ''} ${clamp(card.title, PO_MAX_TITLE_CHARS)}`,
+            PO_MAX_CARD_LINE_CHARS
+          )
         ))
   ]
   // Na abertura o turno ainda não aconteceu. Uma seção de ações sempre vazia só

@@ -32,6 +32,11 @@ export const PO_RETURNED_SECTION = 'EM ANDAMENTO NO FIM DESTE TURNO (VIRAM CONCL
  *  usuário respondeu (a retomada automática) — curta para caber no teto da linha. */
 export const PO_RESUMED_MARK = '(retomado)'
 
+/** A marca, no QUADRO ATUAL, do cartão "a fazer" de OUTRA conversa do projeto
+ *  (poForeign.ts): o usuário vê o quadro do projeto inteiro e pode pedir no chat
+ *  daqui o trabalho de um cartão que nasceu lá. */
+export const PO_FOREIGN_MARK = '(outra conversa)'
+
 /** Os rótulos das seções com o TEXTO do turno (poTurnText.ts): moram aqui porque
  *  as regras abaixo os citam pelo nome. A mensagem do usuário e a resposta final
  *  vão inteiras; as mensagens intermediárias são as que o agente principal
@@ -114,6 +119,11 @@ Regras inegociáveis:
   — responder não é trabalho de quadro, e um quadro cheio de conversa não serve para nada.
 - Se algum cartão do quadro JÁ cobre o pedido, use ANDAMENTO nele em vez de criar outro. Dois
   cartões para o mesmo trabalho é pior do que nenhum: ninguém sabe qual seguir.
+- O usuário vê o quadro e costuma pedir no chat o trabalho de um cartão que já está lá, sem
+  clicar nele ("corrige o erro do login", "faz aquele do relatório"). Compare o ASSUNTO do
+  pedido com os títulos do quadro — não só as palavras exatas: se um cartão "a fazer" é aquele
+  trabalho, ANDAMENTO nele. Vale também para o cartão marcado ${PO_FOREIGN_MARK}: ele é do mesmo
+  projeto, só nasceu em outra conversa. Se o pedido cobre VÁRIOS cartões, ANDAMENTO em cada um.
 - Um pedido de CONTINUAÇÃO ("continua", "pode", "sim", "beleza", uma instrução extra sobre o
   mesmo assunto) não é diferente de um pedido novo quando já existe um cartão "a fazer" cobrindo
   aquele trabalho: use ANDAMENTO nele. Não responda OK só porque a mensagem, isolada, não parece
@@ -195,6 +205,18 @@ O QUE DECIDE O CARTÃO DO PEDIDO — leia primeiro:
   dão o contexto e o assunto, mas não contrariam a resposta final. Um "vou fazer X" ou "falta X"
   numa mensagem do meio do turno não é pendência se a resposta final diz que X foi feito; e uma
   ação que rodou não conclui o pedido se a resposta final diz que ele não foi entregue.
+- O usuário vê o quadro e costuma pedir no chat o trabalho de um cartão que JÁ estava lá, sem
+  clicar no quadro ("corrige o erro do login"). Esse cartão pode estar "a fazer" — inclusive
+  marcado ${PO_FOREIGN_MARK}, do mesmo projeto, nascido em outra conversa — e fora da seção
+  "${PO_RETURNED_SECTION}". Compare o ASSUNTO do pedido e da resposta final com os títulos do
+  quadro: se a resposta final diz que fez o trabalho daquele cartão (corrigiu, implementou,
+  entregou), CONCLUIR nele, com o motivo dizendo o que foi entregue — a resposta final É a
+  evidência. Ele é o cartão do pedido: não crie FEITA para o mesmo assunto. A resposta que entrega
+  vários cartões leva um CONCLUIR para cada um. Não conclua o cartão de que a resposta não fala,
+  nem o que ela diz que ficou faltando.
+  Exemplo. Quadro: "abc [a fazer] ${PO_FOREIGN_MARK} Corrigir o relatório em PDF sem a fonte".
+  Pedido: "arruma aquele erro do pdf". Resposta: "Corrigi o relatório em PDF: a fonte agora é
+  embutida e o teste passa." Certo: CONCLUIR abc | relatório em PDF corrigido, teste passando
 - Com turnos adiados (rótulo "turno anterior" nas mensagens), cada um traz a resposta final
   DAQUELE turno; a da seção "${PO_REPLY_SECTION.replace(/:$/, '')}" é a do turno mais recente.
 
