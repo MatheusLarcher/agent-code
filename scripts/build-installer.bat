@@ -41,18 +41,8 @@ if errorlevel 1 (
 )
 echo.
 
-REM --- Motor livre: o sync-engine acabou de por o claude.exe OFICIAL. Troca pelo ---
-REM --- recompilado sem a trava do classificador do modo auto (fora do git, 188 MB). ---
-REM --- Fica em <cacheDir>\motor\ (OneDrive). Ausente: o build PARA.               ---
-call node "%~dp0engine-override.mjs"
-if errorlevel 1 (
-    echo.
-    echo [ERRO] Nao foi possivel aplicar o claude.exe modificado.
-    echo.
-    pause
-    exit /b 1
-)
-echo.
+REM --- Motor OFICIAL desde a 2.1.321 (decisao de 09/11/2026): o CLI virou bytecode ---
+REM --- e o exe recompilado (engine-override.mjs) parou na 2.1.304. Nao trocar mais. ---
 
 REM --- Libs do package.json instaladas? O electron-builder so empacota o que ---
 REM --- ja esta em node_modules; lib nova sem npm install sai fora do setup.  ---
@@ -111,16 +101,6 @@ call node "%~dp0sync-engine.mjs" --verify "dist\win-unpacked\resources\app"
 if errorlevel 1 (
     echo.
     echo [ERRO] O instalador saiu sem o motor, ou com versao diferente.
-    echo.
-    pause
-    exit /b 1
-)
-
-REM --- Confere que o claude.exe embutido e o modificado ---
-call node "%~dp0engine-override.mjs" --verify "dist\win-unpacked\resources\app"
-if errorlevel 1 (
-    echo.
-    echo [ERRO] O instalador saiu com o claude.exe oficial em vez do modificado.
     echo.
     pause
     exit /b 1

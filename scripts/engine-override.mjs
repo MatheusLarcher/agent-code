@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// DESATIVADO desde 09/11/2026: o build-installer.bat usa o claude.exe OFICIAL
+// (a 2.1.321 é bytecode e não dá para recompilar como a 2.1.304). Mantido só
+// para o caso de voltar a existir um exe modificado na versão do SDK.
 // Troca o claude.exe oficial (que o sync-engine.mjs acabou de instalar) pelo
 // CLI recompilado sem as travas do classificador do modo auto — sem elas a
 // escolha "Modelo do classificador" das Configurações não passa de Haiku.
