@@ -47,7 +47,7 @@ export const AUTO_MODEL_DESCRIPTIONS: Record<string, string> = {
     'Equilíbrio entre custo e capacidade. O padrão do trabalho de código do dia a dia: implementar uma mudança já descrita, corrigir um bug localizado, escrever um teste.',
   'claude-opus-5-5':
     'Bem mais caro e bem mais capaz. Vale quando o problema é de fato difícil: desenhar arquitetura, bug não óbvio ou intermitente, concorrência, segurança, mudança que atravessa várias partes do código.',
-  'claude-fable-5-1':
+  'claude-fable-5-2':
     'O mais caro de todos e o mais capaz. Reserve para raciocínio realmente exigente e para trabalho agêntico longo, de muitas etapas encadeadas — em qualquer coisa menor que isso o custo não se paga.',
   // Os GPT só entram na lista quando há login do ChatGPT (ver o `autoStart` em
   // src/main/index.ts). Eles não são cobrados por token da API e sim pela

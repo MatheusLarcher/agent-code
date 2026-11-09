@@ -76,8 +76,8 @@ describe('configuração persistida', () => {
 
     // Gravar só o modelo não pode apagar o esforço (armadilha do spread raso).
     const comEsforco = mergeAppConfig(defaultAppConfig(), { planning: { effort: 'xhigh' } })
-    expect(mergeAppConfig(comEsforco, { planning: { model: 'claude-fable-5-1' } }).planning).toEqual({
-      model: 'claude-fable-5-1',
+    expect(mergeAppConfig(comEsforco, { planning: { model: 'claude-fable-5-2' } }).planning).toEqual({
+      model: 'claude-fable-5-2',
       effort: 'xhigh'
     })
     // O default nunca é o objeto compartilhado: mexer num não mexe no outro.

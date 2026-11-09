@@ -69,10 +69,10 @@ describe('resolvePlanningExecution: as quatro combinações', () => {
   })
 
   it('Automático + Automático: aceita o par escolhido, sobre a lista do Manager', async () => {
-    const d = deps({ model: 'claude-fable-5-1', effort: 'xhigh', source: TS })
+    const d = deps({ model: 'claude-fable-5-2', effort: 'xhigh', source: TS })
     const result = await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)
 
-    expect(result).toEqual({ model: 'claude-fable-5-1', effort: 'xhigh', source: 'typesafe' })
+    expect(result).toEqual({ model: 'claude-fable-5-2', effort: 'xhigh', source: 'typesafe' })
     expect(d.chooseAutoExecution).toHaveBeenCalledWith(PROMPT, { models: PLANNING_AUTO_MODELS, selection: AUTO_AUTO })
     expect(PLANNING_AUTO_MODELS).toEqual(CLAUDE_MODELS.map((m) => m.id))
   })
@@ -96,7 +96,7 @@ describe('resolvePlanningExecution: as quatro combinações', () => {
 
   it('fixo + Automático: só o esforço vem do TypeSafe; a lista do usuário nem é lida', async () => {
     const cfg: PlanningConfig = { model: STRONG, effort: AUTO_EFFORT }
-    const d = deps({ model: STRONG, effort: 'low', source: { effort: 'typesafe' } }, true, ['claude-fable-5-1'])
+    const d = deps({ model: STRONG, effort: 'low', source: { effort: 'typesafe' } }, true, ['claude-fable-5-2'])
     const result = await resolvePlanningExecution(cfg, PROMPT, d)
 
     expect(result).toEqual({ model: STRONG, effort: 'low', source: 'typesafe' })
@@ -191,52 +191,52 @@ describe('resolvePlanningExecution: lista do Automático', () => {
     const d = deps({ model: 'claude-sonnet-5-5', effort: 'high', source: TS }, true, [
       'gpt-6-sol',
       'claude-sonnet-5-5',
-      'claude-fable-5-1'
+      'claude-fable-5-2'
     ])
     const result = await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)
 
     expect(result).toEqual({ model: 'claude-sonnet-5-5', effort: 'high', source: 'typesafe' })
     expect(d.chooseAutoExecution).toHaveBeenCalledWith(PROMPT, {
-      models: ['claude-sonnet-5-5', 'claude-fable-5-1'],
+      models: ['claude-sonnet-5-5', 'claude-fable-5-2'],
       selection: AUTO_AUTO
     })
   })
 
   it('lista restrita: modelo "typesafe" fora da restrição é descartado', async () => {
-    const d = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-1', 'claude-sonnet-5-5'])
+    const d = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-2', 'claude-sonnet-5-5'])
     expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({ model: 'claude-sonnet-5-5', effort: 'max', source: 'fallback' })
   })
 
   it('lista restrita a UM modelo + esforço fixo: usa o modelo permitido, sem chamar a escolha', async () => {
     const cfg: PlanningConfig = { model: AUTO_MODEL, effort: 'xhigh' }
     // A escolha real devolveria `unprompted` (candidato único não é perguntado).
-    const d = deps({ model: 'claude-fable-5-1', effort: 'xhigh', source: { model: 'unprompted' } }, true, [
-      'claude-fable-5-1'
+    const d = deps({ model: 'claude-fable-5-2', effort: 'xhigh', source: { model: 'unprompted' } }, true, [
+      'claude-fable-5-2'
     ])
     const result = await resolvePlanningExecution(cfg, PROMPT, d)
 
-    expect(result).toEqual({ model: 'claude-fable-5-1', effort: 'xhigh', source: 'typesafe' })
+    expect(result).toEqual({ model: 'claude-fable-5-2', effort: 'xhigh', source: 'typesafe' })
     expect(result.model).not.toBe(PLANNING_AUTO_FALLBACK.model)
     expect(d.chooseAutoExecution).not.toHaveBeenCalled()
   })
 
   it('lista restrita a UM modelo + esforço Automático: o modelo é o permitido, só o esforço é decidido', async () => {
     const d = deps({ model: STRONG, effort: 'low', source: { model: 'unprompted', effort: 'typesafe' } }, true, [
-      'claude-fable-5-1'
+      'claude-fable-5-2'
     ])
     expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, d)).toEqual({
-      model: 'claude-fable-5-1',
+      model: 'claude-fable-5-2',
       effort: 'low',
       source: 'typesafe'
     })
-    expect(d.chooseAutoExecution).toHaveBeenCalledWith(PROMPT, { models: ['claude-fable-5-1'], selection: AUTO_AUTO })
+    expect(d.chooseAutoExecution).toHaveBeenCalledWith(PROMPT, { models: ['claude-fable-5-2'], selection: AUTO_AUTO })
 
     // Esforço sem decisão: o modelo continua o permitido, o esforço cai no do Manager.
     const semEsforco = deps({ model: STRONG, effort: 'high', source: { model: 'unprompted', effort: 'fallback' } }, true, [
-      'claude-fable-5-1'
+      'claude-fable-5-2'
     ])
     expect(await resolvePlanningExecution(AUTO_AUTO, PROMPT, semEsforco)).toEqual({
-      model: 'claude-fable-5-1',
+      model: 'claude-fable-5-2',
       effort: PLANNING_AUTO_FALLBACK.effort,
       source: 'fallback'
     })
@@ -251,7 +251,7 @@ describe('resolvePlanningExecution: lista do Automático', () => {
   })
 
   it('lista só é lida com o modelo em Automático, e erro ao lê-la cai no recuo', async () => {
-    const manual = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-1'])
+    const manual = deps({ model: STRONG, effort: 'max', source: TS }, true, ['claude-fable-5-2'])
     await resolvePlanningExecution({ model: STRONG, effort: 'high' }, PROMPT, manual)
     expect(manual.allowedAutoModels).not.toHaveBeenCalled()
 
@@ -268,7 +268,7 @@ describe('resolvePlanningExecution: lista do Automático', () => {
     expect(planningAutoCandidates([])).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates(undefined)).toEqual(PLANNING_AUTO_MODELS)
     expect(planningAutoCandidates('claude-sonnet-5-5')).toEqual(PLANNING_AUTO_MODELS)
-    expect(planningAutoCandidates(['claude-fable-5-1', STRONG])).toEqual([STRONG, 'claude-fable-5-1'])
+    expect(planningAutoCandidates(['claude-fable-5-2', STRONG])).toEqual([STRONG, 'claude-fable-5-2'])
     expect(planningAutoCandidates(['gpt-6-sol'])).toEqual([])
   })
 

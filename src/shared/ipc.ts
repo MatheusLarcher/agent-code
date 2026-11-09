@@ -1082,6 +1082,7 @@ export const MODEL_EFFORT: Record<string, EffortLevel[]> = {
   'claude-opus-4-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh', 'max'],
+  'claude-fable-5-2': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5-1': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   'claude-haiku-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -1138,7 +1139,7 @@ export function clampEffortToModel(model: string | undefined, effort: EffortLeve
 export const CLAUDE_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-fable-5-2', label: 'Fable 5.2' },
   { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }
 ]
 
@@ -1420,6 +1421,7 @@ export const CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-5': 1_000_000,
   'claude-sonnet-5-5': 1_000_000,
   'claude-sonnet-5': 1_000_000,
+  'claude-fable-5-2': 1_000_000,
   'claude-fable-5-1': 1_000_000,
   'claude-fable-5': 1_000_000,
   'claude-haiku-5-5': 1_000_000,
@@ -1604,7 +1606,7 @@ export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'claude-haiku-5-5', label: 'Haiku 5.5 (mais barato)' },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (recomendado)' },
   { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { id: 'claude-fable-5-1', label: 'Fable 5.1 (mais caro)' }
+  { id: 'claude-fable-5-2', label: 'Fable 5.2 (mais caro)' }
 ]
 
 /**

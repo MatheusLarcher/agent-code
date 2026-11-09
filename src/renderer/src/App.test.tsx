@@ -1269,8 +1269,8 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(select().value).toBe('claude-opus-4-8')
     expect(Array.from(select().options).find((o) => o.value === 'claude-opus-4-8')?.textContent).toContain('antigo')
 
-    fireEvent.change(select(), { target: { value: 'claude-fable-5-1' } })
-    expect(select().value).toBe('claude-fable-5-1')
+    fireEvent.change(select(), { target: { value: 'claude-fable-5-2' } })
+    expect(select().value).toBe('claude-fable-5-2')
     expect(api.disposeAgent).not.toHaveBeenCalled()
   })
 })
@@ -2707,13 +2707,13 @@ describe('App — modo Automático', () => {
       kind: 'provider-switch',
       id: 'auto-1',
       fromModel: 'auto',
-      model: 'claude-fable-5-1',
+      model: 'claude-fable-5-2',
       effort: 'medium',
       fastMode: false,
-      text: 'Automático: Fable 5.1, esforço médio.'
+      text: 'Automático: Fable 5.2, esforço médio.'
     })
 
-    expect(screen.getByText('Automático: Fable 5.1, esforço médio.').getAttribute('role')).toBe('status')
+    expect(screen.getByText('Automático: Fable 5.2, esforço médio.').getAttribute('role')).toBe('status')
     // Se o evento fixasse `model`, a conversa sairia do Automático e o turno
     // seguinte nunca mais perguntaria.
     expect(selectModel(container).value).toBe('auto')
@@ -2759,7 +2759,7 @@ describe('App — modo Automático', () => {
     await send('tarefa')
     await flushConnect()
 
-    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: 'C:/p', tools: [] })
+    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-2', cwd: 'C:/p', tools: [] })
 
     expect(selectModel(container).value).toBe('auto')
   })
@@ -2839,7 +2839,7 @@ describe('autoPromptFor / runningModel', () => {
   it('o modelo em uso é o escolhido, não o sentinel', () => {
     expect(runningModel({ model: 'auto', autoModel: 'claude-sonnet-5-5' })).toBe('claude-sonnet-5-5')
     expect(runningModel({ model: 'auto' })).toBe('auto')
-    expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-fable-5-1' })).toBe('claude-opus-5')
+    expect(runningModel({ model: 'claude-opus-5', autoModel: 'claude-fable-5-2' })).toBe('claude-opus-5')
   })
 })
 
@@ -2926,8 +2926,8 @@ describe('App — conversa de planejamento', () => {
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
     // O main anuncia o modelo real da sessão: é ele que o cabeçalho mostra.
-    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: '/proj', tools: [] }, 'p1')
-    expect(screen.getByTestId('pl-manager-model').textContent).toBe('Fable 5.1')
+    await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-2', cwd: '/proj', tools: [] }, 'p1')
+    expect(screen.getByTestId('pl-manager-model').textContent).toBe('Fable 5.2')
     await emit(result, 'p1')
 
     await send('agora a etapa de pagamento')
@@ -2951,7 +2951,7 @@ describe('App — conversa de planejamento', () => {
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await emit(
-      { kind: 'system', sessionId: 's1', model: 'claude-fable-5-1', cwd: '/proj', tools: [], effort: 'high' },
+      { kind: 'system', sessionId: 's1', model: 'claude-fable-5-2', cwd: '/proj', tools: [], effort: 'high' },
       'p1'
     )
     await waitFor(() => expect(effortTrigger()).toBe('Esforço Auto · Alto'))

@@ -951,9 +951,9 @@ describe('Memorista — modo Automático', () => {
       expect.objectContaining({ message: 'use pnpm neste projeto' }),
       { models: MEMORISTA_AUTO_MODELS }
     )
-    // A lista do seletor do memorista, e nada além dela: o Fable 5.1 é mais
+    // A lista do seletor do memorista, e nada além dela: o Fable 5.2 é mais
     // caro que o topo do que o usuário consegue escolher para ele à mão.
-    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'])
+    expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'])
     expect(seen[0]?.model).toBe('claude-sonnet-5-5')
   })
 })
