@@ -451,6 +451,13 @@ describe('AgentSession — Loop foi removido', () => {
     ).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/Loop foi removido/) })
   })
 
+  it('nega CronCreate, mesmo com Permitir tudo, e aponta para o MCP avisos', async () => {
+    const { s } = makeSession({ skipPermissions: true })
+    await expect(
+      gate(s, 'CronCreate', { cron: '7 */5 * * *', recurring: true, prompt: 'checar OLX' })
+    ).resolves.toMatchObject({ behavior: 'deny', message: expect.stringMatching(/aviso_monitor/) })
+  })
+
   it('mensagem que começa com /loop segue como texto normal, sem reescrita', async () => {
     const { s } = makeSession({})
     await s.start()

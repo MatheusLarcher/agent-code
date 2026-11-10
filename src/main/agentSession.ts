@@ -285,6 +285,12 @@ const VERIFIED_TOOLS = [
   'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'mcp__app__app_restart', 'mcp__app__app_chamar_usuario'
 ]
 
+/** Recusa do CronCreate na conversa: a agenda do usuário vai pelo MCP `avisos`. */
+export const CRON_CREATE_DENIAL =
+  'CronCreate não está disponível no Agent Code: a agenda some quando a sessão acaba e o usuário não a vê. ' +
+  'Use mcp__avisos__aviso_monitor (checar algo periodicamente e avisar quando bater) ou ' +
+  'mcp__avisos__aviso_lembrete (lembrete em horário fixo); essas aparecem na bolinha de tarefas da conversa.'
+
 /**
  * Trabalho que segue vivo DEPOIS de a chamada retornar: o retorno não prova
  * nada, então a sessão fica permanentemente incerta. É o caso que justifica um
@@ -2550,6 +2556,11 @@ ${lines}
     // /loop não rodam mais, com ou sem 'Permitir tudo'.
     if (toolName === 'ScheduleWakeup') {
       return Promise.resolve({ behavior: 'deny', message: 'ScheduleWakeup não está disponível: o modo Loop foi removido do Agent Code.' })
+    }
+    // O cron nativo do CLI some com a sessão e não aparece na bolinha de tarefas
+    // da conversa: agenda do usuário é sempre pelo MCP `avisos` do app.
+    if (toolName === 'CronCreate') {
+      return Promise.resolve({ behavior: 'deny', message: CRON_CREATE_DENIAL })
     }
     // Windows control has its own high-risk master gate. "Permitir tudo" must
     // never bypass it; enabling the dedicated toggle is the explicit grant.
