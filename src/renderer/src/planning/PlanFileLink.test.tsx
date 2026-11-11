@@ -88,6 +88,29 @@ describe('link no chat', () => {
     await waitFor(() => expect(openInEditor).toHaveBeenCalledWith(SANDBOX_FILE))
   })
 
+  it('mockup .html abre no navegador (window.open file://), nunca no VS Code', async () => {
+    const openInEditor = vi.fn(async () => ({ ok: true, message: '' }))
+    ;(window as unknown as { api: unknown }).api = { openInEditor }
+    const winOpen = vi.spyOn(window, 'open').mockReturnValue(null)
+    const html = 'C:\\proj\\app\\docs\\spec\\checkout\\_sandbox\\tela.html'
+    render(
+      <UiProvider>
+        <ChatDisplayContext.Provider value={{ compact: false, planDir: PLAN }}>
+          <MessageList
+            messages={[{ kind: 'tool-use', id: 'h', name: 'Write', input: { file_path: html, content: 'x' }, result: ok() }] as UIMessage[]}
+            busy={false}
+            tts={tts}
+            onRetry={() => {}}
+          />
+        </ChatDisplayContext.Provider>
+      </UiProvider>
+    )
+    fireEvent.click(screen.getByRole('link', { name: /tela\.html/ }))
+    await waitFor(() => expect(winOpen).toHaveBeenCalledTimes(1))
+    expect(String(winOpen.mock.calls[0][0])).toMatch(/^file:\/\/.*tela\.html$/)
+    expect(openInEditor).not.toHaveBeenCalled()
+  })
+
   it('fora do planejamento (sem planDir), nada muda no chat', () => {
     renderList()
     expect(screen.queryByRole('link', { name: /Abrir/ })).toBeNull()

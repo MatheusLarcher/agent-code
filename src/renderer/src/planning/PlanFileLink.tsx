@@ -6,7 +6,8 @@
  * Quais contam: `Write` bem-sucedido (código de teste no _sandbox) e o handoff
  * gravado por `plan_handoff_write`. Os cards não: eles já estão no canvas.
  *
- * Abrir = VS Code (`openInEditor`), nunca o programa padrão do sistema: o
+ * Mockup .html/.htm abre no navegador do usuário (Chrome), não no VS Code.
+ * O resto: Abrir = VS Code (`openInEditor`), nunca o programa padrão do sistema: o
  * arquivo foi escrito pelo agente, e "abrir" um .bat/.exe no Windows é
  * executá-lo. Só vale caminho DENTRO das pastas do plano que o main informou
  * (a do plano, na pasta de dados do app, e o _sandbox, no projeto), sem `..`
@@ -15,6 +16,10 @@
 import type { MouseEvent } from 'react'
 import { IconFile } from '../components/Icons'
 import { useUI } from '../ui/UiProvider'
+import { fileUrl } from '../fileUrl'
+
+/** Página web (.html/.htm): abre no navegador, não no editor. */
+export const isWebPage = (path: string): boolean => /\.html?$/i.test(path)
 
 export const HANDOFF_TOOL = 'mcp__planning__plan_handoff_write'
 const HANDOFF_RESULT = /Handoff gravado em (.+?)\s*$/
@@ -54,14 +59,21 @@ export function createdPlanFile(
 export function PlanFileLink({ path }: { path: string }): JSX.Element {
   const { notify } = useUI()
   const name = path.split(/[\\/]/).pop() || path
+  const web = isWebPage(path)
   const open = async (e: MouseEvent): Promise<void> => {
     e.preventDefault()
     e.stopPropagation()
+    // Mockup .html: navegador do usuário (window.open → setWindowOpenHandler → openUrlExternally),
+    // nunca o VS Code — mesmo com .html associado a ele no Windows.
+    if (web) {
+      window.open(fileUrl(path), '_blank')
+      return
+    }
     const r = await window.api.openInEditor(path)
     if (!r.ok) notify('erro', r.message)
   }
   return (
-    <a className="pl-file-link" href="#" onClick={(e) => void open(e)} title={`Abrir no VS Code: ${path}`}>
+    <a className="pl-file-link" href="#" onClick={(e) => void open(e)} title={web ? `Abrir no navegador: ${path}` : `Abrir no VS Code: ${path}`}>
       <span className="pl-file-link-icon" aria-hidden="true">
         <IconFile size={13} />
       </span>
