@@ -17,8 +17,8 @@ function setup(list: Partial<DatabaseBackupListDto> = {}) {
     activeSide: 'nuvem',
     cloudEnabled: true,
     items: [
-      { file: '2026-10-08_0010_nuvem_diario.dump', createdAt: '2026-10-08T03:10:00.000Z', side: 'nuvem', reason: 'diario', appVersion: '0.1.93', conversations: 120, lastUpdate: null, sizeBytes: 2 * 1024 * 1024 },
-      { file: '2026-10-07_2300_local_antes-da-troca.dump', createdAt: '2026-10-08T02:00:00.000Z', side: 'local', reason: 'antes-da-troca', appVersion: '0.1.93', conversations: 80, lastUpdate: null, sizeBytes: 1024 * 1024 }
+      { file: '2026-10-08_0010_nuvem_diario.dump', createdAt: '2026-10-08T03:10:00.000Z', side: 'nuvem', reason: 'diario', appVersion: '0.1.93', conversations: 120, lastUpdate: null, sizeBytes: 2 * 1024 * 1024, machine: 'MATHEUS-NOTE' },
+      { file: '2026-10-07_2300_local_antes-da-troca.dump', createdAt: '2026-10-08T02:00:00.000Z', side: 'local', reason: 'antes-da-troca', appVersion: '0.1.93', conversations: 80, lastUpdate: null, sizeBytes: 1024 * 1024, machine: null }
     ],
     ...list
   }

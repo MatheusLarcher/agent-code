@@ -91,7 +91,7 @@ export function BackupsSection(): JSX.Element {
   const remove = async (item: DatabaseBackupDto): Promise<void> => {
     const ok = await confirm({
       title: 'Apagar backup',
-      message: `Apagar o backup de ${when(item.createdAt)} (${SIDE_LABEL[item.side]}, ${REASON_LABEL[item.reason]})? Não dá para desfazer.`,
+      message: `Apagar o backup de ${when(item.createdAt)} (${item.machine ?? 'PC não registrado'}, ${SIDE_LABEL[item.side]}, ${REASON_LABEL[item.reason]})? Não dá para desfazer.`,
       confirmLabel: 'Apagar',
       danger: true
     })
@@ -141,7 +141,8 @@ export function BackupsSection(): JSX.Element {
         {data?.items.map((item) => (
           <div className={`settings-list-row ${chosen?.file === item.file ? 'chosen' : ''}`} key={item.file}>
             <span className="settings-list-main" title={item.file}>
-              {when(item.createdAt)} · {SIDE_LABEL[item.side]} · {REASON_LABEL[item.reason]}
+              {when(item.createdAt)} · {item.machine ?? 'PC não registrado'} · {SIDE_LABEL[item.side]} ·{' '}
+              {REASON_LABEL[item.reason]}
             </span>
             <span className="settings-list-meta">
               {item.conversations} conversa(s) · {formatBytes(item.sizeBytes)}

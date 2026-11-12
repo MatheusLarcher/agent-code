@@ -34,19 +34,29 @@ function make(active: boolean, now = Date.now()): DatabaseBackups {
     sides: async () => ({ activeSide: 'local', cloudEnabled: false }),
     log: (line) => logs.push(line),
     changed: () => undefined,
-    now: () => now
+    now: () => now,
+    machine: 'pc-empresa'
   })
   return backups
 }
 
-async function existingDaily(createdAt: Date): Promise<void> {
-  const file = '2026-10-07_0900_local_diario.dump'
+async function existingDaily(createdAt: Date, machine: string | null = 'PC-EMPRESA'): Promise<void> {
+  const file = `2026-10-07_0900_${machine ? `${machine}_` : ''}local_diario.dump`
   const temp = join(root, 'x.dump')
   await writeFile(temp, 'PGDMP')
   await commitBackup(join(root, 'backups'), temp, {
     version: 1, file, createdAt: createdAt.toISOString(), side: 'local', reason: 'diario', appVersion: 't',
-    conversations: 1, lastUpdate: null, sizeBytes: 5, tables: {}, serverVersion: null
+    conversations: 1, lastUpdate: null, sizeBytes: 5, tables: {}, serverVersion: null,
+    ...(machine ? { machine } : {})
   } satisfies BackupMeta)
+}
+
+async function dailyRuns(): Promise<boolean> {
+  const service = make(true)
+  const create = vi.spyOn(service, 'create').mockResolvedValue({} as BackupMeta)
+  service.startDaily(1)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  return create.mock.calls.length > 0
 }
 
 describe('backup diário', () => {
@@ -72,6 +82,16 @@ describe('backup diário', () => {
     offline.startDaily(1)
     await new Promise((resolve) => setTimeout(resolve, 80))
     expect(createOffline).not.toHaveBeenCalled()
+  })
+
+  it('diário recente de OUTRO PC (mesma pasta no OneDrive) não conta: este PC faz o seu', async () => {
+    await existingDaily(new Date(Date.now() - 3 * 60 * 60 * 1000), 'MATHEUS-NOTE')
+    expect(await dailyRuns()).toBe(true)
+  })
+
+  it('diário antigo sem máquina registrada não conta: o PC faz o primeiro com o nome dele', async () => {
+    await existingDaily(new Date(Date.now() - 3 * 60 * 60 * 1000), null)
+    expect(await dailyRuns()).toBe(true)
   })
 
   it('uma troca/restauração começando cancela o diário em curso (refeito depois)', async () => {

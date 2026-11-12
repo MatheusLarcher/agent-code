@@ -10,10 +10,13 @@ import {
   backupPath,
   commitBackup,
   deleteBackup,
+  isBackupFileName,
   listBackups,
+  normalizeMachine,
   pruneBackups,
   readBackupMeta,
   removePartials,
+  toBackupDto,
   uniqueBackupFile,
   type BackupMeta
 } from './backupFiles'
@@ -32,7 +35,8 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-const meta = (file: string, reason: BackupReason, createdAt: string): BackupMeta => ({
+const meta = (file: string, reason: BackupReason, createdAt: string, machine?: string): BackupMeta => ({
+  ...(machine ? { machine } : {}),
   version: 1,
   file,
   createdAt,
@@ -46,12 +50,12 @@ const meta = (file: string, reason: BackupReason, createdAt: string): BackupMeta
   serverVersion: '18.6'
 })
 
-async function add(reason: BackupReason, minute: number): Promise<string> {
+async function add(reason: BackupReason, minute: number, machine?: string): Promise<string> {
   const date = new Date(2026, 9, 8, 0, minute)
-  const file = uniqueBackupFile(dir, date, 'local', reason)
+  const file = uniqueBackupFile(dir, date, 'local', reason, machine)
   const dump = join(root, `${file}.src`)
   await writeFile(dump, 'PGDMP')
-  await commitBackup(dir, dump, meta(file, reason, date.toISOString()))
+  await commitBackup(dir, dump, meta(file, reason, date.toISOString(), machine))
   return file
 }
 
@@ -95,6 +99,31 @@ describe('pasta de backups', () => {
     expect(items.some((item) => item.file === troca)).toBe(true)
     expect(existsSync(join(dir, diarios[0]))).toBe(false)
     expect(existsSync(join(dir, diarios[0].replace('.dump', '.json')))).toBe(false)
+  })
+
+  it('nome com a máquina: normalizada no nome e aceita pelo padrão; o antigo sem máquina continua válido', () => {
+    const date = new Date(2026, 10, 12, 10, 32)
+    expect(normalizeMachine('Matheus Note.local')).toBe('MATHEUS-NOTE-LOCAL')
+    expect(normalizeMachine('***')).toBe('PC')
+    const named = backupBaseName(date, 'local', 'diario', 'matheus-note')
+    expect(named).toBe('2026-11-12_1032_MATHEUS-NOTE_local_diario')
+    expect(isBackupFileName(`${named}.dump`)).toBe(true)
+    expect(isBackupFileName(`${named}-2.dump`)).toBe(true)
+    expect(isBackupFileName('2026-11-12_1032_local_diario.dump')).toBe(true)
+    expect(isBackupFileName('2026-11-12_1032_..\\x_local_diario.dump')).toBe(false)
+  })
+
+  it('retenção por máquina: os diários de um PC não apagam os do outro nem os antigos sem máquina', async () => {
+    const antigo = await add('diario', 0)
+    const note: string[] = []
+    for (let minute = 1; minute <= 3; minute++) note.push(await add('diario', minute, 'MATHEUS-NOTE'))
+    const empresa: string[] = []
+    for (let minute = 10; minute <= 13; minute++) empresa.push(await add('diario', minute, 'MATHEUS-2D'))
+    expect(await pruneBackups(dir, 'diario', 3, 'matheus-2d')).toEqual([empresa[0]])
+    const left = (await listBackups(dir)).items.map((item) => item.file)
+    expect(left).toEqual(expect.arrayContaining([antigo, ...note, ...empresa.slice(1)]))
+    expect((await readBackupMeta(dir, note[0])).machine).toBe('MATHEUS-NOTE')
+    expect(toBackupDto(await readBackupMeta(dir, antigo)).machine).toBeNull()
   })
 
   it('commit falhando não deixa .dump pela metade na pasta', async () => {

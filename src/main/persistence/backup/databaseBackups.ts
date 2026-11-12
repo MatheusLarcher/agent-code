@@ -1,4 +1,5 @@
 import { mkdir, rm, stat } from 'node:fs/promises'
+import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { Client } from 'pg'
 import type { BackupReason, DatabaseBackupListDto, DatabaseSide } from '../../../shared/databaseBackup'
@@ -10,6 +11,7 @@ import {
   commitBackup,
   deleteBackup,
   listBackups,
+  normalizeMachine,
   pruneBackups,
   readBackupMeta,
   removePartials,
@@ -60,6 +62,8 @@ export interface DatabaseBackupsDeps {
   changed(): void
   run?: PgToolRunner
   now?: () => number
+  /** Nome deste PC (padrão: os.hostname()). A pasta de backups é compartilhada entre PCs. */
+  machine?: string
 }
 
 const mb = (bytes: number): string => (bytes / 1048576).toFixed(1)
@@ -106,9 +110,13 @@ export class DatabaseBackups {
   private daily: { controller: AbortController; done: Promise<void> } | null = null
   private dailyTimer: ReturnType<typeof setTimeout> | null = null
 
+  /** Este PC, já no formato do nome do arquivo. */
+  readonly machine: string
+
   constructor(private readonly deps: DatabaseBackupsDeps) {
     this.run = deps.run ?? runPgTool
     this.now = deps.now ?? Date.now
+    this.machine = normalizeMachine(deps.machine ?? hostname())
   }
 
   /** Backup de um lado para a pasta de backups; devolve os dados gravados no .json. */
@@ -125,7 +133,7 @@ export class DatabaseBackups {
     await removePartials(dir)
     const started = this.now()
     const createdAt = new Date(started).toISOString()
-    const file = uniqueBackupFile(dir, new Date(started), source.side, reason)
+    const file = uniqueBackupFile(dir, new Date(started), source.side, reason, this.machine)
     const temp = join(tempDir, file)
     this.current = { side: source.side, reason, startedAt: createdAt }
     this.deps.changed()
@@ -145,10 +153,11 @@ export class DatabaseBackups {
         sizeBytes,
         tables: counts.tables,
         serverVersion,
-        durationMs: this.now() - started
+        durationMs: this.now() - started,
+        machine: this.machine
       }
       await commitBackup(dir, temp, meta)
-      const removed = await pruneBackups(dir, reason)
+      const removed = await pruneBackups(dir, reason, undefined, this.machine)
       this.deps.log(
         `backup: ${file} — ${mb(sizeBytes)} MB, ${counts.conversations} conversa(s), em ${meta.durationMs} ms` +
           (removed.length ? `; retenção apagou ${removed.join(', ')}` : '')
@@ -269,7 +278,8 @@ export class DatabaseBackups {
 
   private async dailyDue(): Promise<boolean> {
     const { items } = await listBackups(this.deps.backupsDir())
-    const last = items.find((meta) => meta.reason === 'diario')
+    // Só o diário DESTE PC conta: o de outro PC (mesma pasta no OneDrive) é de outro banco.
+    const last = items.find((meta) => meta.reason === 'diario' && meta.machine === this.machine)
     return !last || this.now() - Date.parse(last.createdAt) >= DAY_MS
   }
 

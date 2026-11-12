@@ -28,6 +28,8 @@ export interface DatabaseBackupDto {
   /** Última atualização de conversa no momento do backup (ISO); null num banco vazio. */
   lastUpdate: string | null
   sizeBytes: number
+  /** PC que fez o backup (nome do computador); null nos backups antigos, de antes desse registro. */
+  machine: string | null
 }
 
 export interface DatabaseBackupListDto {

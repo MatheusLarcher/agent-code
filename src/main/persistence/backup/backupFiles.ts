@@ -31,24 +31,43 @@ const metaSchema = z.object({
   /** Linhas por tabela no snapshot do dump: a restauração confere por elas. */
   tables: z.record(z.string(), z.number().int().min(0)),
   serverVersion: z.string().nullable(),
-  durationMs: z.number().int().min(0).optional()
+  durationMs: z.number().int().min(0).optional(),
+  /**
+   * PC que fez o backup. A pasta é compartilhada pelo OneDrive entre PCs, cada um
+   * com o seu banco: o diário e a retenção são por máquina. Ausente nos antigos.
+   */
+  machine: z.string().min(1).max(40).optional()
 })
 
 export type BackupMeta = z.infer<typeof metaSchema>
 
-const NAME = /^(\d{4}-\d{2}-\d{2})_(\d{4})_(local|nuvem)_(diario|antes-da-troca|antes-da-restauracao)(?:-(\d{1,3}))?\.dump$/
+/** Nome do PC só com letras, dígitos e hífen (vai no nome do arquivo). */
+export function normalizeMachine(name: string): string {
+  const clean = name
+    .normalize('NFD')
+    .replace(/[^A-Za-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .toUpperCase()
+  return clean || 'PC'
+}
+
+// O segmento da máquina é opcional: os backups antigos não têm.
+const NAME =
+  /^(\d{4}-\d{2}-\d{2})_(\d{4})_(?:([A-Z0-9][A-Z0-9-]{0,39})_)?(local|nuvem)_(diario|antes-da-troca|antes-da-restauracao)(?:-(\d{1,3}))?\.dump$/
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 
-/** `2026-10-08_0012_nuvem_antes-da-troca` (hora local, como o usuário lê). */
-export function backupBaseName(date: Date, side: DatabaseSide, reason: BackupReason): string {
+/** `2026-10-08_0012_MATHEUS-NOTE_nuvem_antes-da-troca` (hora local, como o usuário lê). */
+export function backupBaseName(date: Date, side: DatabaseSide, reason: BackupReason, machine?: string): string {
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-  return `${day}_${pad(date.getHours())}${pad(date.getMinutes())}_${side}_${reason}`
+  const host = machine ? `${normalizeMachine(machine)}_` : ''
+  return `${day}_${pad(date.getHours())}${pad(date.getMinutes())}_${host}${side}_${reason}`
 }
 
 /** O nome livre na pasta: dois backups no mesmo minuto ganham `-2`, `-3`… */
-export function uniqueBackupFile(dir: string, date: Date, side: DatabaseSide, reason: BackupReason): string {
-  const base = backupBaseName(date, side, reason)
+export function uniqueBackupFile(dir: string, date: Date, side: DatabaseSide, reason: BackupReason, machine?: string): string {
+  const base = backupBaseName(date, side, reason, machine)
   for (let attempt = 1; attempt < 1000; attempt++) {
     const name = attempt === 1 ? base : `${base}-${attempt}`
     if (!existsSync(join(dir, `${name}.dump`)) && !existsSync(join(dir, `${name}.json`))) return `${name}.dump`
@@ -93,7 +112,8 @@ export function toBackupDto(meta: BackupMeta): DatabaseBackupDto {
     appVersion: meta.appVersion,
     conversations: meta.conversations,
     lastUpdate: meta.lastUpdate,
-    sizeBytes: meta.sizeBytes
+    sizeBytes: meta.sizeBytes,
+    machine: meta.machine ?? null
   }
 }
 
@@ -140,11 +160,21 @@ export async function deleteBackup(dir: string, file: string): Promise<void> {
   await rm(path, { force: true })
 }
 
-/** Retenção: no máximo `max` por motivo (os diários não empurram os de antes de uma troca). */
-export async function pruneBackups(dir: string, reason: BackupReason, max = BACKUPS_PER_REASON): Promise<string[]> {
+/**
+ * Retenção: no máximo `max` por motivo E por máquina — os diários não empurram os
+ * de antes de uma troca, e os de um PC não apagam os do outro. Os antigos, sem
+ * máquina, formam um grupo próprio (nunca são apagados pelos novos).
+ */
+export async function pruneBackups(
+  dir: string,
+  reason: BackupReason,
+  max = BACKUPS_PER_REASON,
+  machine?: string
+): Promise<string[]> {
   const { items } = await listBackups(dir)
   const removed: string[] = []
-  for (const meta of items.filter((item) => item.reason === reason).slice(max)) {
+  const owner = machine ? normalizeMachine(machine) : undefined
+  for (const meta of items.filter((item) => item.reason === reason && item.machine === owner).slice(max)) {
     await deleteBackup(dir, meta.file).catch(() => undefined)
     removed.push(meta.file)
   }
