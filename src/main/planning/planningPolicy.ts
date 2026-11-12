@@ -108,7 +108,18 @@ export const MANAGER_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
 
 /** Servidores MCP cujas ferramentas o Manager pode chamar (ver MANAGER_INHERITED_SERVERS). */
 // mcp__skills__ só existe com o catálogo de skills em níveis (só lê o catálogo).
-const MANAGER_ALLOWED_MCP_PREFIXES: readonly string[] = ['mcp__planning__', 'mcp__memory__', 'mcp__skills__']
+// browser/chrome/windows: o Manager lê páginas, automatiza o navegador e testa no
+// Windows para planejar com base no comportamento real. Chrome e Windows seguem
+// os interruptores do usuário em Configurações (o próprio servidor recusa se
+// estiverem desligados) — não dão escrita nos arquivos do projeto.
+const MANAGER_ALLOWED_MCP_PREFIXES: readonly string[] = [
+  'mcp__planning__',
+  'mcp__memory__',
+  'mcp__skills__',
+  'mcp__browser__',
+  'mcp__chrome__',
+  'mcp__windows__'
+]
 
 /**
  * `null` = a ferramenta está na allowlist do Agent Manager (ou a sessão não é o
@@ -123,7 +134,8 @@ export function planningToolDenial(role: { planning?: unknown }, toolName: strin
     'Aqui valem: leitura (Read, Glob, Grep, LS), escrita só no _sandbox (Write, Edit, MultiEdit), ' +
     'Bash (o único shell, cada comando com aprovação do usuário), pesquisa na web (WebFetch, WebSearch), ' +
     'a lista de tarefas (TodoWrite, TaskCreate, TaskUpdate, TaskList, TaskGet), AskUserQuestion, Skill, ToolSearch, ' +
-    'mcp__app__app_chamar_usuario ' +
+    'mcp__app__app_chamar_usuario, ' +
+    'o navegador embutido (mcp__browser__*), o Chrome do usuário (mcp__chrome__*), o controle do Windows (mcp__windows__*) ' +
     'e as ferramentas mcp__planning__* e mcp__memory__*.'
   )
 }

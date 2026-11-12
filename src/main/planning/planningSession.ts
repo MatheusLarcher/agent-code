@@ -33,11 +33,13 @@ import { createPlanningMcpServer, PLANNING_MCP_SERVER, type PlanningToolContext 
 /** O que a sessão sabe de si e estas funções precisam ler. */
 export type PlanningSessionRole = Pick<StartAgentOptions, 'cwd' | 'planning' | 'handoff'>
 
-/** Servidores da sessão comum que o Manager herda. O resto (browser, android,
- *  windows, tasks) é de quem executa, não de quem planeja. O 'app' do Manager
- *  só tem o app_chamar_usuario (a sessão o monta sem o app_restart). O 'skills'
- *  (busca no catálogo) só existe com o catálogo de skills em níveis ligado. */
-const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory', 'app', 'skills']
+/** Servidores da sessão comum que o Manager herda. browser, chrome e windows
+ *  servem para ler páginas, automatizar o navegador e testar no Windows enquanto
+ *  planeja (chrome/windows seguem os interruptores de Configurações). android e
+ *  tasks continuam só com quem executa. O 'app' do Manager só tem o
+ *  app_chamar_usuario (a sessão o monta sem o app_restart). O 'skills' (busca no
+ *  catálogo) só existe com o catálogo de skills em níveis ligado. */
+const MANAGER_INHERITED_SERVERS: readonly string[] = ['memory', 'app', 'skills', 'browser', 'chrome', 'windows']
 
 export interface PlanningSessionSetup {
   projectCwd: string
@@ -70,9 +72,9 @@ export function buildPlanningAppend(
  * Converte as Options montadas para uma conversa comum nas do Agent Manager.
  * Muta `options` de propósito: a sessão monta um objeto só e o entrega ao SDK.
  *
- * - servidores MCP: `planning` + os herdados (memory, app), nada mais;
- * - system prompt: o do Manager + memória, sem os hints de browser/android/
- *   tasks/windows (que descrevem ferramentas que ele não tem);
+ * - servidores MCP: `planning` + os herdados (MANAGER_INHERITED_SERVERS), nada mais;
+ * - system prompt: o do Manager + os blocos que a sessão passa (memória e os
+ *   hints de browser/chrome/windows), sem os de android/tasks;
  * - `strictMcpConfig`: SÓ esses servidores — sem ele o CLI ainda carregaria os
  *   MCPs do usuário, do projeto (.mcp.json) e de plugins, e o Manager ganharia
  *   ferramentas que ninguém aqui revisou;

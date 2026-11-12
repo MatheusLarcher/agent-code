@@ -1652,7 +1652,16 @@ export class AgentSession {
         projectCwd: this.opts.cwd,
         slug: this.opts.planning.slug,
         // O chamado também vale no Manager (o 'app' dele só tem o app_chamar_usuario).
-        memoryBlocks: [memory ? buildMemoryHint(memoriesDir) : '', memorySnapshot?.catalog ?? '', APP_CALL_HINT, highSkills.text],
+        // Navegador, Chrome e Windows também no Manager: ler páginas, automatizar e testar enquanto planeja.
+        memoryBlocks: [
+          memory ? buildMemoryHint(memoriesDir) : '',
+          memorySnapshot?.catalog ?? '',
+          APP_CALL_HINT,
+          BROWSER_HINT,
+          CHROME_CONTROL_HINT,
+          process.platform === 'win32' ? WINDOWS_CONTROL_HINT : '',
+          highSkills.text
+        ],
         guidance: loadConfig().handoff
       })
     }

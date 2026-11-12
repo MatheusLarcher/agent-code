@@ -122,14 +122,15 @@ describe('ferramentas e skills do Manager', () => {
     const allowed = [
       'Read', 'Glob', 'Grep', 'LS', 'Write', 'Edit', 'MultiEdit', 'Bash', 'BashOutput', 'KillShell', 'KillBash',
       'WebFetch', 'WebSearch', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'AskUserQuestion',
-      'Skill', 'ToolSearch', 'mcp__planning__plan_read', 'mcp__planning__plan_card_create', 'mcp__memory__memory_list'
+      'Skill', 'ToolSearch', 'mcp__planning__plan_read', 'mcp__planning__plan_card_create', 'mcp__memory__memory_list',
+      'mcp__browser__browser_navigate', 'mcp__chrome__chrome_snapshot', 'mcp__windows__windows_click'
     ]
     for (const tool of allowed) expect(planningToolDenial(manager, tool), tool).toBeNull()
     expect([...MANAGER_ALLOWED_TOOLS].every((tool) => planningToolDenial(manager, tool) === null)).toBe(true)
     const denied = [
       'Monitor', 'PowerShell', 'Workflow', 'EnterWorktree', 'CronCreate', 'RemoteTrigger', 'Agent', 'Task',
-      'NotebookEdit', 'ScheduleWakeup', 'ExitPlanMode', 'mcp__powerbi__x', 'mcp__browser__browser_navigate',
-      'mcp__windows__click', 'mcp__tasks__task_claim', 'mcp__planningx__y', 'bash', 'read', ''
+      'NotebookEdit', 'ScheduleWakeup', 'ExitPlanMode', 'mcp__powerbi__x', 'mcp__android__android_tap',
+      'mcp__browserx__y', 'mcp__tasks__task_claim', 'mcp__planningx__y', 'bash', 'read', ''
     ]
     for (const tool of denied) {
       expect(planningToolDenial(manager, tool), tool).toMatch(/não está disponível na sessão do Agent Manager/)

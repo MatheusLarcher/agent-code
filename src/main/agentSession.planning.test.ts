@@ -114,28 +114,33 @@ afterEach(() => {
 })
 
 describe('AgentSession — start() da sessão do Agent Manager', () => {
-  it('servidores MCP: planning + memory + app só com o app_chamar_usuario; sem browser, android, windows e tasks', async () => {
+  it('servidores MCP: planning + memory + app só com o app_chamar_usuario + browser/chrome/windows; sem android e tasks', async () => {
     await makeSession({ planning: { slug } }).start()
     const mcp = lastOptions().mcpServers as Record<string, { instance?: { _registeredTools?: object } }>
     const servers = Object.keys(mcp)
     expect(servers).toContain('planning')
     expect(servers).toContain('memory')
     expect(Object.keys(mcp.app.instance?._registeredTools ?? {})).toEqual(['app_chamar_usuario'])
-    for (const name of ['browser', 'android', 'windows', 'tasks']) expect(servers).not.toContain(name)
+    // Navegador, Chrome e Windows: o Manager lê páginas, automatiza e testa enquanto planeja.
+    expect(servers).toContain('browser')
+    expect(servers).toContain('chrome')
+    if (process.platform === 'win32') expect(servers).toContain('windows')
+    for (const name of ['android', 'tasks']) expect(servers).not.toContain(name)
     const { append } = lastOptions().systemPrompt as { append: string }
     expect(append).toContain('app_chamar_usuario')
   })
 
-  it('prompt do Manager + memória, sem os hints de browser/android/tasks/windows', async () => {
+  it('prompt do Manager + memória + hints de browser/chrome/windows, sem os de android/tasks', async () => {
     await makeSession({ planning: { slug } }).start()
     const { append } = lastOptions().systemPrompt as { append: string }
     expect(append).toContain(`Agent Manager do planejamento "${slug}"`)
     expect(append).toContain(path.join(cwd, 'docs', 'spec', slug, '_sandbox'))
     expect(append).toContain('PERSISTENT MEMORY')
-    expect(append).not.toContain('embedded web browser')
+    expect(append).toContain('embedded web browser')
+    expect(append).toContain('Controle do Chrome do usuário')
+    if (process.platform === 'win32') expect(append).toContain('Controle de aplicativos do Windows')
     expect(append).not.toContain('TASK LEDGER')
     expect(append).not.toContain('"android" MCP tools')
-    expect(append).not.toContain('Controle de aplicativos do Windows')
   })
 
   it('sem subagentes nem outros shells; strictMcpConfig; nenhum agente especialista', async () => {
