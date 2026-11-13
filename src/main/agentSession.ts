@@ -22,6 +22,7 @@ import { ToolInputStreams, type RawStreamEvent } from './toolInputStream'
 import { ThinkingStreams } from './thinkingStream'
 import { withTodoTools } from './todoToolsEnv'
 import { AgentTaskTranslator } from './agentTasks'
+import { UserStopFence } from './userStopFence'
 import { MirrorRepair, MIRROR_REPAIR_SEND_TIMEOUT_MS, mirrorRepairText } from './mirrorRepair'
 import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import { presenceRemove, presenceSnapshot, presenceUpdate, recentTopics, renderCrossConversation, renderTopics, renderWorkingNow } from './crossConversation'
@@ -629,6 +630,8 @@ export class AgentSession {
    *  interrupted exchange in its in-memory context (no API to drop it), so the
    *  next message is prefixed with a note telling the model to disregard it. */
   private canceledPending = false
+  /** O Stop do usuário para subagentes e tarefas de fundo também (userStopFence.ts). */
+  private readonly stopFence = new UserStopFence()
   /** Original task text for bounded memory retrieval across the model's tool
    * loop. The full docs context is re-read by SDK hooks for every request. */
   private activeMemoryQuery = ''
@@ -2142,6 +2145,12 @@ export class AgentSession {
       () => ({ ok: false as const, value: undefined }) // fora de turno: não havia o que cancelar
     )
     this.releasePendingPermissions(reason)
+    // Stop do usuário para tudo (userStopFence.ts): a mensagem parada não volta
+    // pela fila durável e os subagentes e tarefas de fundo param junto.
+    if (cancel) {
+      this.stopFence.cancelInput(this.currentInputId)
+      for (const taskId of this.stopFence.liveTasks()) void this.stopTask(taskId)
+    }
 
     let timer: NodeJS.Timeout | undefined
     const ack = await Promise.race([
@@ -2157,7 +2166,11 @@ export class AgentSession {
     // to disregard the canceled request. Vale também quando o recibo não veio a
     // tempo — o pedido de interrupção foi enviado do mesmo jeito; só o `false`
     // (o CLI recusou porque não havia turno) é que não cancela nada.
-    if (ack.ok === false) return null
+    if (ack.ok === false) {
+      // O CLI não tinha turno: nada foi parado, a mensagem segue com a fila normal.
+      if (cancel) this.stopFence.cancelInput(null, true)
+      return null
+    }
     if (cancel) this.canceledPending = true
     const stillQueued = ack.ok === 'timeout' ? [] : ack.value?.still_queued ?? []
     // Nada sobreviveu: acabou aqui. Quando o Stop pega a mensagem ANTES de o
@@ -2814,7 +2827,10 @@ ${lines}
           }).tasks
           this.restartBackground = Array.isArray(tasks) ? tasks.length : null
           // A contagem do SDK passa a valer pelo comando em segundo plano lançado.
-          if (Array.isArray(tasks)) this.restartDetachedPending = false
+          if (Array.isArray(tasks)) {
+            this.restartDetachedPending = false
+            this.stopFence.noteBackground(tasks.map((task) => task.task_id).filter((id): id is string => typeof id === 'string' && id.length > 0))
+          }
           appRestart?.changed()
           this.emit({
             kind: 'background-tasks',
@@ -2844,7 +2860,10 @@ ${lines}
         } else {
           // task_started/progress/updated/notification: o ciclo da tarefa (agentTasks.ts).
           const task = this.agentTasks.translate(message)
-          if (task) this.emit(task)
+          if (task) {
+            this.emit(task)
+            this.stopFence.noteTask(task.taskId, task.status === 'running')
+          }
         }
         break
 
@@ -2974,7 +2993,12 @@ ${lines}
         if (this.currentInputId !== null && this.inputQueueRepository) {
           const inputId = this.currentInputId
           this.currentInputId = null
-          if (r.is_error || usageExhausted) {
+          // O Stop do usuário fecha o turno com `result` de erro: não é falha a
+          // repetir. Voltar para a fila reenviava a mensagem parada e o agente
+          // recomeçava a tarefa sozinho (userStopFence.ts).
+          const stoppedByUser = this.stopFence.takeCanceledInput(inputId)
+          if (stoppedByUser) logSession('stop-input-dropped', { convId: this.opts.convId })
+          if ((r.is_error || usageExhausted) && !stoppedByUser) {
             void this.inputQueueRepository.requeueAgentInput(inputId, r.result ?? 'Agent turn failed')
               .then(() => this.drainPersistedInputs())
               .catch((error) => console.warn('[agent-input-queue] requeue failed:', error))
@@ -3138,7 +3162,9 @@ ${lines}
   /** Hook `SubagentStop` → `agent-task` de fim, se o SDK ainda não fechou a tarefa. */
   private emitSubagentStop(input: unknown): void {
     const ended = this.agentTasks.fromSubagentStop(input)
-    if (ended) this.emit(ended)
+    if (!ended) return
+    this.emit(ended)
+    this.stopFence.noteTask(ended.taskId, false)
   }
 
   private handleStreamEvent(ev: RawStreamEvent, parentToolUseId: string | null): void {

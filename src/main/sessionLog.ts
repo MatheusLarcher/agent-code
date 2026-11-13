@@ -32,6 +32,7 @@ export type SessionLogEvent =
   | 'model-refusal'
   /** O usuário parou UMA tarefa de fundo (`taskId`; `threw` quando o SDK recusou). */
   | 'task-stop'
+  | 'stop-input-dropped'
 
 export type SessionLogReason =
   | 'auto-pair'
