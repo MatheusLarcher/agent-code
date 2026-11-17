@@ -49,8 +49,10 @@ describe('"Aguardando você" — o que precisa do usuário', () => {
   it('o número na aba do quadro: quantos cartões esperam você', () => {
     const items = [card(), card({ id: 'c2', sourceStatus: 'completed' }), card({ id: 'c3', poReason: null })]
     expect(boardProgress(items)).toEqual({ done: 1, total: 3, awaiting: 1 })
-    render(<RightPaneTabs active="board" onSelect={() => {}} onCollapse={() => {}} liveAgents={0} browserTabs={0} boardProgress={{ done: 1, total: 3, awaiting: 1 }} />)
-    expect(screen.getByTitle('1 cartão espera você').textContent).toBe('1')
+    render(<RightPaneTabs active="board" onSelect={() => {}} onCollapse={() => {}} liveAgents={0} boardProgress={{ done: 1, total: 3, awaiting: 1 }} />)
+    const awaiting = document.querySelector('.pane-tab-count.awaiting')
+    expect(awaiting?.getAttribute('data-tip')).toBe('1 cartão espera você')
+    expect(awaiting?.textContent).toBe('1')
   })
 })
 

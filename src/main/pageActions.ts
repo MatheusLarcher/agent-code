@@ -1,10 +1,8 @@
-import { clipboard } from 'electron'
-import type { Page, CDPSession } from 'playwright'
-import type { BrowserInput } from '../shared/ipc'
+import type { Page } from 'playwright'
 
 /**
- * Pure operations on a Playwright page — the web half of a preview tab. Kept out
- * of BrowserController so the controller stays focused on tab/stream lifecycle.
+ * Pure operations on a Playwright page. Kept out of BrowserController so the
+ * controller stays focused on the window and its tabs.
  */
 
 /** Treat as absolute if it has a scheme; otherwise assume https. */
@@ -80,107 +78,4 @@ export async function evaluateExpression(page: Page, expression: string): Promis
     }
   }, expression)
   return String(result).slice(0, 8000)
-}
-
-/** Turn the in-page element picker on/off (hides the highlight box when off). */
-export async function setSelectMode(page: Page, on: boolean): Promise<void> {
-  await page
-    .evaluate((v: boolean) => {
-      ;(window as unknown as { __agentSelectMode: boolean }).__agentSelectMode = v
-      const b = document.getElementById('__agent_highlight__')
-      if (b && !v) b.style.display = 'none'
-    }, on)
-    .catch(() => undefined)
-}
-
-/** Re-assert the current select-mode flag (e.g. after a navigation). */
-export async function syncSelectMode(page: Page, on: boolean): Promise<void> {
-  try {
-    await page.evaluate((v: boolean) => {
-      ;(window as unknown as { __agentSelectMode: boolean }).__agentSelectMode = v
-    }, on)
-  } catch {
-    /* navigation in flight */
-  }
-}
-
-/**
- * Forward a panel input event (normalized coords) onto the page. Mouse press/
- * release are sent separately (`down`/`up`) so dragging works — text selection,
- * sliders, drag-and-drop. The legacy `click` is ignored here (Android uses it);
- * down+up already produce a click on the web page.
- */
-export async function forwardPageInput(
-  page: Page,
-  cdp: CDPSession | null,
-  ev: BrowserInput,
-  vp: { width: number; height: number }
-): Promise<void> {
-  const x = (n: number): number => Math.max(0, Math.min(vp.width, n * vp.width))
-  const y = (n: number): number => Math.max(0, Math.min(vp.height, n * vp.height))
-  try {
-    if (ev.type === 'move') {
-      await page.mouse.move(x(ev.nx), y(ev.ny))
-    } else if (ev.type === 'down') {
-      await page.mouse.move(x(ev.nx), y(ev.ny))
-      await page.mouse.down({ button: ev.button })
-    } else if (ev.type === 'up') {
-      await page.mouse.move(x(ev.nx), y(ev.ny))
-      await page.mouse.up({ button: ev.button })
-    } else if (ev.type === 'wheel') {
-      await cdp?.send('Input.dispatchMouseEvent', {
-        type: 'mouseWheel',
-        x: x(ev.nx),
-        y: y(ev.ny),
-        deltaX: ev.dx,
-        deltaY: ev.dy
-      })
-    } else if (ev.type === 'key') {
-      await forwardKey(page, ev)
-    }
-  } catch {
-    /* ignore transient input errors during navigation */
-  }
-}
-
-/**
- * Forward a key event, bridging the OS clipboard for the combos a normal browser
- * supports: paste inserts the system clipboard, copy/cut read the page selection
- * into it. Other Ctrl/Cmd combos (select-all, undo, …) are passed through.
- */
-async function forwardKey(page: Page, ev: Extract<BrowserInput, { type: 'key' }>): Promise<void> {
-  const mod = !!(ev.ctrl || ev.meta)
-  const lower = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key
-
-  if (mod && lower === 'v') {
-    const text = clipboard.readText()
-    if (text) await page.keyboard.insertText(text)
-    return
-  }
-  if (mod && (lower === 'c' || lower === 'x')) {
-    const sel = await page.evaluate(() => {
-      const ae = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
-        return (ae.value || '').substring(ae.selectionStart || 0, ae.selectionEnd || 0)
-      }
-      return window.getSelection?.()?.toString() || ''
-    })
-    if (sel) {
-      clipboard.writeText(sel)
-      if (lower === 'x') await page.keyboard.insertText('') // delete the selection (cut)
-    }
-    return
-  }
-  if (mod) {
-    const parts: string[] = []
-    if (ev.ctrl) parts.push('Control')
-    if (ev.meta) parts.push('Meta')
-    if (ev.alt) parts.push('Alt')
-    if (ev.shift) parts.push('Shift')
-    parts.push(lower)
-    await page.keyboard.press(parts.join('+'))
-    return
-  }
-  if (ev.text && ev.text.length === 1) await page.keyboard.type(ev.text)
-  else await page.keyboard.press(ev.key)
 }

@@ -185,7 +185,7 @@ describe('o clique nos papéis no motor', () => {
     const renderer = (): RendererLike => ({ setPixelRatio() {}, setSize() {}, render() {}, dispose() {}, shadowMap: { autoUpdate: false, needsUpdate: false } })
     const onMemoryPapers = vi.fn()
     const onFocus = vi.fn()
-    const engine = new Office3DEngine(container, canvas, { onFocus, onOpen: vi.fn(), onMemoryPapers }, { createRenderer: renderer, raf: () => 0, caf: () => {}, now: () => 0, source: { getSnapshot: () => f, subscribe: () => () => {} }, board: null, browser: null })
+    const engine = new Office3DEngine(container, canvas, { onFocus, onOpen: vi.fn(), onMemoryPapers }, { createRenderer: renderer, raf: () => 0, caf: () => {}, now: () => 0, source: { getSnapshot: () => f, subscribe: () => () => {} }, board: null })
     const pick = vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${MEMORY_PAPERS_KEY}conv:demo-0-0`)
     const click = (): void => {
       fireEvent.pointerDown(canvas, { button: 0, clientX: 300, clientY: 200 })

@@ -264,7 +264,7 @@ describe.skipIf(!hasChromium)('browser_form_fields + browser_run_steps (Chromium
 }, 120_000)
 
 describe.skipIf(!hasChromium)('BrowserController repassa form_fields/run_steps para a aba ativa', () => {
-  const ctrl = new BrowserController({ onFrame: () => {}, onState: () => {}, onPicked: () => {} }, 'form-steps-e2e')
+  const ctrl = new BrowserController('form-steps-e2e')
   afterAll(async () => {
     await ctrl.close()
   })

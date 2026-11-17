@@ -3,15 +3,15 @@
  * ela mostra segue a prioridade decidida (tvAgenda.ts): o mockup de quem chama,
  * o teste ao vivo (no quadrinho se houver chamado), o último HTML criado e, sem
  * nada, o placar — o conteúdo além do teste vem de tvContent.ts. Ligada ao uso
- * do navegador/Android (projectorUse.ts) e aos quadros do navegador embutido
- * (browserFrames.ts):
+ * do navegador/Android (projectorUse.ts). Não há imagem ao vivo: o navegador do
+ * agente é uma janela do Chrome e o emulador, uma janela do PC — o teste aparece
+ * na TV como o endereço da página (ou o nome do app Android):
  *
  *   syncRooms(layout, views)   sala nova ganha a TV; a que saiu libera a dela;
  *   feed(feed, chars, now)     quem testa, o HTML, os chamados; a fila da sala (`onRoom`);
  *   tick(now)                  ~4×/s: teste ocioso há PROJECTOR_IDLE_MS sai, HTML
- *                              velho sai, quadro pendente é decodificado, a demo redesenha;
+ *                              velho sai, a demo redesenha;
  *   animate(dt)                só as salas À VISTA; fora da tela vai direto ao fim;
- *   frameArrived(convId)       quadro novo do navegador da conversa;
  *   lock(on) / focusInfo()     o foco na TV: o conteúdo congela enquanto o usuário
  *                              está nela, e o foco abre o que estava na tela;
  *   planFocus(convId?)         o foco que o usuário pede ("📋 Planejar", a conversa do plano,
@@ -19,13 +19,11 @@
  *
  * A imagem só é redesenhada (no máximo uma vez a cada MIN_PAINT_MS, ~5 por
  * segundo) na sala com a tela acesa, à vista e PERTO/MÉDIO — ou com o espelho
- * do foco aberto. Só aí o quadro bruto é decodificado (createImageBitmap); o
- * bitmap anterior é fechado na hora. Sem quadro: a página da demo (no modo
- * demonstração) ou o esqueleto com a URL e o título. `animate` não aloca.
+ * do foco aberto. A página do teste é o esqueleto com a URL e o título (no modo
+ * demonstração, a página falsa). `animate` não aloca.
  */
 import type { Object3D } from 'three'
 import type { OfficeFeed } from '../office/adapter/feed'
-import { BrowserFrames, decodeFrame, type BrowserFeedApi, type RawFrame } from './browserFrames'
 import type { MonitorAt } from './cameraRig'
 import type { RoomView } from './decor'
 import { demoPage } from './demoDevices'
@@ -68,22 +66,14 @@ interface RoomState {
   readonly name: string
   agenda: TvAgenda
   agendaSig: string
-  /** O teste cujos quadros a TV mostra (o principal ou o do quadrinho). */
+  /** O teste que a TV mostra (o principal ou o do quadrinho). */
   use: DeviceUse | null
-  bitmap: ImageBitmap | null
-  /** De quem é o bitmap e de que quadro (RawFrame.seq). */
-  bitmapConv: string
-  bitmapAt: number
-  decoding: boolean
-  lastDecode: number
   lastPaint: number
   /** O último desenho (assinatura da vista); '' força redesenhar. */
   sig: string
   /** Acesa, à vista e PERTO/MÉDIO (ou com o espelho aberto) no último quadro. */
   eligible: boolean
 }
-
-const bitmapImage = (bmp: ImageBitmap): PageImage => ({ width: bmp.width, height: bmp.height, draw: (ctx, x, y, w, h) => ctx.drawImage(bmp, x, y, w, h) })
 
 export class Projectors {
   readonly kit: ProjectorKit
@@ -98,15 +88,13 @@ export class Projectors {
   private locked = false
   /** O relógio do último feed/tique (ms). */
   private lastNow = 0
-  /** Os quadros do navegador (`connect`); null = só o esqueleto. */
-  frames: BrowserFrames | null = null
   /** Modo demonstração: as conversas da demo mostram a página falsa. */
   demo = false
   /** Nome do projeto da conversa (o escritório é um só: a TV diz de qual projeto é). */
   projectOf: (convId: string) => string | null = () => null
   /** A imagem de uma sala começou a acender (os agentes dela olham para o centro da tela). */
   onLit: (roomId: string, x: number, y: number, z: number) => void = () => {}
-  /** Desenho assíncrono pronto (quadro decodificado, captura): a cena pede um quadro. */
+  /** Desenho assíncrono pronto (a captura do HTML): a cena pede um quadro. */
   onDirty: () => void = () => {}
   /** A fila da sala mudou: os chamados (na ordem em que chegaram) e depois quem testa; o 1º fica ao lado da TV. */
   onRoom: (order: readonly MeetingEntry[]) => void = () => {}
@@ -128,17 +116,6 @@ export class Projectors {
     )
   }
 
-  /**
-   * Liga os quadros do navegador embutido (window.api): cada um é da conversa
-   * `activeId()` (na demo, de nenhuma); com `paused()` (aba fechada) só fica guardado.
-   */
-  connect(api: BrowserFeedApi | null, activeId: () => string | null, paused: () => boolean): void {
-    this.frames?.dispose()
-    this.frames = new BrowserFrames(api, () => (this.demo ? null : activeId()), (id) => {
-      if (!paused()) this.frameArrived(id)
-    })
-  }
-
   syncRooms(layout: readonly RoomLayout[], views: ReadonlyMap<string, RoomView>): void {
     for (const r of layout) {
       const view = views.get(r.id)
@@ -150,7 +127,7 @@ export class Projectors {
       // A TV está sempre ligada (sem nada, o placar): nasce acesa, sem animar.
       fx.setWant(true)
       fx.snap(this.isDark(r.id))
-      const st: RoomState = { fx, view, lod: zone.lod, name: r.name, agenda: cur?.agenda ?? SCORE, agendaSig: '', use: cur?.use ?? null, bitmap: null, bitmapConv: '', bitmapAt: 0, decoding: false, lastDecode: -Infinity, lastPaint: -Infinity, sig: '', eligible: false }
+      const st: RoomState = { fx, view, lod: zone.lod, name: r.name, agenda: cur?.agenda ?? SCORE, agendaSig: '', use: cur?.use ?? null, lastPaint: -Infinity, sig: '', eligible: false }
       fx.onLit = () => {
         fx.center(this.center)
         this.onLit(fx.roomId, this.center.x, this.center.y, this.center.z)
@@ -166,8 +143,6 @@ export class Projectors {
   /** Libera a TV da sala; `gone` = a sala saiu do escritório (esquece quem a usava). */
   private drop(st: RoomState, gone: boolean): void {
     st.fx.dispose()
-    st.bitmap?.close()
-    st.bitmap = null
     this.rooms.delete(st.fx.roomId)
     if (gone) this.tracker.forget(st.fx.roomId)
   }
@@ -226,23 +201,14 @@ export class Projectors {
     return changed
   }
 
-  /** Quadro novo do navegador da conversa: as salas que a mostram redesenham (respeitando o intervalo). */
-  frameArrived(convId: string): void {
-    const now = this.clock()
-    for (const st of this.list) if (st.use?.convId === convId && this.refresh(st, now)) this.onDirty()
-  }
-
   private isEligible(st: RoomState): boolean {
     const lod = st.lod
     return st.fx.lit > 0 && ((!lod.culled && lod.level < 2) || st.fx.mirroring)
   }
 
-  /** Redesenha (ou decodifica o quadro novo) se a sala merece e o intervalo deixa; true se desenhou. */
+  /** Redesenha se a sala merece e o intervalo deixa; true se desenhou. */
   private refresh(st: RoomState, now: number, force = false): boolean {
     if (this.disposed || !this.isEligible(st)) return false
-    const use = st.use
-    const raw = use && !this.demo ? (this.frames?.frame(use.convId) ?? null) : null
-    if (use && raw && (st.bitmapConv !== use.convId || st.bitmapAt !== raw.seq) && !st.decoding && now - st.lastDecode >= MIN_PAINT_MS) this.decode(st, raw, use.convId, now)
     const { view, sig } = this.viewNow(st, now)
     if (!force && (sig === st.sig || now - st.lastPaint < MIN_PAINT_MS)) return false
     st.sig = sig
@@ -256,7 +222,8 @@ export class Projectors {
     const a = st.agenda
     const m = a.main
     const project = (convId: string): string => this.projectOf(convId) ?? st.name
-    const frameSig = (): string => `${st.bitmap ? `${st.bitmapConv}@${st.bitmapAt}` : ''}|${this.demo ? Math.floor(now / 250) : ''}`
+    // Só a página falsa da demo se mexe: o teste real é o endereço, que já está na assinatura.
+    const frameSig = (): string => (this.demo ? String(Math.floor(now / 250)) : '')
     // Na demo não há arquivo para capturar: a página falsa no lugar.
     const fake = (convId: string): PageImage | null => (this.demo && convId.startsWith('demo-') ? demoPage('web', now) : null)
     let view: ProjectorView
@@ -282,33 +249,17 @@ export class Projectors {
     return { view, sig: `${sig}|${a.waiting}` }
   }
 
-  private decode(st: RoomState, raw: RawFrame, convId: string, now: number): void {
-    st.decoding = true
-    st.lastDecode = now
-    void decodeFrame(raw).then((bmp) => {
-      st.decoding = false
-      if (this.disposed || this.rooms.get(st.fx.roomId) !== st) return bmp?.close()
-      if (!bmp) return
-      st.bitmap?.close()
-      st.bitmap = bmp
-      st.bitmapConv = convId
-      st.bitmapAt = raw.seq
-      if (this.refresh(st, this.clock(), true)) this.onDirty()
-    })
-  }
-
+  /** O teste na TV: o endereço navegado (ou o nome do app) que a própria chamada da ferramenta traz. */
   private viewOf(st: RoomState, use: DeviceUse, now: number): ProjectorView {
-    const state = this.frames?.state(use.convId) ?? null
     const demo = this.demo && use.convId.startsWith('demo-')
-    const image = demo ? demoPage(use.kind, now) : st.bitmap && st.bitmapConv === use.convId ? bitmapImage(st.bitmap) : null
-    const web = use.kind === 'web'
     return {
       kind: use.kind,
-      url: (web && state?.url) || use.url,
-      title: (web ? state?.title || use.title : use.title || state?.title) ?? '',
-      live: demo || (this.frames?.live(use.convId) ?? false),
+      url: use.url,
+      title: use.title ?? '',
+      // Sem imagem ao vivo não há selo "ao vivo": só a demo (página falsa animada) o mostra.
+      live: demo,
       project: this.projectOf(use.convId) ?? st.name,
-      image
+      image: demo ? demoPage(use.kind, now) : null
     }
   }
 
@@ -430,17 +381,11 @@ export class Projectors {
 
   dispose(): void {
     this.disposed = true
-    for (const st of this.list) {
-      st.fx.dispose()
-      st.bitmap?.close()
-      st.bitmap = null
-    }
+    for (const st of this.list) st.fx.dispose()
     this.rooms.clear()
     this.list = []
     this.kit.dispose()
     this.content.dispose()
-    this.frames?.dispose()
-    this.frames = null
     this.onLit = () => {}
     this.onDirty = () => {}
     this.onRoom = () => {}

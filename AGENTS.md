@@ -1,7 +1,7 @@
 # agent-code
 
 Electron + React + TypeScript desktop app wrapping `@anthropic-ai/claude-agent-sdk`
-in a chat UI: embedded browser, Android tooling, local voice (Kokoro TTS + Parakeet STT, no key), Windows
+in a chat UI: a real Chrome window the agent drives (Playwright), Android tooling, local voice (Kokoro TTS + Parakeet STT, no key), Windows
 control, and a LAN bridge so a phone can drive the same sessions.
 
 ## Layout

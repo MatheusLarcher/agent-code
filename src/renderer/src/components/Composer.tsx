@@ -21,6 +21,7 @@ import type {
 } from '@shared/ipc'
 import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconSpinner, IconStop } from './Icons'
 import { useUI } from '../ui/UiProvider'
+import { PickElementButton } from './elementPick/PickElementButton'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
 import { encodeWav } from '../wav'
 import { useChatDisplay } from './chatDisplay'
@@ -1226,6 +1227,7 @@ export function Composer(props: Props): JSX.Element {
         >
           <IconPaperclip />
         </button>
+        <PickElementButton disabled={props.disabled || blocked} />
         <div className="mic-wrap" ref={micWrap}>
           <button
             className={`ref-btn mic-btn ${recording ? 'recording' : ''}`}

@@ -797,3 +797,17 @@
 .smp-toggle.on i::after {
   left: 14px;
 }
+
+/* Aba "Scrum Master" do painel da direita: o mesmo Diário, ocupando a aba
+   inteira (sem flutuar sobre a cena, sem sombra e sem a entrada deslizante). */
+.smp.smp-embedded {
+  position: static;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  z-index: auto;
+  border-left: none;
+  box-shadow: none;
+  animation: none;
+}

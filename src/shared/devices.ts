@@ -1,7 +1,7 @@
-// Catalog of Android device presets for the preview frame. Each model's portrait
-// screen resolution (px) + density is applied to the emulator (adb wm size/density)
-// so the preview shows that device's real screen size, wrapped in a bezel.
-// Shared between the renderer (selector + frame) and main (applying the size).
+// Catalog of Android device presets. Each model's portrait screen resolution (px)
+// + density is applied to the emulator (adb wm size/density) so the emulator window
+// shows that device's real screen size. Used by the Android tools in main
+// (android_list_device_models / android_set_device).
 
 export type DeviceType = 'phone' | 'tablet'
 
@@ -39,8 +39,6 @@ export const ANDROID_DEVICES: AndroidDeviceModel[] = [
   { id: 'lenovo-p11', name: 'Lenovo Tab P11', type: 'tablet', width: 1200, height: 2000, dpi: 220, year: 2022 }
 ]
 
-export const DEFAULT_DEVICE_ID = 's26-ultra'
-
 /** One device per resolution — the most recent (highest year; ties keep the first
  *  listed). Preserves the order in which each resolution first appears. */
 export function uniqueByResolution(list: AndroidDeviceModel[]): AndroidDeviceModel[] {
@@ -59,14 +57,9 @@ export function uniqueByResolution(list: AndroidDeviceModel[]): AndroidDeviceMod
   return order.map((k) => best.get(k)!)
 }
 
-/** Deduplicated list shown in the UI selector and the agent's model list. */
+/** Deduplicated list: the agent's model list. */
 export const DEVICE_OPTIONS: AndroidDeviceModel[] = uniqueByResolution(ANDROID_DEVICES)
 
 export function findDevice(id: string): AndroidDeviceModel | undefined {
   return ANDROID_DEVICES.find((d) => d.id === id)
-}
-
-/** The visible model whose resolution matches w×h (for syncing the selector). */
-export function deviceForResolution(width: number, height: number): AndroidDeviceModel | undefined {
-  return DEVICE_OPTIONS.find((d) => d.width === width && d.height === height)
 }

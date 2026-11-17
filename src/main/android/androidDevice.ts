@@ -1,13 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { detect, spawnTool, DEFAULT_AVD, type DetectResult, type Progress } from './androidEnv'
 
-/** A frame captured from the device screen (PNG, base64-encoded). */
-export interface DeviceFrame {
-  data: string
-  width: number
-  height: number
-}
-
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** Every adb call gets a deadline: when the emulator dies or freezes mid-command, adb never
@@ -23,9 +16,41 @@ function pngSize(buf: Buffer): { width: number; height: number } | null {
 }
 
 /**
+ * Arguments of the emulator the app boots. No `-no-window`: the emulator shows up
+ * as a normal window on the user's PC (nothing is mirrored inside the app).
+ */
+export function emulatorArgs(avd: string = DEFAULT_AVD): string[] {
+  return [
+    '-avd',
+    avd,
+    '-no-snapshot',
+    '-no-boot-anim',
+    // -gpu host: render on the real GPU. The software renderer (swiftshader), for a
+    // Mapbox-class app, burned ~10 cores, grew qemu to 6–22 GB until Windows ran out of
+    // virtual memory, and could not even link the map's shaders (black map).
+    // `angle_indirect` no longer exists in emulator 36.
+    '-gpu',
+    'host',
+    // Host Vulkan off: apps use GLES, and the NVIDIA GL/Vulkan driver crashed qemu once
+    // while an app was being torn down (nvoglv64.dll, 0xc0000409).
+    '-feature',
+    '-Vulkan',
+    // Emulator 36 ignores hw.ramSize from config.ini; with the 2.5 GB it picks, Android 14
+    // keeps ~700 MB in zram swap and the app under test stutters. 4 GB keeps it off swap.
+    '-memory',
+    '4096',
+    '-netdelay',
+    'none',
+    '-netspeed',
+    'full'
+  ]
+}
+
+/**
  * One live Android device or emulator for a conversation: boots it (preferring a
- * physically-connected device, else the default AVD), streams the screen via
- * `adb exec-out screencap`, and forwards taps/keys/text via `adb shell input`.
+ * physically-connected device, else the default AVD in its own window), captures
+ * the screen on demand via `adb exec-out screencap`, and sends taps/keys/text via
+ * `adb shell input`.
  */
 export class AndroidDevice {
   private env: NodeJS.ProcessEnv = process.env
@@ -33,18 +58,14 @@ export class AndroidDevice {
   private serial = ''
   private emulatorProc: ChildProcess | null = null
   private startedEmulator = false
-  private streaming = false
   private lastSize = { width: 1080, height: 2400 }
-  /** Display name for the tab title, e.g. "Pixel 6" or "emulator-5554". */
+  /** True once android_set_device changed the resolution — only then stop() restores it. */
+  private sizeOverridden = false
+  /** Display name, e.g. "Pixel 6" or "emulator-5554". */
   model = 'Android'
 
   get deviceSerial(): string {
     return this.serial
-  }
-
-  /** Current (possibly overridden) screen size in px — drives the UI device frame. */
-  get screenSize(): { width: number; height: number } {
-    return { ...this.lastSize }
   }
 
   /** Make sure a device is online and ready. Throws (with a helpful message) if the
@@ -99,38 +120,7 @@ export class AndroidDevice {
     }
     onProgress(`Iniciando emulador (${DEFAULT_AVD})…`)
     const before = new Set(await this.onlineDevices())
-    this.emulatorProc = spawn(
-      d.emulator,
-      [
-        '-avd',
-        DEFAULT_AVD,
-        '-no-snapshot',
-        '-no-boot-anim',
-        // -no-window: we only ever read the screen via `adb exec-out screencap` (see
-        // DeviceFrame/streaming above) — the emulator's own GUI window is unused, and
-        // without this flag it shows up as its own icon in the Windows taskbar.
-        '-no-window',
-        // -gpu host: render on the real GPU. Under -no-window, `auto` resolves to the software
-        // renderer (swiftshader), which for a Mapbox-class app burned ~10 cores, grew qemu to
-        // 6–22 GB until Windows ran out of virtual memory, and could not even link the map's
-        // shaders (black map). `angle_indirect` no longer exists in emulator 36.
-        '-gpu',
-        'host',
-        // Host Vulkan off: apps use GLES, and the NVIDIA GL/Vulkan driver crashed qemu once
-        // while an app was being torn down (nvoglv64.dll, 0xc0000409).
-        '-feature',
-        '-Vulkan',
-        // Emulator 36 ignores hw.ramSize from config.ini; with the 2.5 GB it picks, Android 14
-        // keeps ~700 MB in zram swap and the app under test stutters. 4 GB keeps it off swap.
-        '-memory',
-        '4096',
-        '-netdelay',
-        'none',
-        '-netspeed',
-        'full'
-      ],
-      { env: this.env, detached: false, stdio: 'ignore' }
-    )
+    this.emulatorProc = spawn(d.emulator, emulatorArgs(), { env: this.env, detached: false, stdio: 'ignore' })
     this.emulatorProc.on('error', () => undefined)
     this.startedEmulator = true
     // Wait (up to ~120s) for a NEW emulator serial to appear.
@@ -169,7 +159,7 @@ export class AndroidDevice {
     if (m) this.lastSize = { width: Number(m[1]), height: Number(m[2]) }
   }
 
-  // ---- streaming ----
+  // ---- captura ----
 
   /** Run an adb command and collect its raw binary stdout. Killed (and rejected) after
    *  `timeoutMs`: adb hangs forever when the emulator dies mid-transfer. */
@@ -191,46 +181,6 @@ export class AndroidDevice {
         resolve(Buffer.concat(chunks))
       })
     })
-  }
-
-  /** Shortest gap between two frames while someone is watching (a 1080×2400 `screencap -p`
-   *  costs the device ~250 ms of one core, so ~2 fps is the most it can afford). */
-  static readonly FRAME_INTERVAL_MS = 500
-  /** How often an unwatched stream re-checks whether it is being watched again. */
-  static readonly IDLE_INTERVAL_MS = 1000
-
-  /** Begin pushing frames to onFrame until stop() is called — at most ~2 fps, and only while
-   *  `isWatched()` is true. Without that gate an Android tab left open in a background
-   *  conversation kept the device encoding PNGs forever (half a core, measured), slowing
-   *  every app under test and every screenshot the agent took. */
-  startStreaming(onFrame: (f: DeviceFrame) => void, isWatched: () => boolean = () => true): void {
-    if (this.streaming) return
-    this.streaming = true
-    void (async () => {
-      while (this.streaming) {
-        if (!isWatched()) {
-          await delay(AndroidDevice.IDLE_INTERVAL_MS)
-          continue
-        }
-        const started = Date.now()
-        try {
-          const png = await this.capture(['exec-out', 'screencap', '-p'])
-          const size = pngSize(png)
-          if (size) this.lastSize = size
-          if (png.length > 0) {
-            onFrame({
-              data: png.toString('base64'),
-              width: size?.width ?? this.lastSize.width,
-              height: size?.height ?? this.lastSize.height
-            })
-          }
-        } catch {
-          /* device busy / transient */
-        }
-        const rest = AndroidDevice.FRAME_INTERVAL_MS - (Date.now() - started)
-        await delay(rest > 50 ? rest : 50)
-      }
-    })()
   }
 
   /** Capture a single PNG screenshot (base64) — used by android_screenshot. */
@@ -269,12 +219,6 @@ export class AndroidDevice {
     ])
   }
 
-  /** Vertical wheel scroll: translate a wheel delta into a swipe gesture. */
-  async wheel(nx: number, ny: number, dy: number): Promise<void> {
-    const frac = Math.max(-0.4, Math.min(0.4, -dy / 1000))
-    await this.swipe(nx, ny, nx, Math.max(0, Math.min(1, ny + frac)), 120)
-  }
-
   async typeText(text: string): Promise<void> {
     // adb's `input text` uses %s for spaces; pass as a single literal arg (shell:false).
     const escaped = text.replace(/ /g, '%s')
@@ -285,14 +229,15 @@ export class AndroidDevice {
     await this.adbRun(['-s', this.serial, 'shell', 'input', 'keyevent', keycode])
   }
 
-  /** Override the device resolution (and density) so the preview shows a chosen
-   *  model's screen size. screencap then returns this size, so taps stay aligned. */
+  /** Override the device resolution (and density) to a chosen model's screen size.
+   *  screencap then returns this size, so taps stay aligned. */
   async setScreenSize(width: number, height: number, dpi?: number): Promise<void> {
     await this.adbRun(['-s', this.serial, 'shell', 'wm', 'size', `${width}x${height}`])
     if (dpi && dpi > 0) {
       await this.adbRun(['-s', this.serial, 'shell', 'wm', 'density', String(dpi)])
     }
     this.lastSize = { width, height }
+    this.sizeOverridden = true
   }
 
   /** Restore the device's native resolution/density. */
@@ -300,31 +245,6 @@ export class AndroidDevice {
     await this.adbRun(['-s', this.serial, 'shell', 'wm', 'size', 'reset']).catch(() => undefined)
     await this.adbRun(['-s', this.serial, 'shell', 'wm', 'density', 'reset']).catch(() => undefined)
     await this.refreshSize()
-  }
-
-  back(): Promise<void> {
-    return this.key('KEYCODE_BACK')
-  }
-
-  home(): Promise<void> {
-    return this.key('KEYCODE_HOME')
-  }
-
-  /** Map a renderer key name to an Android keyevent (best-effort). */
-  async sendKeyName(key: string, text?: string): Promise<void> {
-    if (text && text.length === 1) return this.typeText(text)
-    const map: Record<string, string> = {
-      Enter: 'KEYCODE_ENTER',
-      Backspace: 'KEYCODE_DEL',
-      Tab: 'KEYCODE_TAB',
-      Escape: 'KEYCODE_ESCAPE',
-      ArrowUp: 'KEYCODE_DPAD_UP',
-      ArrowDown: 'KEYCODE_DPAD_DOWN',
-      ArrowLeft: 'KEYCODE_DPAD_LEFT',
-      ArrowRight: 'KEYCODE_DPAD_RIGHT'
-    }
-    const code = map[key]
-    if (code) await this.key(code)
   }
 
   // ---- app lifecycle ----
@@ -350,14 +270,14 @@ export class AndroidDevice {
   // ---- teardown ----
 
   async stop(): Promise<void> {
-    this.streaming = false
     if (this.startedEmulator && this.serial) {
       await this.adbRun(['-s', this.serial, 'emu', 'kill']).catch(() => undefined)
-    } else if (this.serial) {
+    } else if (this.serial && this.sizeOverridden) {
       // We're leaving a pre-existing device/emulator running — restore its native
-      // resolution so our preview override doesn't stick.
+      // resolution so an android_set_device override doesn't stick.
       await this.resetScreenSize().catch(() => undefined)
     }
+    this.sizeOverridden = false
     try {
       this.emulatorProc?.kill()
     } catch {

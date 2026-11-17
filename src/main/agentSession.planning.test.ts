@@ -136,7 +136,7 @@ describe('AgentSession — start() da sessão do Agent Manager', () => {
     expect(append).toContain(`Agent Manager do planejamento "${slug}"`)
     expect(append).toContain(path.join(cwd, 'docs', 'spec', slug, '_sandbox'))
     expect(append).toContain('PERSISTENT MEMORY')
-    expect(append).toContain('embedded web browser')
+    expect(append).toContain('real Google Chrome window')
     expect(append).toContain('Controle do Chrome do usuário')
     if (process.platform === 'win32') expect(append).toContain('Controle de aplicativos do Windows')
     expect(append).not.toContain('TASK LEDGER')
@@ -163,7 +163,7 @@ describe('AgentSession — start() da sessão do Agent Manager', () => {
     expect(options.strictMcpConfig).toBeUndefined()
     expect(Object.keys(options.agents as object).length).toBeGreaterThan(0)
     const { append } = options.systemPrompt as { append: string }
-    expect(append).toContain('embedded web browser')
+    expect(append).toContain('real Google Chrome window')
     expect(append).toContain('TASK LEDGER')
     expect(append).not.toContain('Agent Manager')
   })
@@ -378,7 +378,7 @@ describe('AgentSession — bloco do handoff no system prompt', () => {
     expect(append).toContain(path.join(cwd, 'docs', 'spec', slug))
     expect(append).toContain('Não replaneje')
     // Os hints da sessão comum continuam lá.
-    expect(append).toContain('embedded web browser')
+    expect(append).toContain('real Google Chrome window')
     expect(append).toContain('TASK LEDGER')
     expect(append).toContain('PERSISTENT MEMORY')
   })

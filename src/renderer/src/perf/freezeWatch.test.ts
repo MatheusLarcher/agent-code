@@ -208,7 +208,7 @@ describe('freezeWatch — trocas (> 150 ms até a próxima pintura)', () => {
     vi.advanceTimersByTime(20)
     flushFreezes()
     expect(logFreezes).not.toHaveBeenCalled()
-    markPaneSwitch('board', false, 'browser')
+    markPaneSwitch('board', false, 'scrum')
     clock = 400 + 200
     vi.advanceTimersByTime(20)
     markPaneSwitch('board', true, 'board')

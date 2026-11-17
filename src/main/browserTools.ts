@@ -31,68 +31,78 @@ export const browserRunStepsShape = {
 }
 
 /**
- * Exposes the embedded Playwright browser to the agent as an in-process MCP
- * server. The browser is organized into **tabs**; there is always one active tab
+ * Exposes the agent's browser (a real, visible Chrome window on the user's PC,
+ * driven by Playwright) to the agent as an in-process MCP server. Its **tabs**
+ * are real tabs of that window; there is always one active tab
  * and every tool below acts on it. Use browser_list_tabs / browser_new_tab /
  * browser_select_tab to manage tabs — but reuse the current tab by default.
  */
 export function createBrowserMcpServer(
   browser: BrowserController
 ): ReturnType<typeof createSdkMcpServer> {
+  // What happened while opening the window (e.g. the one-time Chromium download)
+  // is told to the model once, on the result of the tool that triggered it.
+  const say = (t: string): Text => {
+    const notes = browser.takeNotes()
+    return text(notes ? `${notes}
+
+${t}` : t)
+  }
+
   return createSdkMcpServer({
     name: 'browser',
     version: '1.0.0',
     tools: [
       tool(
         'browser_list_tabs',
-        'List the preview tabs (id, name like "web - Site", url) and which one is active. Call this when you are unsure which tab you are controlling.',
+        'List the tabs of the agent Chrome window (id, name like "web - Site", url) and which one is active. Call this when you are unsure which tab you are controlling.',
         {},
         async () => text(browser.listTabsText())
       ),
       tool(
         'browser_new_tab',
-        'Open a NEW preview tab and make it active. Only open a new tab when you genuinely need a separate page alongside the current one — otherwise reuse the current tab with browser_navigate. Only "web" tabs are supported right now.',
+        'Open a NEW tab in the agent Chrome window and make it active. Only open a new tab when you genuinely need a separate page alongside the current one — otherwise reuse the current tab with browser_navigate. Only "web" tabs exist.',
         {
-          kind: z.enum(['web', 'android', 'iphone']).optional().describe('Tab kind (default "web"; others not implemented yet).'),
+          kind: z.enum(['web', 'android', 'iphone']).optional().describe('Tab kind (default "web"; the others are refused).'),
           url: z.string().optional().describe('Optional URL to open immediately in the new tab.')
         },
-        async ({ kind, url }) => text(await browser.newTab(kind ?? 'web', url))
+        async ({ kind, url }) => say(await browser.newTab(kind ?? 'web', url))
       ),
       tool(
         'browser_select_tab',
-        'Switch the active tab (the one being controlled and shown to the user) by its id, from browser_list_tabs.',
+        'Switch the active tab (the one being controlled; it comes to the front of the window) by its id, from browser_list_tabs.',
         { tabId: z.string().describe('Id of the tab to activate.') },
-        async ({ tabId }) => text(await browser.selectTab(tabId))
+        async ({ tabId }) => say(await browser.selectTab(tabId))
       ),
       tool(
         'browser_close_tab',
-        'Close a preview tab by its id.',
+        'Close a tab of the agent Chrome window by its id.',
         { tabId: z.string().describe('Id of the tab to close.') },
-        async ({ tabId }) => text(await browser.closeTab(tabId))
+        async ({ tabId }) => say(await browser.closeTab(tabId))
       ),
       tool(
         'browser_navigate',
-        'Open a URL in the ACTIVE tab (reusing it — does NOT open a new tab). Launches the browser if needed.',
+        'Open a URL in the ACTIVE tab (reusing it — does NOT open a new tab). Opens the Chrome window if needed.',
         { url: z.string().describe('The URL to open (https:// is added if missing).') },
-        async ({ url }) => text(await browser.navigate(url))
+        async ({ url }) => say(await browser.navigate(url))
       ),
       tool(
         'browser_form_fields',
         'FIRST step to interact with a page (forms, clicks, choices). Lists the visible controls of the ACTIVE tab, one line each: `eN type[*=required] "label" [options] = "value"`; radio groups show each option as Label=eN, checkboxes = on/off, passwords are masked; then buttons/links; last line `url: … | title: …`. Refs stay stable across reads. Then do everything in ONE browser_run_steps, targeting by label/text. Reads the main frame only (not iframes or shadow DOM): if it comes back empty or useless, or the page is a canvas, use browser_snapshot/browser_screenshot.',
         {},
-        async () => text(await browser.formFields())
+        async () => say(await browser.formFields())
       ),
       tool(
         'browser_run_steps',
         'Run ALL the steps of an interaction on the ACTIVE tab in one call (after browser_form_fields). Actions: fill, select, check, uncheck, click, press, wait_for, navigate. Target by label (field or radio option label) or text (button/link text) — case/accent-insensitive, exact beats contains — or by ref from browser_form_fields. Each target is resolved right before its step and polled up to timeoutMs (default 5000), so fields that only appear later (City after State) work. Radio group: select with the group label and value = option, or check the option label. Stops at the first failure or ambiguous target: failedStep {i (0-based), action, target, error, candidates}. After clicks and at the end it waits for the first of: expect text, navigation, invalid fields, timeout. Returns JSON {ok, done, total, failedStep?, outcome, message?, invalid?, url} then the page state (form fields + visible alerts). Call again only if it stopped, starting from that state. Fall back to browser_snapshot/browser_screenshot for canvas pages, empty form_fields or ambiguous results.',
         browserRunStepsShape,
-        async ({ steps, expect }) => text(resultText(await browser.runSteps(steps, expect)))
+        async ({ steps, expect }) => say(resultText(await browser.runSteps(steps, expect)))
       ),
       tool(
         'browser_snapshot',
         'Structured snapshot of the ACTIVE tab: its name, title, URL, visible text, and interactive elements. Use this to understand the page (and confirm which tab you are on) before acting.',
         {},
-        async () => text(await browser.snapshot())
+        async () => say(await browser.snapshot())
       ),
       tool(
         'browser_screenshot',
@@ -100,14 +110,20 @@ export function createBrowserMcpServer(
         {},
         async () => {
           const data = await browser.screenshot()
-          return { content: [{ type: 'image' as const, data, mimeType: 'image/png' }] }
+          const notes = browser.takeNotes()
+          return {
+            content: [
+              ...(notes ? [{ type: 'text' as const, text: notes }] : []),
+              { type: 'image' as const, data, mimeType: 'image/png' }
+            ]
+          }
         }
       ),
       tool(
         'browser_click',
         'Click an element in the active tab identified by a CSS selector.',
         { selector: z.string().describe('CSS selector of the element to click.') },
-        async ({ selector }) => text(await browser.clickSelector(selector))
+        async ({ selector }) => say(await browser.clickSelector(selector))
       ),
       tool(
         'browser_type',
@@ -116,19 +132,19 @@ export function createBrowserMcpServer(
           text: z.string().describe('The text to type.'),
           selector: z.string().optional().describe('Optional CSS selector of the field to fill.')
         },
-        async ({ text: value, selector }) => text(await browser.typeText(selector, value))
+        async ({ text: value, selector }) => say(await browser.typeText(selector, value))
       ),
       tool(
         'browser_get_text',
         'Read text content from the active tab, optionally scoped to a CSS selector.',
         { selector: z.string().optional().describe('Optional CSS selector to scope the read.') },
-        async ({ selector }) => text(await browser.getText(selector))
+        async ({ selector }) => say(await browser.getText(selector))
       ),
       tool(
         'browser_evaluate',
         'Evaluate a JavaScript expression in the active tab and return the result (stringified).',
         { expression: z.string().describe('A JavaScript expression to evaluate in the page context.') },
-        async ({ expression }) => text(await browser.evaluate(expression))
+        async ({ expression }) => say(await browser.evaluate(expression))
       ),
       tool('browser_back', 'Go back one entry in the active tab history.', {}, async () => {
         await browser.back()

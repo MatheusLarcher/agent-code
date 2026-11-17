@@ -8,6 +8,7 @@
     canceled: 'Interrompido pelo usuário',
     paused: 'Controle pausado pelo usuário na extensão',
     forbidden: 'Página bloqueada pelo Chrome para extensões',
+    pickNavigated: 'A página mudou durante a seleção',
     otherDebugger: 'Outro depurador (DevTools) está aberto nesta aba; feche-o e tente de novo'
   }
   const attached = new Map() // tabId -> timer de detach
@@ -38,6 +39,15 @@
       attached.delete(tabId)
       chrome.debugger.detach({ tabId }).catch(() => {})
     }, IDLE_DETACH_MS))
+  }
+
+  /**
+   * Segura o debugger acoplado durante uma espera longa (o Selecionar fica até
+   * 2 min aguardando o clique): rearma o detach ocioso até `release()`.
+   */
+  function hold(tabId) {
+    const timer = setInterval(() => { if (attached.has(tabId)) armDetach(tabId) }, IDLE_DETACH_MS / 3)
+    return () => clearInterval(timer)
   }
 
   async function ensureAttached(tab) {
@@ -170,5 +180,5 @@
     })
   }
 
-  self.AgentCdp = { ERR, isForbidden, ensureAttached, send, evaluate, withRef, refCenter, clickAt, pressKey }
+  self.AgentCdp = { ERR, isForbidden, ensureAttached, hold, send, evaluate, withRef, refCenter, clickAt, pressKey }
 })()

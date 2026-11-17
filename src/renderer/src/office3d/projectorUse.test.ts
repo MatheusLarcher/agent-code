@@ -14,7 +14,7 @@ const tool = (id: string, name: string, input: unknown, result?: string): UIMess
 })
 
 describe('deviceOf: o que desce a tela do projetor', () => {
-  it('navegador embutido e Chrome são web; Android com tela é android; toolchain e o resto, nada', () => {
+  it('navegador do agente e Chrome são web; Android com tela é android; toolchain e o resto, nada', () => {
     expect(deviceOf('mcp__browser__browser_navigate')).toBe('web')
     expect(deviceOf('mcp__chrome__chrome_screenshot')).toBe('web')
     expect(deviceOf('mcp__android__android_tap')).toBe('android')

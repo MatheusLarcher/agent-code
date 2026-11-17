@@ -94,8 +94,6 @@ export interface Office3DWorkspaceProps {
   onOpenFile?: (path: string) => void
   /** Balão de pedido (permissão, pergunta) clicado: leva ao pedido da conversa. Sem ele, o balão foca o agente. */
   onFocusRequest?: (convId: string) => void
-  /** O telão do projetor: abre a conversa dele com o navegador, na aba Conversa. Sem ele, sem o botão. */
-  onShowBrowser?: (convId: string) => void
   /** "Abrir no app" do menu do Agent (tela do monitor): a conversa dele na aba Conversa. */
   onOpenInApp?: (convId: string) => void
   /** Aprovar / Pedir ajuste do mockup na TV: manda o texto para a conversa do agente (o envio do chat). */
@@ -136,7 +134,6 @@ export function Office3DWorkspace({
   conversation = null,
   onOpenConversation,
   onFocusRequest,
-  onShowBrowser,
   onOpenInApp,
   onSendToConversation,
   callSignal,

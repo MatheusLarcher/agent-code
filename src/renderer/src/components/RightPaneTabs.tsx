@@ -1,53 +1,37 @@
 import type { TaskCounts } from '@shared/stepProgress'
-import { IconBoard, IconCollapseRight, IconGlobe } from './Icons'
+import { IconBoard, IconCollapseRight, IconScrum } from './Icons'
 
-export type RightPane = 'browser' | 'board'
+export type RightPane = 'board' | 'scrum'
 
 interface Props {
   active: RightPane
   onSelect: (pane: RightPane) => void
   /** Collapses the whole right pane into the vertical rail. */
   onCollapse: () => void
-  /** Subagents running right now — acende a aba Quadro, que agora é onde o
-   *  elenco inteiro (executor por cartão, po/vigia/crítico/memória por coluna)
-   *  vive. */
+  /** Subagents running right now — acende a aba Quadro, que é onde o elenco
+   *  inteiro (executor por cartão, po/vigia/crítico/memória por coluna) vive. */
   liveAgents: number
-  /** Open preview tabs — shown as a small count on the Navegador tab. */
-  browserTabs: number
   /** Progresso do quadro (concluídas/total, a contagem única taskCounts) e quantos cartões esperam você — `null` quando não há tarefa. */
   boardProgress: (Pick<TaskCounts, 'done' | 'total'> & { awaiting?: number }) | null
 }
 
 /**
- * Segmented switch at the top of the right-hand pane: Navegador ⇄ Quadro. A
- * aba "Agentes" foi fundida aqui dentro — o elenco de quem trabalha aparece
- * como bolinhas no próprio Quadro (por cartão para o executor, por cabeçalho
- * de coluna para po/vigia/crítico/memória), então um terceiro slot só para o
- * elenco virou redundante. O Escritório não mora mais aqui: é uma aba da área
- * principal, na barra superior (MainTabs).
+ * Segmented switch at the top of the right-hand pane: Quadro ⇄ Scrum Master.
+ * O navegador do agente não mora mais aqui — é uma janela do Chrome no PC. O
+ * Quadro é o padrão; a aba Scrum Master mostra o mesmo Diário do Escritório 3D.
+ * Dica de cada botão: o tooltip do app (`data-tip`), nunca o `title` nativo.
  */
-export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browserTabs, boardProgress }: Props): JSX.Element {
+export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, boardProgress }: Props): JSX.Element {
+  const awaitingTip = boardProgress?.awaiting === 1 ? '1 cartão espera você' : `${boardProgress?.awaiting ?? 0} cartões esperam você`
   return (
     <div className="pane-tabs" role="tablist" aria-label="Painel da direita">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'browser'}
-        className={`pane-tab${active === 'browser' ? ' on' : ''}`}
-        onClick={() => onSelect('browser')}
-        title="Navegador / preview"
-      >
-        <IconGlobe size={14} />
-        Navegador
-        {browserTabs > 0 && <span className="pane-tab-count">{browserTabs}</span>}
-      </button>
       <button
         type="button"
         role="tab"
         aria-selected={active === 'board'}
         className={`pane-tab${active === 'board' ? ' on' : ''}${liveAgents > 0 ? ' live' : ''}`}
         onClick={() => onSelect('board')}
-        title="Quadro: as tarefas do projeto e quem está trabalhando em cada uma"
+        data-tip="As tarefas do projeto e quem está trabalhando em cada uma"
       >
         <IconBoard size={14} />
         Quadro
@@ -56,15 +40,23 @@ export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, browse
         )}
         {/* O que precisa de você (o que o contador da tela Entregas fazia). */}
         {!!boardProgress?.awaiting && (
-          <span
-            className="pane-tab-count awaiting"
-            title={boardProgress.awaiting === 1 ? '1 cartão espera você' : `${boardProgress.awaiting} cartões esperam você`}
-          >
+          <span className="pane-tab-count awaiting" data-tip={awaitingTip}>
             {boardProgress.awaiting}
           </span>
         )}
       </button>
-      <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} title="Recolher painel">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'scrum'}
+        className={`pane-tab${active === 'scrum' ? ' on' : ''}`}
+        onClick={() => onSelect('scrum')}
+        data-tip="O Diário do Scrum Master: as cobranças de hoje em todos os projetos"
+      >
+        <IconScrum size={14} />
+        Scrum Master
+      </button>
+      <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} data-tip="Recolher painel" aria-label="Recolher painel">
         <IconCollapseRight />
       </button>
     </div>

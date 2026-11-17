@@ -7,7 +7,6 @@ import { PCFShadowMap, WebGLRenderer, type Camera, type Object3D, type Scene, ty
 import type { BoardItemStatus } from '@shared/ipc'
 import type { OfficeFeed } from '../office/adapter/feed'
 import type { BoardApi } from './board/boardSync'
-import type { BrowserFeedApi } from './browserFrames'
 import type { ProjectLayout } from './layout'
 import type { OfficePower } from './power'
 
@@ -60,8 +59,6 @@ export interface EngineOptions {
   caf?: (id: number) => void
   now?: () => number
   source?: FeedSource
-  /** Quadros e estado do navegador embutido (padrão: o window.api do app; null = sem quadros). */
-  browser?: BrowserFeedApi | null
   /** O Quadro real (padrão: o window.api do app; null = sem quadro nas salas). */
   board?: BoardApi | null
 }

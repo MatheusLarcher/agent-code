@@ -9,9 +9,7 @@ import { PREVIEW_DELAY_MS, PREVIEW_MESSAGES } from './ChatPreview'
 import { PROJECTOR_KEY, type EngineOptions, type FeedSource, type RendererLike } from './engineTypes'
 import { layoutOffice } from './layout'
 import { Office3DWorkspace, type Office3DWorkspaceProps } from './Office3DWorkspace'
-import { Projectors } from './projectors'
 import { OfficeScene } from './scene'
-import { fakeBrowserApi, jpegFrame } from './testBrowserApi'
 
 const NOW = Date.now()
 const URL = 'http://localhost:5173/carrinho'
@@ -48,11 +46,10 @@ function manualRaf(): { opts: Pick<EngineOptions, 'raf' | 'caf' | 'now'>; flush(
 
 function mount(props: Partial<Office3DWorkspaceProps> = {}, f = testingFeed()) {
   const raf = manualRaf()
-  const api = fakeBrowserApi()
   const all: Office3DWorkspaceProps = {
     chat: null,
     onOpenConversation: vi.fn(),
-    engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: api },
+    engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer },
     ...props
   }
   const view = render(
@@ -62,7 +59,7 @@ function mount(props: Partial<Office3DWorkspaceProps> = {}, f = testingFeed()) {
   )
   act(() => raf.flush())
   const key = layoutOffice(deriveOfficeModel(f, NOW)).characters[0].key
-  return { view, raf, api, key, canvas: screen.getByTestId('office3d-canvas'), all }
+  return { view, raf, key, canvas: screen.getByTestId('office3d-canvas'), all }
 }
 
 beforeEach(() => {
@@ -139,22 +136,3 @@ describe('Prévia do agente ao passar o mouse', () => {
   })
 })
 
-describe('Quadros do navegador no motor', () => {
-  it('liga onBrowserFrame/onBrowserState na montagem; aba fechada não desenha quadro; desmontar tira os ouvintes', () => {
-    const arrived = vi.spyOn(Projectors.prototype, 'frameArrived')
-    const s = mount()
-    expect(s.api.listeners()).toBe(2)
-    s.api.frame(jpegFrame())
-    expect(arrived).toHaveBeenCalledWith('a')
-    s.view.rerender(
-      <UiProvider>
-        <Office3DWorkspace {...s.all} active={false} />
-      </UiProvider>
-    )
-    arrived.mockClear()
-    s.api.frame(jpegFrame())
-    expect(arrived).not.toHaveBeenCalled()
-    s.view.unmount()
-    expect(s.api.listeners()).toBe(0)
-  })
-})

@@ -6,7 +6,7 @@
 // diz qual função travou a tela.
 //
 // O Electron aceita UM listener de onHeadersReceived por sessão: o filtro
-// file:///* deixa de fora o navegador embutido, e qualquer resposta que não
+// file:///* deixa de fora qualquer outra origem, e qualquer resposta que não
 // seja o mainFrame do index do renderer passa inalterada.
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

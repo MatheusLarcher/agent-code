@@ -45,7 +45,7 @@ Legenda: **sim** = já existe · **parcial** = existe em parte · **não** = fal
 | Conversas: lista, busca, nova, renomear, excluir | sim | — |
 | Filtros de projeto, sandbox, nova aba, seletor de pasta | não | `conversation create` só aceita projeto que o PC já conhece |
 | Central (trilho, "Para onde vai?") | sim | — |
-| Navegador embutido (abas, endereço, preview de arquivo) | não | Rotas de abas/URL + captura ou stream da tela |
+| Navegador do agente (janela do Chrome no PC) | não | Fica no PC: não há o que espelhar no celular |
 | Preview do Android | não | Igual ao navegador |
 | Controle do Windows / do Chrome (chaves) | não | Expor as chaves na config da ponte |
 | Voz: ouvir (TTS) | parcial (só "Ouvir" na resposta final) | "Ler daqui" |

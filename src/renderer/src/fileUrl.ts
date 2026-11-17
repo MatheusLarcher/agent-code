@@ -1,5 +1,5 @@
 /**
- * Caminho local → URL file:/// (aba de arquivo do navegador embutido, ícone de
+ * Caminho local → URL file:/// (arquivo aberto fora do app, ícone de
  * projeto). Barras invertidas viram '/', e TODAS as barras do começo saem antes
  * do prefixo: 'C:\a\b.png' → 'file:///C:/a/b.png'; '/home/u/x' → 'file:///home/u/x'.
  */

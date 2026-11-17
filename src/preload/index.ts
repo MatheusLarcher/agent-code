@@ -72,7 +72,6 @@ import type {
   AgentInterruptResult,
   TurnEndWait,
   AgentMessageKind,
-  AndroidProgressMsg,
   SpeechSetupProgress,
   VoiceInstallStatus,
   VoiceComponent,
@@ -84,9 +83,6 @@ import type {
   BoardItemEvent,
   BoardItemStatus,
   ProjectBoard,
-  BrowserFrame,
-  BrowserInput,
-  BrowserState,
   CacheInfo,
   ClaudeAuthStatus,
   CodexStatus,
@@ -113,6 +109,7 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
+  PickElementResult,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
   McpCancelQueuedMsg,
@@ -124,7 +121,6 @@ import type {
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind,
   PostgresConnectionDraft,
   PostgresPublicSettings,
   StorageStatusDto,
@@ -542,34 +538,11 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
     on(Channels.memoristaProviderDiagnostic, cb),
 
   // browser
-  launchBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserLaunch),
-  navigate: (url: string): Promise<string> => ipcRenderer.invoke(Channels.browserNavigate, url),
-  browserBack: (): Promise<void> => ipcRenderer.invoke(Channels.browserBack),
-  browserForward: (): Promise<void> => ipcRenderer.invoke(Channels.browserForward),
-  browserReload: (): Promise<void> => ipcRenderer.invoke(Channels.browserReload),
-  setSelectMode: (on: boolean): Promise<void> =>
-    ipcRenderer.invoke(Channels.browserSetSelectMode, on),
-  sendBrowserInput: (ev: BrowserInput): Promise<void> =>
-    ipcRenderer.invoke(Channels.browserInput, ev),
-  closeBrowser: (): Promise<void> => ipcRenderer.invoke(Channels.browserClose),
-  setBrowserViewport: (width: number, height: number): Promise<void> =>
-    ipcRenderer.invoke(Channels.browserSetViewport, width, height),
-  setActiveBrowser: (convId: string | null): Promise<void> =>
-    ipcRenderer.invoke(Channels.browserSetActive, convId),
   disposeBrowser: (convId: string): Promise<void> =>
     ipcRenderer.invoke(Channels.browserDispose, convId),
-  newTab: (kind?: TabKind, url?: string): Promise<string> => ipcRenderer.invoke(Channels.browserNewTab, kind, url),
-  selectTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserSelectTab, tabId),
-  closeTab: (tabId: string): Promise<void> => ipcRenderer.invoke(Channels.browserCloseTab, tabId),
-  setAndroidSize: (width: number, height: number, dpi?: number): Promise<string> =>
-    ipcRenderer.invoke(Channels.browserSetAndroidSize, width, height, dpi),
-  onBrowserFrame: (cb: (f: BrowserFrame) => void): (() => void) => on(Channels.browserFrame, cb),
-  onBrowserState: (cb: (s: BrowserState) => void): (() => void) =>
-    on(Channels.browserStateChanged, cb),
+  pickElement: (): Promise<PickElementResult> => ipcRenderer.invoke(Channels.browserPickElement),
   onBrowserPicked: (cb: (el: PickedElement) => void): (() => void) =>
     on(Channels.browserPicked, cb),
-  onAndroidProgress: (cb: (m: AndroidProgressMsg) => void): (() => void) =>
-    on(Channels.androidProgress, cb),
   onSpeechSetupProgress: (cb: (p: SpeechSetupProgress) => void): (() => void) =>
     on(Channels.speechSetupProgress, cb),
   onAndroidToolchainProgress: (cb: (line: string) => void): (() => void) =>

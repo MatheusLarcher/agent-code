@@ -227,7 +227,7 @@ const TOOLS_BY_KIND: Record<Exclude<ToolKind, 'other'>, string[]> = {
 }
 const KINDS = new Map(Object.entries(TOOLS_BY_KIND).flatMap(([kind, names]) => names.map((n) => [n, kind as ToolKind] as const)))
 
-/** Navegador embutido (mcp__browser__*) e Chrome (mcp__chrome__*) contam como web. */
+/** Navegador do agente (mcp__browser__*) e Chrome do usuário (mcp__chrome__*) contam como web. */
 export const toolKind = (name: string): ToolKind => KINDS.get(name) ?? (/^mcp__(browser|chrome)__/.test(name) ? 'web' : 'other')
 
 export function describeTool(id: string, name: string, input: unknown): AgentTool {

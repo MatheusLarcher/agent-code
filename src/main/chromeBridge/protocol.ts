@@ -9,6 +9,10 @@ export const CLOSE_AUTH_FAILED = 4001
 export const ERR_NOT_CONNECTED =
   'Chrome não conectado: abra o Chrome ou instale a extensão em Configurações'
 export const ERR_TIMEOUT = 'Tempo esgotado aguardando o Chrome'
+/** Quanto o app espera o clique do "Selecionar" (a extensão desiste antes, em 110 s). */
+export const PICK_ELEMENT_TIMEOUT_MS = 120000
+/** Prefixo do erro da extensão quando a página navega com a seleção aberta (cdp.js ERR.pickNavigated). */
+export const ERR_PICK_NAVIGATED = 'A página mudou durante a seleção'
 
 export interface HelloMessage {
   type: 'hello'

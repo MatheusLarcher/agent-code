@@ -1,7 +1,7 @@
 import { useState, type ReactNode, type SVGProps } from 'react'
 
 /**
- * Modern line-icon set (stroke = currentColor), matching the Sidebar/TabIcon style.
+ * Modern line-icon set (stroke = currentColor), matching the Sidebar style.
  * Every icon inherits the button's color and centers via the existing flex rules.
  */
 type IconProps = { size?: number } & SVGProps<SVGSVGElement>
@@ -39,26 +39,6 @@ export const IconCollapseRight = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <polyline points="13 6 19 12 13 18" />
     <line x1="6" y1="5" x2="6" y2="19" />
-  </Svg>
-)
-export const IconRefresh = (p: IconProps): JSX.Element => (
-  <Svg {...p}>
-    <path d="M20 11a8 8 0 0 0-14-4.5L4 8" />
-    <polyline points="4 4 4 8 8 8" />
-    <path d="M4 13a8 8 0 0 0 14 4.5L20 16" />
-    <polyline points="20 20 20 16 16 16" />
-  </Svg>
-)
-export const IconHome = (p: IconProps): JSX.Element => (
-  <Svg {...p}>
-    <path d="M4 11l8-7 8 7" />
-    <path d="M6 10v9a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-9" />
-  </Svg>
-)
-export const IconArrowRight = (p: IconProps): JSX.Element => (
-  <Svg {...p}>
-    <line x1="5" y1="12" x2="19" y2="12" />
-    <polyline points="13 6 19 12 13 18" />
   </Svg>
 )
 /** "Em seguida": a sugestão do próximo prompt. */
@@ -285,6 +265,15 @@ export const IconBoard = (p: IconProps): JSX.Element => (
   <Svg {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />
     <path d="M9 4v16M15 4v16" />
+  </Svg>
+)
+
+/** Scrum Master: prancheta com o item conferido (a aba do Diário no painel da direita). */
+export const IconScrum = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="8" y="2" width="8" height="4" rx="1" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    <path d="m9 14 2 2 4-4" />
   </Svg>
 )
 

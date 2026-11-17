@@ -63,7 +63,6 @@ function setup(initial: OfficeFeed | null, hang = false, programs: Program[] = [
     caf: () => void frames.splice(0),
     now: () => 0,
     source,
-    browser: null,
     board: null
   })
   const finish = (): void => {

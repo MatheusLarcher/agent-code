@@ -2,7 +2,8 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { BrowserController } from '../browserController'
+import type { AndroidDevice } from './androidDevice'
+import type { AndroidSession } from './androidSession'
 import { detect, ensureInstalled, spawnTool, TIMEOUT_EXIT_CODE } from './androidEnv'
 import { DEVICE_OPTIONS, findDevice } from '../../shared/devices'
 
@@ -60,16 +61,18 @@ export async function findApks(projectDir: string): Promise<string[]> {
 
 /**
  * In-process MCP server exposing the Android device/emulator + build pipeline to
- * the agent. Interaction acts on the active Android preview tab of this
- * conversation's BrowserController; setup/build are toolchain-level.
+ * the agent. Interaction acts on this conversation's active device (the emulator
+ * in its own window on the PC, or a phone over USB); setup/build are toolchain-level.
  */
-export function createAndroidMcpServer(
-  browser: BrowserController
-): ReturnType<typeof createSdkMcpServer> {
-  const requireDevice = (): ReturnType<BrowserController['activeAndroidDevice']> => {
-    const d = browser.activeAndroidDevice()
-    if (!d) throw new Error('Nenhuma aba Android ativa. Abra o preview com android_open_preview primeiro.')
+export function createAndroidMcpServer(session: AndroidSession): ReturnType<typeof createSdkMcpServer> {
+  const requireDevice = (): AndroidDevice => {
+    const d = session.device
+    if (!d) throw new Error('Nenhum aparelho Android ligado. Ligue com android_open_preview primeiro.')
     return d
+  }
+  const resize = async (device: AndroidDevice, w: number, h: number, dpi?: number): Promise<string> => {
+    await device.setScreenSize(w, h, dpi)
+    return `Tela ajustada para ${w}×${h}${dpi ? ` @ ${dpi}dpi` : ''}.`
   }
 
   return createSdkMcpServer({
@@ -95,12 +98,12 @@ export function createAndroidMcpServer(
       ),
       tool(
         'android_open_preview',
-        'Boot a device/emulator (uses a connected phone if present, otherwise the default AVD) and open an Android preview tab streaming its screen in the side panel. Returns once the screen is live.',
+        "Boot a device/emulator (uses a connected phone if present, otherwise the default AVD). The emulator opens in its own window on the user's PC — nothing is drawn inside the app. Returns once Android has finished booting, with the boot progress lines.",
         {},
         async () => {
           const lines: string[] = []
-          const device = await browser.openAndroidPreview((l) => lines.push(l))
-          return text(`Preview Android aberto: ${device.model}.\n${lines.slice(-12).join('\n')}`)
+          const device = await session.open((l) => lines.push(l))
+          return text(`Android ligado: ${device.model}.\n${lines.slice(-12).join('\n')}`)
         }
       ),
       tool(
@@ -127,7 +130,7 @@ export function createAndroidMcpServer(
       ),
       tool(
         'android_set_device',
-        'Resize the active Android preview to a device model (modelId from android_list_device_models) OR a custom resolution (width+height). Changes the emulator screen size so you can test the app at that exact size. Opens the preview first if none is active.',
+        'Resize the active Android device to a device model (modelId from android_list_device_models) OR a custom resolution (width+height). Changes the emulator screen size so you can test the app at that exact size. Boots the device first if none is running.',
         {
           modelId: z.string().optional().describe('Preset id, e.g. "s26-ultra" or "tab-s9". Omit to use width/height.'),
           width: z.number().optional().describe('Custom screen width in px (used when modelId is omitted).'),
@@ -135,30 +138,27 @@ export function createAndroidMcpServer(
           dpi: z.number().optional().describe('Optional density (dpi) for the custom size.')
         },
         async ({ modelId, width, height, dpi }) => {
-          if (!browser.activeAndroidDevice()) {
-            try {
-              await browser.openAndroidPreview()
-            } catch (e) {
-              return text(`Não foi possível abrir o preview Android: ${e instanceof Error ? e.message : String(e)}`)
-            }
+          let device: AndroidDevice
+          try {
+            device = await session.open()
+          } catch (e) {
+            return text(`Não foi possível ligar o Android: ${e instanceof Error ? e.message : String(e)}`)
           }
           if (modelId) {
             const d = findDevice(modelId)
             if (!d) return text(`Modelo "${modelId}" não encontrado. Use android_list_device_models para ver os ids.`)
-            return text(`${d.name}: ${await browser.setAndroidSize(d.width, d.height, d.dpi)}`)
+            return text(`${d.name}: ${await resize(device, d.width, d.height, d.dpi)}`)
           }
-          if (width && height) {
-            return text(await browser.setAndroidSize(Math.round(width), Math.round(height), dpi))
-          }
+          if (width && height) return text(await resize(device, Math.round(width), Math.round(height), dpi))
           return text('Informe um modelId OU width e height.')
         }
       ),
       tool(
         'android_screenshot',
-        'Capture a PNG screenshot of the active Android preview and return it as an image.',
+        'Capture a PNG screenshot of the active Android device and return it as an image.',
         {},
         async () => {
-          const data = await requireDevice()!.screenshot()
+          const data = await requireDevice().screenshot()
           return { content: [{ type: 'image' as const, data, mimeType: 'image/png' }] }
         }
       ),
@@ -170,7 +170,7 @@ export function createAndroidMcpServer(
           ny: z.number().min(0).max(1).describe('Vertical position, 0 (top) .. 1 (bottom).')
         },
         async ({ nx, ny }) => {
-          await requireDevice()!.tap(nx, ny)
+          await requireDevice().tap(nx, ny)
           return text(`Toque em (${nx.toFixed(3)}, ${ny.toFixed(3)}).`)
         }
       ),
@@ -185,7 +185,7 @@ export function createAndroidMcpServer(
           durationMs: z.number().optional().describe('Gesture duration in ms (default 200).')
         },
         async ({ nx1, ny1, nx2, ny2, durationMs }) => {
-          await requireDevice()!.swipe(nx1, ny1, nx2, ny2, durationMs ?? 200)
+          await requireDevice().swipe(nx1, ny1, nx2, ny2, durationMs ?? 200)
           return text('Swipe realizado.')
         }
       ),
@@ -194,7 +194,7 @@ export function createAndroidMcpServer(
         'Type text into the focused field on the Android screen.',
         { text: z.string().describe('The text to type.') },
         async ({ text: value }) => {
-          await requireDevice()!.typeText(value)
+          await requireDevice().typeText(value)
           return text('Texto digitado.')
         }
       ),
@@ -203,7 +203,7 @@ export function createAndroidMcpServer(
         'Send an Android key event to the device (e.g. KEYCODE_ENTER, KEYCODE_BACK, KEYCODE_HOME, KEYCODE_DEL).',
         { keycode: z.string().describe('Android keycode, e.g. "KEYCODE_ENTER".') },
         async ({ keycode }) => {
-          await requireDevice()!.key(keycode)
+          await requireDevice().key(keycode)
           return text(`Keyevent ${keycode} enviado.`)
         }
       ),
@@ -241,24 +241,22 @@ export function createAndroidMcpServer(
             apks.length > 1
               ? '\nSplits por ABI: no emulador use o x86_64; no celular, o arm64-v8a; o universal serve nos dois (mas é bem maior).'
               : ''
-          return text(`APK gerado: ${apks[0]}${outros}${dica}\nUse android_install_run para instalar e abrir no preview.`)
+          return text(`APK gerado: ${apks[0]}${outros}${dica}\nUse android_install_run para instalar e abrir no aparelho.`)
         }
       ),
       tool(
         'android_install_run',
-        'Install an APK on the device/emulator and launch it, opening the Android preview tab so the user can see and test it. Boots a device first if none is running.',
+        'Install an APK on the device/emulator and launch it, so the user can see and test it in the emulator window (or on the connected phone). Boots a device first if none is running.',
         {
           apkPath: z.string().describe('Absolute path to the .apk to install.'),
-          appName: z.string().optional().describe('App name to show on the preview tab (android - <appName>).')
+          appName: z.string().optional().describe('App name, used only in the reply.')
         },
         async ({ apkPath, appName }) => {
-          const lines: string[] = []
-          const device = await browser.openAndroidPreview((l) => lines.push(l))
+          const device = await session.open()
           const pkg = await device.install(apkPath)
           if (pkg) await device.launch(pkg)
-          if (appName) browser.setAndroidTabTitle(device, appName)
           return text(
-            `APK instalado${pkg ? ` (${pkg})` : ''} e iniciado no preview${appName ? ` "android - ${appName}"` : ''}.`
+            `APK${appName ? ` "${appName}"` : ''} instalado${pkg ? ` (${pkg})` : ''} e iniciado em ${device.model}.`
           )
         }
       )

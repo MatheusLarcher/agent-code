@@ -97,7 +97,7 @@ describe('clique na TV: o foco dentro dela', () => {
         chat={<div data-testid="chat-float">chat</div>}
         onOpenConversation={vi.fn()}
         onSendToConversation={send}
-        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }}
       />
     )
     expect(screen.getByTestId('chat-float')).toBeTruthy()
@@ -136,7 +136,7 @@ describe('clique na TV: o foco dentro dela', () => {
         onOpenConversation={open}
         conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
         planning={<div data-testid="planning-ws">plano</div>}
-        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }}
       />
     )
     const canvas = screen.getByTestId('office3d-canvas')
@@ -161,7 +161,7 @@ describe('clique na TV: o foco dentro dela', () => {
         onSendToConversation={send}
         conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
         planning={<div data-testid="planning-ws">plano</div>}
-        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }}
       />
     )
     const canvas = screen.getByTestId('office3d-canvas')
@@ -187,7 +187,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const f = feed({ conversations: [conv('a', { messages: callMsgs(callId), updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 's', updatedAt: NOW - 5000 })], activeId: 'a' })
     const raf = manualRaf()
     const start = vi.fn(async () => 'p')
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={[{ cwd: 'C:\\proj\\alpha', name: 'alpha' }]} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={[{ cwd: 'C:\\proj\\alpha', name: 'alpha' }]} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }} />)
     fireEvent.click(screen.getByRole('button', { name: /Planejar/ }))
     fireEvent.change(screen.getByLabelText('Pedido inicial'), { target: { value: 'checkout com Pix' } })
     fireEvent.click(screen.getByRole('button', { name: 'Planejar na TV' }))
@@ -208,7 +208,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const f = feed({ conversations: [conv('a', { messages: callMsgs(callId), updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 's', title: 'Plano beta', cwd: beta, updatedAt: NOW - 5000 })], activeId: 'a' })
     const raf = manualRaf()
     const start = vi.fn(async () => 'p')
-    const props = { chat: null, onOpenConversation: vi.fn(), onStartPlanning: start, planProjects: [{ cwd: alpha, name: 'alpha' }, { cwd: beta, name: 'beta' }], engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const props = { chat: null, onOpenConversation: vi.fn(), onStartPlanning: start, planProjects: [{ cwd: alpha, name: 'alpha' }, { cwd: beta, name: 'beta' }], engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer } }
     const v = render(<Office3DWorkspace {...props} callSignal={{ n: 0, projectId: null }} />)
     // O filtro do HUD no alpha (o clique na notificação do chamado o põe lá).
     v.rerender(<Office3DWorkspace {...props} callSignal={{ n: 1, projectId: roomIdFor(alpha) }} />)
@@ -244,7 +244,7 @@ describe('clique na TV: o foco dentro dela', () => {
             onOpenConversation={vi.fn()}
             conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
             planning={<div data-testid="planning-ws">plano</div>}
-            engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+            engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }}
           />
         </DeliveryCenterContext.Provider>
       </UiProvider>
@@ -267,7 +267,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const filter = vi.spyOn(Office3DEngine.prototype, 'setProjectFilter')
     const fly = vi.spyOn(Office3DEngine.prototype, 'flyToPose')
     const raf = manualRaf()
-    const props = { chat: null, onOpenConversation: vi.fn(), engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const props = { chat: null, onOpenConversation: vi.fn(), engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer } }
     const v = render(<Office3DWorkspace {...props} callSignal={{ n: 0, projectId: null }} />)
     v.rerender(<Office3DWorkspace {...props} callSignal={{ n: 1, projectId: 'proj-a' }} />)
     expect(filter).toHaveBeenCalledWith('proj-a')
@@ -281,7 +281,7 @@ describe('clique na TV: o foco dentro dela', () => {
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue('conv:p')
     const raf = manualRaf()
     const open = vi.fn()
-    const props = { chat: null, onOpenConversation: open, engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const props = { chat: null, onOpenConversation: open, engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer } }
     const v = render(<Office3DWorkspace {...props} conversation={{ id: 'a', title: 'a', cwd: 'C:\\proj\\alpha' } as never} planning={<div data-testid="planning-ws">plano</div>} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
@@ -308,7 +308,7 @@ describe('clique na TV: o foco dentro dela', () => {
         onOpenConversation={vi.fn()}
         conversation={{ id: 'p', title: 'Plano', cwd: 'C:\\proj\\alpha' } as never}
         planning={<div data-testid="planning-ws">plano</div>}
-        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }}
+        engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }}
       />
     )
     const canvas = screen.getByTestId('office3d-canvas')
@@ -333,7 +333,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const follow = vi.spyOn(Office3DEngine.prototype, 'follow')
     const raf = manualRaf()
     const open = vi.fn()
-    const props = { chat: null, onOpenConversation: open, planning: <div data-testid="planning-ws">plano</div>, engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null } }
+    const props = { chat: null, onOpenConversation: open, planning: <div data-testid="planning-ws">plano</div>, engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer } }
     const v = render(<Office3DWorkspace {...props} conversation={{ id: 'p', title: 'Checkout', cwd: 'C:\\proj\\alpha' } as never} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
@@ -355,7 +355,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const follow = vi.spyOn(Office3DEngine.prototype, 'follow')
     const raf = manualRaf()
     const cwd = 'C:\\proj\\alpha'
-    const { Host, ctl } = host({ a: { id: 'a', title: 'a', cwd }, p: { id: 'p', title: 'Checkout', cwd, mode: 'planning' }, z: { id: 'z', title: 'z', cwd } }, 'a', { ...raf.opts, source: source(f), createRenderer: renderer, browser: null })
+    const { Host, ctl } = host({ a: { id: 'a', title: 'a', cwd }, p: { id: 'p', title: 'Checkout', cwd, mode: 'planning' }, z: { id: 'z', title: 'z', cwd } }, 'a', { ...raf.opts, source: source(f), createRenderer: renderer })
     render(<Host />)
     act(() => raf.flush(5))
     act(() => ctl.pick('p'))
@@ -378,7 +378,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const f = feed({ conversations: [conv('a'), conv('p', { mode: 'planning', planningSlug: 'checkout', title: 'Checkout', updatedAt: NOW }), conv('q', { mode: 'planning', planningSlug: 'login', title: 'Login', updatedAt: NOW - 1000 })], activeId: 'a' })
     const raf = manualRaf()
     const cwd = 'C:\\proj\\alpha'
-    const { Host, ctl } = host({ a: { id: 'a', title: 'a', cwd }, p: { id: 'p', title: 'Checkout', cwd, mode: 'planning' }, q: { id: 'q', title: 'Login', cwd, mode: 'planning' } }, 'a', { ...raf.opts, source: source(f), createRenderer: renderer, browser: null })
+    const { Host, ctl } = host({ a: { id: 'a', title: 'a', cwd }, p: { id: 'p', title: 'Checkout', cwd, mode: 'planning' }, q: { id: 'q', title: 'Login', cwd, mode: 'planning' } }, 'a', { ...raf.opts, source: source(f), createRenderer: renderer })
     render(<Host />)
     act(() => raf.flush(5))
     act(() => ctl.pick('p'))
@@ -395,7 +395,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const raf = manualRaf()
     const start = vi.fn(async () => 'p')
     const projects = [{ cwd: 'C:\\proj\\alpha', name: 'alpha' }]
-    const v = render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={projects} engineOptions={{ ...raf.opts, source: source(empty), createRenderer: renderer, browser: null }} />)
+    const v = render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={projects} engineOptions={{ ...raf.opts, source: source(empty), createRenderer: renderer }} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
@@ -408,7 +408,7 @@ describe('clique na TV: o foco dentro dela', () => {
     v.unmount()
     // Com o plano já no escritório (o feed que o App publicaria depois de criar): o botão do HUD, criar e a TV abre nele.
     const withPlan = feed({ conversations: [conv('a', { updatedAt: NOW }), conv('p', { mode: 'planning', planningSlug: 's', updatedAt: NOW - 5000 })], activeId: 'a' })
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={projects} engineOptions={{ ...raf.opts, source: source(withPlan), createRenderer: renderer, browser: null }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} onStartPlanning={start} planProjects={projects} engineOptions={{ ...raf.opts, source: source(withPlan), createRenderer: renderer }} />)
     fireEvent.click(screen.getByRole('button', { name: /Planejar/ }))
     fireEvent.change(screen.getByLabelText('Pedido inicial'), { target: { value: 'checkout com Pix' } })
     fireEvent.click(screen.getByRole('button', { name: 'Planejar na TV' }))
@@ -428,7 +428,7 @@ describe('clique na TV: o foco dentro dela', () => {
       chat: <div data-testid="chat-float">chat</div>,
       central: <div data-testid="central-panel">Central</div>,
       onOpenConversation: open,
-      engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer, browser: null }
+      engineOptions: { ...raf.opts, source: source(f), createRenderer: renderer }
     }
     const v = render(<Office3DWorkspace {...props} centralSignal={0} />)
     expect(screen.getByTestId('central-panel')).toBeTruthy() // no flutuante, sem mesa selecionada
@@ -462,7 +462,7 @@ describe('clique na TV: o foco dentro dela', () => {
     vi.stubGlobal('api', { memoryListEntries: vi.fn(async () => [{ relPath: 'raiz.md', title: 'Convenções', hook: 'g', folder: '', scope: 'user', projectCwd: null, revision: 1, status: 'active', updatedAt: new Date(NOW).toISOString() }]), listMemoryConflicts: vi.fn(async () => []), getCacheInfo: vi.fn(async () => ({ memoriesDir: 'D:\\m' })), listContextTurns: vi.fn(async () => []) })
     const raf = manualRaf()
     const open = vi.fn()
-    render(<Office3DWorkspace chat={<div data-testid="chat-float">chat</div>} onOpenConversation={open} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }} />)
+    render(<Office3DWorkspace chat={<div data-testid="chat-float">chat</div>} onOpenConversation={open} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })
@@ -481,7 +481,7 @@ describe('clique na TV: o foco dentro dela', () => {
     const f = feed({ conversations: [conv('b', { messages: [], updatedAt: NOW })], activeId: 'b' })
     vi.spyOn(OfficeScene.prototype, 'pick').mockReturnValue(`${PROJECTOR_KEY}${OFFICE_ID}`)
     const raf = manualRaf()
-    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer, browser: null }} />)
+    render(<Office3DWorkspace chat={null} onOpenConversation={vi.fn()} engineOptions={{ ...raf.opts, source: source(f), createRenderer: renderer }} />)
     const canvas = screen.getByTestId('office3d-canvas')
     fireEvent.pointerDown(canvas, { button: 0, clientX: 50, clientY: 50 })
     fireEvent.pointerUp(window, { button: 0, clientX: 51, clientY: 50 })

@@ -36,10 +36,10 @@ const USAGE_LIMITS_KEY = 'agentcode.usage-limits.v1'
 export interface UiState {
   collapsed: boolean
   activeId: string | null
-  /** Whether the embedded browser panel is minimized. */
-  browserMinimized: boolean
-  /** Width (CSS px) of the browser panel, set by dragging the splitter. */
-  browserWidth: number
+  /** Whether the right-hand pane (Quadro / Scrum Master) is collapsed into the rail. */
+  rightPaneMinimized: boolean
+  /** Width (CSS px) of the right-hand pane, set by dragging the splitter. */
+  rightPaneWidth: number
   /** Which subscriptions the topbar usage badge shows in its compact form. */
   usageProviders: { claude: boolean; gpt: boolean }
   /** Várias contas Claude: "mostrar na barra" por conta (id → marcado). Conta
@@ -47,7 +47,13 @@ export interface UiState {
   usageAccounts?: Record<string, boolean>
 }
 
-const DEFAULT_BROWSER_WIDTH = 720
+const DEFAULT_RIGHT_PANE_WIDTH = 720
+
+/** The same two values under their old names (the pane used to be the browser panel). */
+interface LegacyUiState {
+  browserMinimized?: boolean
+  browserWidth?: number
+}
 
 /** Keep only the useful narrative of conversations older than 15 days. This
  * touches Agent Code's rendered history, never the Claude SDK session files. */
@@ -386,16 +392,19 @@ export async function loadUi(): Promise<UiState> {
   const fallback: UiState = {
     collapsed: false,
     activeId: null,
-    browserMinimized: false,
-    browserWidth: DEFAULT_BROWSER_WIDTH,
+    rightPaneMinimized: false,
+    rightPaneWidth: DEFAULT_RIGHT_PANE_WIDTH,
     usageProviders: { claude: true, gpt: true }
   }
   try {
     const raw = await readMigrating(UI_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<UiState>
+      const { browserMinimized, browserWidth, ...parsed } = JSON.parse(raw) as Partial<UiState> & LegacyUiState
       return {
         ...fallback,
+        // Saved before the rename: keep the width and the collapsed state the user had.
+        ...(typeof browserMinimized === 'boolean' ? { rightPaneMinimized: browserMinimized } : {}),
+        ...(typeof browserWidth === 'number' ? { rightPaneWidth: browserWidth } : {}),
         ...parsed,
         usageProviders: { ...fallback.usageProviders, ...(parsed.usageProviders ?? {}) }
       }

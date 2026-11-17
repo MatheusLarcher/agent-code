@@ -11,7 +11,6 @@ import type {
   AgentInterruptResult,
   TurnEndWait,
   AgentMessageKind,
-  AndroidProgressMsg,
   SpeechSetupProgress,
   VoiceInstallStatus,
   VoiceComponent,
@@ -19,9 +18,6 @@ import type {
   AndroidToolchainStatus,
   AppConfig,
   AppUpdateState,
-  BrowserFrame,
-  BrowserInput,
-  BrowserState,
   CacheInfo,
   ClaudeAuthStatus,
   CodexStatus,
@@ -46,6 +42,7 @@ import type {
   PermissionRequestMsg,
   PermissionResponse,
   PickedElement,
+  PickElementResult,
   RemoteBuildProgressMsg,
   RemoteInboundMsg,
   McpCancelQueuedMsg,
@@ -57,7 +54,6 @@ import type {
   RemoteInfo,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind,
   PostgresConnectionDraft,
   PostgresPublicSettings,
   StorageStatusDto,
@@ -692,34 +688,11 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** Safe lifecycle notifications for the memorista's Claude → GPT Luna fallback. */
   onMemoristaProviderDiagnostic(cb: (m: MemoristaProviderDiagnosticMsg) => void): () => void
 
-  launchBrowser(): Promise<void>
-  navigate(url: string): Promise<string>
-  browserBack(): Promise<void>
-  browserForward(): Promise<void>
-  browserReload(): Promise<void>
-  setSelectMode(on: boolean): Promise<void>
-  sendBrowserInput(ev: BrowserInput): Promise<void>
-  closeBrowser(): Promise<void>
-  /** Resize the active browser's viewport (CSS px) to match the panel. */
-  setBrowserViewport(width: number, height: number): Promise<void>
-  /** Switch the panel to a conversation's browser (null = none). */
-  setActiveBrowser(convId: string | null): Promise<void>
   /** Close and forget a conversation's browser. */
   disposeBrowser(convId: string): Promise<void>
-  /** Open a new preview tab (defaults to web) on the active browser. Returns a
-   *  status string (success message, or why it failed — e.g. Android toolchain missing). */
-  newTab(kind?: TabKind, url?: string): Promise<string>
-  /** Make a tab the active (controlled/streamed) one. */
-  selectTab(tabId: string): Promise<void>
-  /** Close a preview tab. */
-  closeTab(tabId: string): Promise<void>
-  /** Set the active Android preview's screen size (px) — a device model or custom. */
-  setAndroidSize(width: number, height: number, dpi?: number): Promise<string>
-  onBrowserFrame(cb: (f: BrowserFrame) => void): () => void
-  onBrowserState(cb: (s: BrowserState) => void): () => void
+  /** "Selecionar": ask the Chrome extension for ONE element picked by the user (it arrives on onBrowserPicked). */
+  pickElement(): Promise<PickElementResult>
   onBrowserPicked(cb: (el: PickedElement) => void): () => void
-  /** Boot-progress lines while a conversation's Android device/emulator starts. */
-  onAndroidProgress(cb: (m: AndroidProgressMsg) => void): () => void
   /** Progress while the on-device speech model is downloaded/prepared (local
    *  dictation engine). Ends with stage 'done' or 'error'. */
   onSpeechSetupProgress(cb: (p: SpeechSetupProgress) => void): () => void

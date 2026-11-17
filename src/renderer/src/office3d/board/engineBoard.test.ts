@@ -37,7 +37,7 @@ async function setup(items = [item('a', { conversationId: 'demo-0-0', updatedAt:
     container,
     canvas,
     { onFocus: vi.fn(), onOpen: vi.fn(), onBoardOpen: (o) => opened.push(o) },
-    { createRenderer: renderer, raf: (cb) => queue.push(cb), caf: () => {}, now: () => t, source: { getSnapshot: () => feed, subscribe: () => () => {} }, board: fake.api, browser: null }
+    { createRenderer: renderer, raf: (cb) => queue.push(cb), caf: () => {}, now: () => t, source: { getSnapshot: () => feed, subscribe: () => () => {} }, board: fake.api }
   )
   await settle()
   const flush = (n: number): void => {

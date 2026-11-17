@@ -70,22 +70,11 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
     notify(r.ok ? 'sucesso' : 'erro', r.message)
   }
 
-  const preview = async (e: MouseEvent): Promise<void> => {
+  const preview = (e: MouseEvent): void => {
     e.stopPropagation()
     if (!rawFilePath) return
-    // Mockup .html: navegador do usuário (o window.open cai no setWindowOpenHandler → openUrlExternally).
-    if (/\.html?$/i.test(rawFilePath)) {
-      window.open(fileUrl(rawFilePath), '_blank')
-      return
-    }
-    try {
-      const res = await window.api.newTab('file', fileUrl(rawFilePath))
-      if (res && res !== 'sucesso' && !res.toLowerCase().includes('abrindo') && !res.toLowerCase().includes('aberta')) {
-        notify('erro', res)
-      }
-    } catch (err) {
-      notify('erro', `Falha ao abrir preview: ${String(err)}`)
-    }
+    // Fora do app: o window.open cai no setWindowOpenHandler do main (openUrlExternally).
+    window.open(fileUrl(rawFilePath), '_blank')
   }
 
   const head = (
@@ -103,7 +92,7 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
         </span>
       )}
       {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
-        <span className="tool-download" onClick={preview} title={/\.html?$/i.test(rawFilePath) ? 'Abrir no seu navegador' : 'Abrir em uma Janela de Arquivo'}>
+        <span className="tool-download" onClick={preview} data-tip={/\.html?$/i.test(rawFilePath) ? 'Abrir no seu navegador' : 'Abrir no programa padrão do PC'}>
           Preview
         </span>
       )}

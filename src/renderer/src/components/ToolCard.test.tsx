@@ -80,16 +80,17 @@ describe('ToolCard no chat (o cartão compartilhado com o Escritório 3D)', () =
     expect(card.querySelector('.tool-result-pre')?.textContent?.length).toBe(TOOL_RESULT_MAX)
   })
 
-  it('Write: Preview abre a aba de arquivo (file:///, barras normalizadas); entregável ganha o Baixar', async () => {
-    const newTab = vi.fn(async () => 'aberta')
+  it('Write: Preview abre o arquivo fora do app (file:///, barras normalizadas); entregável ganha o Baixar', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const downloadFile = vi.fn(async () => ({ ok: true, message: 'salvo' }))
-    ;(window as unknown as { api: unknown }).api = { newTab, downloadFile }
+    ;(window as unknown as { api: unknown }).api = { downloadFile }
     const [md, pdf] = renderChat(
       tool({ id: 'w1', name: 'Write', input: { file_path: 'C:/p/notas.md', content: 'oi' }, result: { isError: false, text: 'ok' } }),
       tool({ id: 'w2', name: 'Write', input: { file_path: '/p/rel.pdf', content: 'pdf' }, result: { isError: false, text: 'ok' } })
     )
     fireEvent.click(md.querySelector('.tool-download')!)
-    expect(newTab).toHaveBeenCalledWith('file', 'file:///C:/p/notas.md')
+    expect(open).toHaveBeenCalledWith('file:///C:/p/notas.md', '_blank')
+    open.mockRestore()
     fireEvent.click(screen.getByTitle('Baixar arquivo'))
     expect(downloadFile).toHaveBeenCalledWith('/p/rel.pdf')
     expect(pdf.querySelector('.tool-download')?.textContent).toBe('⬇️ Baixar')

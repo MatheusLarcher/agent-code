@@ -912,50 +912,18 @@ export interface PermissionResponse {
   answers?: QuestionAnswer[]
 }
 
-/** A live frame from a preview tab (web CDP screencast, or an Android device). */
-export interface BrowserFrame {
-  /** base64-encoded image (no data: prefix). */
-  data: string
-  /** Natural pixel size of the captured page/screen. */
-  width: number
-  height: number
-  /** Image encoding of `data`. Web tabs stream JPEG; Android tabs stream PNG. Defaults to JPEG. */
-  mime?: 'image/jpeg' | 'image/png'
-}
 
-/**
- * Kind of preview surface a tab renders. `web` (Playwright) and `android`
- * (a live device/emulator screen) are functional; `iphone` is reserved
- * (name + icon) for a future implementation.
- */
-export type TabKind = 'web' | 'android' | 'iphone' | 'file'
+/** Kind of tab in the agent's Chrome window. Only web pages exist (the Android emulator is its own window). */
+export type TabKind = 'web'
 
-/** Display + capability metadata for each preview kind (single source of truth). */
-export interface TabKindMeta {
-  kind: TabKind
-  /** Short word shown in the tab label AND to the LLM (e.g. "web"). */
-  label: string
-  /** Human label for menus, e.g. "Android". */
-  display: string
-  /** Whether the kind can actually be opened yet. */
-  implemented: boolean
-}
-
-export const TAB_KINDS: Record<TabKind, TabKindMeta> = {
-  web: { kind: 'web', label: 'web', display: 'Web', implemented: true },
-  android: { kind: 'android', label: 'android', display: 'Android', implemented: true },
-  iphone: { kind: 'iphone', label: 'iphone', display: 'iPhone', implemented: false },
-  file: { kind: 'file', label: 'file', display: 'Arquivo', implemented: true }
-}
-
-/** A single preview tab, as seen by the renderer and the LLM. */
+/** A tab of the agent's Chrome window, as told to the LLM. */
 export interface TabInfo {
   id: string
   kind: TabKind
   /** Page/site title (empty when blank or not loaded). */
   title: string
   url: string
-  /** True for the one tab currently being controlled/streamed. */
+  /** True for the one tab the agent is currently controlling. */
   active: boolean
 }
 
@@ -968,25 +936,12 @@ function hostOf(url: string): string {
 }
 
 /**
- * The canonical tab name shown in the UI (after its icon) and given to the LLM,
+ * The canonical tab name given to the LLM (and shown on a picked element),
  * e.g. `web - Google`. Falls back to the host, then to "nova aba".
  */
 export function tabName(t: { kind: TabKind; title: string; url: string }): string {
   const site = (t.title && t.title.trim()) || hostOf(t.url) || 'nova aba'
-  return `${TAB_KINDS[t.kind].label} - ${site}`
-}
-
-export interface BrowserState {
-  url: string
-  title: string
-  loading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  launched: boolean
-  /** All preview tabs of the active conversation's browser (in tab-strip order). */
-  tabs: TabInfo[]
-  /** Active Android tab's current screen size (px) — drives the device frame. */
-  androidSize?: { width: number; height: number }
+  return `${t.kind} - ${site}`
 }
 
 /** Element captured by the "select on page" picker, forwarded to the chat composer. */
@@ -1004,23 +959,13 @@ export interface PickedElement {
   tabName: string
 }
 
-/** Input event forwarded from the renderer canvas back into the page. */
-export type BrowserInput =
-  | { type: 'move'; nx: number; ny: number }
-  | { type: 'down'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
-  | { type: 'up'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
-  | { type: 'click'; nx: number; ny: number; button: 'left' | 'right' | 'middle' }
-  | { type: 'wheel'; nx: number; ny: number; dx: number; dy: number }
-  | {
-      type: 'key'
-      key: string
-      text?: string
-      /** Modifier state — lets us bridge Ctrl/Cmd combos (copy/paste/cut/select-all). */
-      ctrl?: boolean
-      meta?: boolean
-      shift?: boolean
-      alt?: boolean
-    }
+/** Outcome of the composer's "Selecionar" (the element itself arrives on `browserPicked`). */
+export type PickElementResult =
+  | { status: 'picked' }
+  | { status: 'canceled' }
+  | { status: 'not-connected'; message: string }
+  | { status: 'navigated'; message: string }
+  | { status: 'error'; message: string }
 
 /** Per-turn token usage reported by the agent. */
 export interface TokenUsage {
@@ -2740,28 +2685,10 @@ export const Channels = {
   discardDraftAttachments: 'app:discard-draft-attachments',
   /** Envio: move as cópias do rascunho enviadas de `rascunho/` para a pasta do envio da conversa. */
   promoteDraftAttachments: 'app:promote-draft-attachments',
-  browserLaunch: 'browser:launch',
-  browserNavigate: 'browser:navigate',
-  browserBack: 'browser:back',
-  browserForward: 'browser:forward',
-  browserReload: 'browser:reload',
-  browserSetSelectMode: 'browser:set-select-mode',
-  browserInput: 'browser:input',
-  browserClose: 'browser:close',
-  /** Resize the active browser's viewport (CSS px) to match the panel. */
-  browserSetViewport: 'browser:set-viewport',
-  /** Tell main which conversation's browser the panel is currently showing. */
-  browserSetActive: 'browser:set-active',
   /** Close and discard a conversation's browser (e.g. when the chat is deleted). */
   browserDispose: 'browser:dispose',
-  /** Open a new preview tab (web/android) on the active conversation's browser. */
-  browserNewTab: 'browser:new-tab',
-  /** Switch which tab is active (controlled/streamed). */
-  browserSelectTab: 'browser:select-tab',
-  /** Close a preview tab by id. */
-  browserCloseTab: 'browser:close-tab',
-  /** Set the active Android preview's screen size (device model or custom). */
-  browserSetAndroidSize: 'browser:set-android-size',
+  /** Composer's "Selecionar": the user picks ONE element in their Chrome (via the extension). */
+  browserPickElement: 'browser:pick-element',
   /** Start the LAN remote bridge; resolves with RemoteInfo (url/token/ip/port). */
   remoteStart: 'remote:start',
   /** Stop the LAN remote bridge. */
@@ -2891,11 +2818,7 @@ export const Channels = {
   chromeControlChanged: 'chrome-control:changed',
   /** main → renderer: o status da ponte Chrome mudou (ChromeBridgeStatus). */
   chromeBridgeStatusChanged: 'chrome-bridge:status-changed',
-  browserFrame: 'browser:frame',
-  browserStateChanged: 'browser:state',
   browserPicked: 'browser:picked',
-  /** Progress lines while a conversation's Android device/emulator boots. */
-  androidProgress: 'browser:android-progress',
   /** main → renderer: a command arrived from a phone, dispatch it into its conversation. */
   remoteInbound: 'remote:inbound',
   /** MCP de entrada (main → renderer): tarefa para despachar numa conversa. */
@@ -2929,13 +2852,6 @@ export const Channels = {
   /** Renderer → main: forget the paired phone (next one to scan the QR pairs). */
   remoteUnpair: 'remote:unpair'
 } as const
-
-/** A progress line emitted while an Android device/emulator boots, tagged with
- *  the conversation whose preview is starting. */
-export interface AndroidProgressMsg {
-  convId: string
-  line: string
-}
 
 // ---- Remote control (smartfone-remote) ----------------------------------
 // The PC runs a small LAN bridge (HTTP + SSE) so a phone can drive the same

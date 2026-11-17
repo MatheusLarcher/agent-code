@@ -107,7 +107,7 @@ O **Quadro** mostra o trabalho em **A fazer · Fazendo · Concluído** (ou em li
 | <img src="docs/media/icons/lock.svg" width="18" height="18" align="top" alt=""> **Cofre de senhas** | Senhas ficam guardadas num cofre cifrado. |
 | <img src="docs/media/icons/mic.svg" width="18" height="18" align="top" alt=""> **Voz** | Dite a mensagem e ouça as respostas em voz alta (com sua chave OpenAI). |
 | <img src="docs/media/icons/smartphone.svg" width="18" height="18" align="top" alt=""> **Controle pelo celular** | App Android pareado por QR: acompanhe, mande texto e imagem, aprove permissões, pare o agente. |
-| <img src="docs/media/icons/android.svg" width="18" height="18" align="top" alt=""> **Preview Android** | O agente roda seu app num emulador ou aparelho, dentro de uma moldura de celular. |
+| <img src="docs/media/icons/android.svg" width="18" height="18" align="top" alt=""> **Teste no Android** | O agente roda seu app num emulador (janela própria no PC) ou no aparelho e testa por você. |
 | <img src="docs/media/icons/repeat.svg" width="18" height="18" align="top" alt=""> **Loop** | Repete o pedido até uma condição ser atendida (até 100 ciclos). |
 | <img src="docs/media/icons/leaf.svg" width="18" height="18" align="top" alt=""> **Econômico** | Respostas mais enxutas quando você só quer o essencial. |
 | <img src="docs/media/icons/layers.svg" width="18" height="18" align="top" alt=""> **Várias conversas em paralelo** | Cada uma com seu histórico, com busca, organizado por projeto. |
@@ -138,7 +138,7 @@ Além do Windows e da conta Claude, precisa do [.NET SDK 8 ou mais novo](https:/
 
 ## <img src="docs/media/icons/code.svg" width="22" height="22" align="top" alt=""> Para devs
 
-Electron + React + TypeScript sobre o **Claude Agent SDK**, com Playwright no navegador embutido. Roda nativo no Windows, sem WSL.
+Electron + React + TypeScript sobre o **Claude Agent SDK**, com Playwright dirigindo uma janela real do Chrome. Roda nativo no Windows, sem WSL.
 
 - [docs/ARQUITETURA.md](docs/ARQUITETURA.md) — como o app funciona por dentro.
 - [docs/REFERENCIA.md](docs/REFERENCIA.md) — referência arquivo por arquivo.

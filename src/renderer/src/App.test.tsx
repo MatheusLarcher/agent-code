@@ -197,25 +197,10 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     }),
     onBoardChanged: vi.fn(() => () => {}),
     boardList: vi.fn(async () => ({ available: true, items: [] })),
+    tasksBoard: vi.fn(async () => ({ available: false, items: [] })),
     boardDismiss: vi.fn(async () => null),
-    launchBrowser: vi.fn(async () => {}),
-    navigate: vi.fn(async () => ''),
-    browserBack: vi.fn(async () => {}),
-    browserForward: vi.fn(async () => {}),
-    browserReload: vi.fn(async () => {}),
-    setSelectMode: vi.fn(async () => {}),
-    sendBrowserInput: vi.fn(async () => {}),
-    closeBrowser: vi.fn(async () => {}),
-    setBrowserViewport: vi.fn(async () => {}),
-    setActiveBrowser: vi.fn(async () => {}),
     disposeBrowser: vi.fn(async () => {}),
-    newTab: vi.fn(async () => {}),
-    selectTab: vi.fn(async () => {}),
-    closeTab: vi.fn(async () => {}),
-    onBrowserFrame: vi.fn(() => () => {}),
-    onBrowserState: vi.fn(() => () => {}),
     onBrowserPicked: vi.fn(() => () => {}),
-    onAndroidProgress: vi.fn(() => () => {}),
     remoteStart: vi.fn(async () => ({ running: true, url: '', ip: '', port: 0, token: '', clients: 0, relayConnected: false })),
     remoteStop: vi.fn(async () => ({ running: false, url: '', ip: '', port: 0, token: '', clients: 0, relayConnected: false })),
     remoteStatus: vi.fn(async () => ({ running: false, url: '', ip: '', port: 0, token: '', clients: 0, relayConnected: false })),
@@ -2158,7 +2143,7 @@ describe('App — permissão independente de controle do Windows', () => {
     const banner = document.querySelector('.windows-control-banner')
     expect(banner).toBeTruthy()
     expect(banner?.closest('.chat-panel')).toBeTruthy()
-    expect(banner?.closest('.browser-panel')).toBeNull()
+    expect(banner?.closest('.right-pane')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Desativar agora' }))
     await waitFor(() => expect(api.setWindowsControlEnabled).toHaveBeenLastCalledWith(false))

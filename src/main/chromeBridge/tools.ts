@@ -4,7 +4,7 @@ import { ERR_NOT_CONNECTED } from './protocol'
 
 /** O mínimo que as ferramentas usam da ChromeBridge (facilita teste). */
 export interface ChromeCaller {
-  call(method: string, params?: unknown): Promise<unknown>
+  call(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>
 }
 
 /** Última aba usada por conversa — é o tabId padrão quando o modelo omite. */

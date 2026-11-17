@@ -49,7 +49,7 @@ describe('summarizeActivity — a tabela de verbos (ação pronta)', () => {
     ['Bash de build', [bash('npm run build')], 'Rodou o build ✓'],
     ['Bash comum', [bash('git status')], 'Rodou git status'],
     ['WebSearch', [call('WebSearch', { query: 'cotação do dólar hoje' })], 'Pesquisou "cotação do dólar hoje" na web'],
-    ['navegador embutido', [call('mcp__browser__browser_navigate', { url: 'http://localhost' })], 'Testou no navegador'],
+    ['navegador do agente', [call('mcp__browser__browser_navigate', { url: 'http://localhost' })], 'Testou no navegador'],
     ['Task', [call('Task', { description: 'x', prompt: 'y' })], 'Chamou um subagente'],
     ['Agent', [call('Agent', { description: 'x', prompt: 'y' })], 'Chamou um subagente'],
     ['outra ferramenta (o verbo do describeTool)', [call('Skill', { skill: 'brainstorming' })], 'Usou Skill'],
@@ -80,7 +80,7 @@ describe('summarizeActivity — a ação em curso ("agora")', () => {
     ['Bash de build', open('Bash', { command: 'npm run build' }), 'rodando o build…'],
     ['Bash comum', open('Bash', { command: 'git status' }), 'rodando git status…'],
     ['WebSearch (um só "…")', open('WebSearch', { query: 'dólar' }), 'pesquisando…'],
-    ['navegador embutido', open('mcp__browser__browser_click', {}), 'testando no navegador…'],
+    ['navegador do agente', open('mcp__browser__browser_click', {}), 'testando no navegador…'],
     ['Task', open('Task', {}), 'subagente trabalhando…'],
     ['Agent', open('Agent', {}), 'subagente trabalhando…'],
     ['outra ferramenta', open('Skill', { skill: 'x' }), 'usando Skill…']

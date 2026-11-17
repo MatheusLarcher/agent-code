@@ -1,23 +1,12 @@
 // Generates the README hero screenshot: launches the built app, seeds a small
-// realistic conversation, opens a web tab to a real site, and captures the
-// whole window to docs/screenshot.png. Re-run with: node scripts/screenshot.mjs
+// realistic conversation and captures the whole window (chat + the Quadro /
+// Scrum Master pane) to docs/screenshot.png. Re-run with: node scripts/screenshot.mjs
 import { _electron as electron } from 'playwright'
 import { join } from 'node:path'
 
 const OUT = join(process.cwd(), 'docs', 'screenshot.png')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const log = (...a) => console.log('[shot]', ...a)
-
-const fallback =
-  'data:text/html,' +
-  encodeURIComponent(
-    `<title>Acme</title><body style="margin:0;font:16px system-ui;color:#0f172a">
-     <header style="padding:18px 28px;background:#0b1220;color:#fff;font-weight:700">Acme</header>
-     <section style="padding:48px 28px;background:linear-gradient(135deg,#1f6feb,#7c3aed);color:#fff">
-       <h1 style="margin:0 0 8px;font-size:34px">Build faster.</h1>
-       <p style="margin:0;opacity:.9">A live page rendered inside the app.</p>
-     </section></body>`
-  )
 
 const conv = {
   id: 'demo',
@@ -34,7 +23,7 @@ const conv = {
       kind: 'assistant-text',
       id: 'a1',
       final: true,
-      text: 'Vou abrir o site oficial no navegador embutido e dar uma olhada.'
+      text: 'Vou abrir o site oficial numa janela do Chrome e dar uma olhada.'
     },
     {
       kind: 'tool-use',
@@ -50,7 +39,7 @@ const conv = {
       final: true,
       answer: true,
       text:
-        'Pronto — abri o **react.dev** na aba ao lado. Em resumo:\n\n' +
+        'Pronto — abri o **react.dev** na janela do Chrome. Em resumo:\n\n' +
         '**React** é uma biblioteca JavaScript para construir **interfaces de usuário** a partir de componentes reutilizáveis.\n\n' +
         '- **Componentes**: pedaços de UI isolados e combináveis\n' +
         '- **Estado reativo**: a tela atualiza sozinha quando os dados mudam\n' +
@@ -67,30 +56,13 @@ try {
     localStorage.setItem('agentcode.conversations.v1', JSON.stringify([c]))
     localStorage.setItem(
       'agentcode.ui.v1',
-      JSON.stringify({ collapsed: false, activeId: 'demo', browserMinimized: false, browserWidth: 720 })
+      JSON.stringify({ collapsed: false, activeId: 'demo', rightPaneMinimized: false, rightPaneWidth: 720 })
     )
   }, conv)
   await win.reload()
   await win.waitForLoadState('domcontentloaded')
-  await win.waitForSelector('.tab-new', { timeout: 15000 })
-  await sleep(800)
-
-  // Open a web tab and load a real site (fallback to a styled local page offline).
-  await win.evaluate(() => window.api.newTab('web'))
-  await win.waitForSelector('.tab', { timeout: 15000 })
-  try {
-    await win.evaluate(() => window.api.navigate('https://react.dev'))
-    await win.waitForFunction(
-      () => /react/i.test(document.querySelector('.tab.active .tab-name')?.textContent || ''),
-      null,
-      { timeout: 12000 }
-    )
-    log('loaded react.dev')
-  } catch {
-    log('network unavailable — using local fallback page')
-    await win.evaluate((u) => window.api.navigate(u), fallback)
-  }
-  await sleep(3500) // let the page paint into the canvas
+  await win.waitForSelector('.pane-tabs', { timeout: 15000 })
+  await sleep(1500) // let the chat and the board paint
 
   await win.screenshot({ path: OUT })
   log('saved', OUT)

@@ -135,7 +135,7 @@ export function planningToolDenial(role: { planning?: unknown }, toolName: strin
     'Bash (o único shell, cada comando com aprovação do usuário), pesquisa na web (WebFetch, WebSearch), ' +
     'a lista de tarefas (TodoWrite, TaskCreate, TaskUpdate, TaskList, TaskGet), AskUserQuestion, Skill, ToolSearch, ' +
     'mcp__app__app_chamar_usuario, ' +
-    'o navegador embutido (mcp__browser__*), o Chrome do usuário (mcp__chrome__*), o controle do Windows (mcp__windows__*) ' +
+    'o navegador do agente (mcp__browser__*), o Chrome do usuário (mcp__chrome__*), o controle do Windows (mcp__windows__*) ' +
     'e as ferramentas mcp__planning__* e mcp__memory__*.'
   )
 }

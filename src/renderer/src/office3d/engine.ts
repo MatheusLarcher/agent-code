@@ -22,7 +22,6 @@ import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel, principalKey } from '../office/adapter/model'
 import { officeStore } from '../office/officeStore'
 import { EngineBoard } from './board/engineBoard'
-import { appBrowserApi } from './browserFrames'
 import { agentPose, CameraRig, framePose, type CameraPose } from './cameraRig'
 import { CameraSync } from './cameraSync'
 import { EngineFilter } from './engineFilter'
@@ -118,8 +117,6 @@ export class Office3DEngine {
     this.power = new EnginePower(this.scene, (p) => this.cb.onPower?.(p))
     this.filter = new EngineFilter((id) => this.scene.setProjectFilter(id, this.paused || document.hidden), (list, id) => this.cb.onProjects?.(list, id))
     this.speech = new Speech(container, (key) => this.bubbleClick(key))
-    // Quadro do navegador: é da conversa ativa; com a aba fechada fica só guardado.
-    this.scene.projectors.connect(opts.browser === undefined ? appBrowserApi() : opts.browser, () => this.feed?.activeId ?? null, () => this.paused)
     this.board = new EngineBoard(this.scene, container, this.camera, this.listen, opts.board, cb, () => this.requestRender())
     this.filter.onChange((id) => this.board.setFilter(id))
     wireTv(this.scene, this.board, this.filter, () => this.power.power, () => this.layout.projects)

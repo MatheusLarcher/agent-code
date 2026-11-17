@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type {
   AgentEventMsg,
-  BrowserState,
   ChatEvent,
   FileAttachment,
   FileRefAttachment,
@@ -15,7 +14,6 @@ import type {
   RateLimitStatus,
   RepositoryChange,
   StorageStatusDto,
-  TabKind,
   AppConfig
 } from '@shared/ipc'
 import {
@@ -103,10 +101,9 @@ import { Composer } from './components/Composer'
 import { QueueStrip } from './components/QueueStrip'
 import { ModelPicker, type ModelPickerProps } from './components/ModelPicker'
 import type { VigiaDoubt } from './components/VigiaChip'
-import { BrowserPanel } from './components/BrowserPanel'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconGlobe } from './components/Icons'
+import { IconBoard, IconScrum } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
 import { TtsContext } from './components/ttsContext'
 import { ProjectIconsContext, ProjectNameIcon } from './components/projectIcons'
@@ -148,8 +145,7 @@ import { QuestionModal } from './ui/QuestionModal'
 import { formatElements } from './components/elementPick/elementToken'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
 import { createClipPlayer, type ClipPlayer } from './ui/clipPlayer'
-import { NewTabModal } from './ui/NewTabModal'
-import { FilePickerModal } from './ui/FilePickerModal'
+import { ScrumPaneTab } from './components/ScrumPaneTab'
 import { RemoteModal } from './ui/RemoteModal'
 import { SettingsModal } from './ui/SettingsModal'
 import { ipcErrorMessage } from './ipcError'
@@ -556,14 +552,12 @@ export function App(): JSX.Element {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
-  const [browserMinimized, setBrowserMinimized] = useState(false)
-  const [browserWidth, setBrowserWidth] = useState(720)
-  // Right-hand panel: browser ou o Quadro do projeto — os dois dividem o
-  // MESMO slot (dois painéis ao mesmo tempo espremeriam o chat). O elenco de
-  // quem trabalha (antes uma terceira aba, "Agentes") mora dentro do Quadro
-  // agora: bolinha por cartão para o executor, bolinha por cabeçalho de
-  // coluna para po/vigia/crítico/memória.
-  const [rightPane, setRightPane] = useState<RightPane>('browser')
+  const [rightPaneMinimized, setRightPaneMinimized] = useState(false)
+  const [rightPaneWidth, setRightPaneWidth] = useState(720)
+  // Painel da direita: o Quadro do projeto (padrão) ou o Diário do Scrum Master —
+  // os dois dividem o MESMO slot (dois painéis ao mesmo tempo espremeriam o chat).
+  // O navegador do agente não mora mais aqui: é uma janela do Chrome no PC.
+  const [rightPane, setRightPane] = useState<RightPane>('board')
   // Área principal: aba Conversa (workspace ou Tela de Planejamento) ou Escritório 3D em tela cheia.
   const [mainTab, setMainTab] = useMainTab()
   // Flow view (full-screen map of who spawned whom). Opened from the panel.
@@ -654,12 +648,6 @@ export function App(): JSX.Element {
   // persistido lido do banco ao trocar de conversa).
   const [usageMaps, setUsageMaps] = useState<Record<string, UsageMap>>({})
   const [chips, setChips] = useState<PickedElement[]>([])
-  // Whether the "new preview tab" modal is open (rendered at the app root so it
-  // isn't clipped by the horizontally-scrolling tab strip).
-  const [newTabOpen, setNewTabOpen] = useState(false)
-  // Project file picker (for manual file-preview tabs). When set, the modal is
-  // open; `replaceTabId` is the empty file tab to close once a file is chosen.
-  const [filePicker, setFilePicker] = useState<{ replaceTabId?: string } | null>(null)
   // Remote control (phone bridge): modal open + whether the LAN bridge is up
   // (gates publishing conversation snapshots to main for phones to read).
   const [remoteOpen, setRemoteOpen] = useState(false)
@@ -711,15 +699,6 @@ export function App(): JSX.Element {
   // of being sent to the SDK — so a running task is never cancelled. The next
   // one is dispatched when the current turn finishes; the user can delete any.
   const [queue, setQueue] = useState<QueuedMessage[]>([])
-  const [browserState, setBrowserState] = useState<BrowserState>({
-    url: '',
-    title: '',
-    loading: false,
-    canGoBack: false,
-    canGoForward: false,
-    launched: false,
-    tabs: []
-  })
   const composerRef = useRef<HTMLElement>(null)
 
   // Refs so async handlers / the once-registered event listener see current values.
@@ -1729,7 +1708,6 @@ export function App(): JSX.Element {
         notify('erro', 'GPT Luna indisponível para a análise do memorista.')
       }
     }) ?? (() => undefined)
-    const offState = window.api.onBrowserState(setBrowserState)
     const offPicked = window.api.onBrowserPicked((el) => {
       setChips((c) => [...c, el])
       composerRef.current?.focus()
@@ -1742,7 +1720,6 @@ export function App(): JSX.Element {
       offPoProvider()
       offTypeSafePause?.()
       offMemoristaProvider()
-      offState()
       offPicked()
     }
   }, [onEvent])
@@ -1799,8 +1776,8 @@ export function App(): JSX.Element {
       // para o mais antigo — o efeito de segundo plano consome esta fila.
       setPendingProjects(summaries.slice(PROJECTS_IN_FIRST_PAGE).map((p) => p.cwd))
       setCollapsed(ui.collapsed)
-      setBrowserMinimized(ui.browserMinimized)
-      setBrowserWidth(ui.browserWidth)
+      setRightPaneMinimized(ui.rightPaneMinimized)
+      setRightPaneWidth(ui.rightPaneWidth)
       setUsageProviders(ui.usageProviders)
       setUsageAccounts(ui.usageAccounts ?? {})
       // A Central só abre de cara se era ela a aberta; nunca como "a primeira da lista".
@@ -1985,12 +1962,6 @@ export function App(): JSX.Element {
 
   useEffect(() => window.api.onWindowsControlChanged(setWindowsControlEnabled), [])
 
-  // Tell main which conversation's browser the panel should show, so each chat
-  // gets its own independent browser instance.
-  useEffect(() => {
-    if (hydrated) void window.api.setActiveBrowser(activeId)
-  }, [activeId, hydrated])
-
   // Poll the latest account-wide usage every minute on any connected session,
   // so the badge reflects reality even when the agent isn't answering.
   useEffect(() => {
@@ -2086,11 +2057,11 @@ export function App(): JSX.Element {
   }, [])
   useEffect(() => {
     if (hydrated) {
-      void saveUi({ collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts }).catch(() =>
+      void saveUi({ collapsed, activeId, rightPaneMinimized, rightPaneWidth, usageProviders, usageAccounts }).catch(() =>
         notify('erro', 'Não foi possível salvar o estado da interface.')
       )
     }
-  }, [collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts, hydrated, notify])
+  }, [collapsed, activeId, rightPaneMinimized, rightPaneWidth, usageProviders, usageAccounts, hydrated, notify])
 
   // Close/reload is a durability boundary: pause the unload, hand the latest
   // conversation state to main's write queue (a send, never a wait on the
@@ -2099,8 +2070,8 @@ export function App(): JSX.Element {
   // slow or down never keeps the window open.
   const hydratedRef = useRef(hydrated)
   hydratedRef.current = hydrated
-  const closeUiRef = useRef({ collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts })
-  closeUiRef.current = { collapsed, activeId, browserMinimized, browserWidth, usageProviders, usageAccounts }
+  const closeUiRef = useRef({ collapsed, activeId, rightPaneMinimized, rightPaneWidth, usageProviders, usageAccounts })
+  closeUiRef.current = { collapsed, activeId, rightPaneMinimized, rightPaneWidth, usageProviders, usageAccounts }
   const allowUnloadRef = useRef(false)
   const unloadFlushRef = useRef<Promise<void> | null>(null)
   useEffect(() => {
@@ -2307,9 +2278,8 @@ export function App(): JSX.Element {
   }, [conversations, queue, busyIds, connectedIds, phoneLinked, hydrated, skipPerms, models, permissions, stalledSince, compactingSince, apiRetry, promptSuggestion, tracks, usageLimits, storageStatus?.installationId, remoteNudge])
   useEffect(() => () => clearTimeout(pubTimer.current), [])
 
-  // Drag the splitter between chat and browser to resize the browser panel; the
-  // page viewport follows (BrowserPanel reports its new size to main).
-  const startBrowserDrag = useCallback((e: ReactMouseEvent): void => {
+  // Drag the splitter between the chat and the right-hand pane to resize the pane.
+  const startPaneDrag = useCallback((e: ReactMouseEvent): void => {
     e.preventDefault()
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
@@ -2320,7 +2290,7 @@ export function App(): JSX.Element {
       // Mínimo do chat: 360px. Era 440, o que travava o painel de agentes cedo
       // demais — o mapa de fluxo precisa de largura para mostrar as ações.
       const w = Math.max(340, Math.min(rect.width - 360, rect.right - ev.clientX))
-      setBrowserWidth(w)
+      setRightPaneWidth(w)
     }
     const onUp = (): void => {
       document.body.style.cursor = ''
@@ -4005,29 +3975,6 @@ export function App(): JSX.Element {
     [renameConversation, deleteConversation, startHandoff, askPlanningManager, notify]
   )
 
-  // Open a preview tab from the modal. newTab returns a status string, so we can
-  // surface success/errors (e.g. Android failing because the toolchain is missing)
-  // instead of failing silently.
-  const openTab = useCallback(
-    async (kind: TabKind): Promise<void> => {
-      if (kind === 'android') notify('aviso', 'Abrindo Android… na 1ª vez pode baixar componentes.')
-      try {
-        const res = await window.api.newTab(kind)
-        if (kind === 'web') return
-        if (/ausente|não instalad|toolchain/i.test(res)) {
-          notify('erro', 'Android ainda não instalado. Peça ao agente "instale as dependências do Android".')
-        } else if (/não foi possível|incompleta|tempo esgotado|encerrou|virtualiza/i.test(res)) {
-          notify('erro', res)
-        } else {
-          notify('sucesso', res)
-        }
-      } catch (e) {
-        notify('erro', `Falha ao abrir aba: ${String(e)}`)
-      }
-    },
-    [notify]
-  )
-
   // ---- derived view state ----
   const active = conversations.find((c) => c.id === activeId) ?? null
   // Conversa de planejamento: a tela troca o workspace pela Tela de Planejamento.
@@ -4120,14 +4067,14 @@ export function App(): JSX.Element {
       })),
     [permissions, conversations]
   )
-  // The right-hand pane holds ONE of two tabs (browser / board); `browserMinimized`
+  // The right-hand pane holds ONE of two tabs (board / scrum); `rightPaneMinimized`
   // collapses the whole pane. Ele só existe na aba Conversa: pedir um painel volta a ela.
-  const rightPaneRef = useRef({ pane: rightPane, minimized: browserMinimized })
-  rightPaneRef.current = { pane: rightPane, minimized: browserMinimized }
+  const rightPaneRef = useRef({ pane: rightPane, minimized: rightPaneMinimized })
+  rightPaneRef.current = { pane: rightPane, minimized: rightPaneMinimized }
   const selectRightPane = useCallback((pane: RightPane): void => {
     markPaneSwitch(rightPaneRef.current.pane, rightPaneRef.current.minimized, pane)
     setRightPane(pane)
-    setBrowserMinimized(false)
+    setRightPaneMinimized(false)
     setMainTab('chat')
   }, [setMainTab])
   // O chip "quem está trabalhando" do composer (`CrewChip`) e o antigo botão
@@ -4135,11 +4082,15 @@ export function App(): JSX.Element {
   // o Quadro, onde o elenco vive.
   const openAgentsPanel = useCallback((): void => selectRightPane('board'), [selectRightPane])
   // Leva ao pedido da conversa (Quadro e Escritório): nunca aprova nada.
-  const focusRequest = (convId: string, pane: RightPane): void => {
+  const focusRequest = (convId: string): void => {
     setActiveId(convId)
     setMinimizedQuestions((m) => withoutKey(m, convId))
     if (minimizedQuestions[convId]) holdQuestion(convId, permissions[convId], false)
-    setRightPane(pane)
+  }
+  // Manda um texto a uma conversa: o "Retomar com o aviso" do Scrum Master e o mockup da TV.
+  const sendToConversation = (convId: string, text: string): void => {
+    const conv = convsRef.current.find((c) => c.id === convId)
+    if (conv) void dispatch(conv, text, text, [], [], [])
   }
 
   // id → título, para o quadro nomear a conversa de origem de cada cartão sem
@@ -4188,7 +4139,7 @@ export function App(): JSX.Element {
   // "ver" do aviso do chat: abre o Quadro na faixa Próximos prompts.
   const [queueFocus, setQueueFocus] = useState(0)
   // O Quadro só existe na aba Conversa: com o Escritório aberto ele está desmontado.
-  const boardPaneOpen = mainTab === 'chat' && rightPane === 'board' && !browserMinimized
+  const boardPaneOpen = mainTab === 'chat' && rightPane === 'board' && !rightPaneMinimized
 
   // O Mapa do projeto (ProjectGraph) hoje só abre de DENTRO do Quadro (um botão
   // no BoardPanel) — não é mais uma aba própria. O estado continua aqui: é o
@@ -4933,22 +4884,21 @@ export function App(): JSX.Element {
         ) : (
         <div className="workspace" ref={workspaceRef}>
           {mainChat}
-          {/* O divisor vale para o painel da direita inteiro (navegador ou Quadro):
+          {/* O divisor vale para o painel da direita inteiro (Quadro ou Scrum Master):
               sem ele, o painel ficava preso na largura padrão. */}
-          {!browserMinimized && (
+          {!rightPaneMinimized && (
             <>
               <div
                 className="splitter"
-                onMouseDown={startBrowserDrag}
-                title="Arraste para redimensionar o painel"
+                onMouseDown={startPaneDrag}
+                data-tip="Arraste para redimensionar o painel"
               />
-              <div className="right-pane" style={{ flex: `0 0 ${browserWidth}px` }}>
+              <div className="right-pane" style={{ flex: `0 0 ${rightPaneWidth}px` }}>
                 <RightPaneTabs
                   active={rightPane}
                   onSelect={selectRightPane}
-                  onCollapse={() => setBrowserMinimized(true)}
+                  onCollapse={() => setRightPaneMinimized(true)}
                   liveAgents={runningTrackCount}
-                  browserTabs={browserState.tabs.length}
                   boardProgress={boardTabProgress}
                 />
                 {rightPane === 'board' ? (
@@ -4957,7 +4907,7 @@ export function App(): JSX.Element {
                     conversationId={active?.id ?? ''}
                     conversationTitles={conversationTitles}
                     busy={!!active && busyIds.has(active.id)}
-                    onClose={() => setBrowserMinimized(true)}
+                    onClose={() => setRightPaneMinimized(true)}
                     onOpenConversation={(convId) => setActiveId(convId)}
                     onProgress={setBoardTabProgress}
                     onSendAnyway={(convId) => void handoffQueueRef.current?.sendAnyway(convId)}
@@ -4972,7 +4922,7 @@ export function App(): JSX.Element {
                     crew={crew}
                     pendingPermissions={pendingPermissionList}
                     // Sai do painel para o chat: a pergunta é lá que se responde.
-                    onFocusPermission={(convId) => focusRequest(convId, 'browser')}
+                    onFocusPermission={(convId) => focusRequest(convId)}
                     project={{
                       entries: projectTree.nodes,
                       touches: activeTouches,
@@ -4984,40 +4934,43 @@ export function App(): JSX.Element {
                     }}
                   />
                 ) : (
-                  <BrowserPanel
-                    state={browserState}
-                    minimized={false}
-                    onToggleMinimize={() => setBrowserMinimized(true)}
-                    onRequestNewTab={() => setNewTabOpen(true)}
-                    onRequestPickFile={(tabId) => setFilePicker({ replaceTabId: tabId })}
+                  <ScrumPaneTab
+                    onCollapse={() => setRightPaneMinimized(true)}
+                    onOpenConversation={selectConversation}
+                    // O 📍 leva à mesa do agente: a conversa dele, no Escritório.
+                    onLocate={(convId) => {
+                      selectConversation(convId)
+                      setMainTab('office')
+                    }}
+                    onSend={sendToConversation}
                   />
                 )}
               </div>
             </>
           )}
           {/* Rail: pane collapsed — one button per tab, so either is one click away. */}
-          {browserMinimized && (
+          {rightPaneMinimized && (
             <div className="right-rail">
-              <button
-                type="button"
-                className="right-rail-btn"
-                onClick={() => selectRightPane('browser')}
-                title="Mostrar navegador"
-              >
-                <IconGlobe size={15} />
-                Navegador
-              </button>
               <button
                 type="button"
                 className={`right-rail-btn${runningTrackCount > 0 ? ' live' : ''}`}
                 onClick={() => selectRightPane('board')}
-                title="Ver o quadro de tarefas e quem está trabalhando"
+                data-tip="Ver o quadro de tarefas e quem está trabalhando"
               >
                 <IconBoard size={15} />
                 Quadro
                 {boardTabProgress && boardTabProgress.total > 0 && (
                   <span className="rail-badge">{`${boardTabProgress.done}/${boardTabProgress.total}`}</span>
                 )}
+              </button>
+              <button
+                type="button"
+                className="right-rail-btn"
+                onClick={() => selectRightPane('scrum')}
+                data-tip="Ver o Diário do Scrum Master"
+              >
+                <IconScrum size={15} />
+                Scrum Master
               </button>
             </div>
           )}
@@ -5042,18 +4995,12 @@ export function App(): JSX.Element {
             conversation={active}
             onOpenConversation={selectConversation}
             onOpenFile={(abs) => {
-              // Tela do monitor → aba de arquivo (FilePreview) no navegador, na aba Conversa.
-              selectRightPane('browser')
-              void window.api.newTab('file', fileUrl(abs))
+              // Tela do monitor → o arquivo abre no navegador do PC (o window.open cai no
+              // setWindowOpenHandler do main → openUrlExternally).
+              window.open(fileUrl(abs), '_blank')
             }}
             // Balão "Clica em mim" (permissão, pergunta): o mesmo destino do pedido no Quadro.
-            onFocusRequest={(convId) => focusRequest(convId, rightPane)}
-            // Telão do projetor: a conversa dele, com o navegador aberto, na aba Conversa.
-            onShowBrowser={(convId) => {
-              selectConversation(convId)
-              selectRightPane('browser')
-            }}
-            // "Abrir no app" do menu do Agent na tela do monitor: a conversa, na aba Conversa.
+            onFocusRequest={(convId) => focusRequest(convId)}
             onOpenInApp={(convId) => {
               selectConversation(convId)
               setMainTab('chat')
@@ -5071,10 +5018,7 @@ export function App(): JSX.Element {
               })
             }
             // Aprovar / Pedir ajuste do mockup na TV: envio normal para a conversa do agente.
-            onSendToConversation={(convId, text) => {
-              const conv = convsRef.current.find((c) => c.id === convId)
-              if (conv) void dispatch(conv, text, text, [], [], [])
-            }}
+            onSendToConversation={sendToConversation}
             // O chat minimizado esconde o aviso: o HUD o repete, com o mesmo "Desativar".
             windowsControlEnabled={windowsControlEnabled}
             onDisableWindowsControl={() => void toggleWindowsControl(false)}
@@ -5128,34 +5072,6 @@ export function App(): JSX.Element {
           onMinimize={() => setCentralQuestionConv(null)}
           tts={tts}
           onError={(msg) => notify('erro', msg)}
-        />
-      )}
-      {newTabOpen && (
-        <NewTabModal
-          onPick={(kind) => {
-            setNewTabOpen(false)
-            // A manual file tab opens the project file picker instead of a blank
-            // tab; with no project folder there's nothing to browse, so fall back.
-            if (kind === 'file') {
-              if (active?.cwd) setFilePicker({})
-              else void openTab('file')
-              return
-            }
-            void openTab(kind)
-          }}
-          onClose={() => setNewTabOpen(false)}
-        />
-      )}
-      {filePicker && active?.cwd && (
-        <FilePickerModal
-          root={active.cwd}
-          onClose={() => setFilePicker(null)}
-          onPick={(abs) => {
-            const replaceId = filePicker.replaceTabId
-            setFilePicker(null)
-            void window.api.newTab('file', fileUrl(abs))
-            if (replaceId) void window.api.closeTab(replaceId)
-          }}
         />
       )}
       {remoteOpen && <RemoteModal onClose={() => setRemoteOpen(false)} />}

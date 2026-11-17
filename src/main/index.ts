@@ -17,6 +17,8 @@ import {
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { BrowserController } from './browserController'
+import { playwrightBrowsersDir } from './browserInstall'
+import { disposeAllAndroidSessions, disposeAndroidSession } from './android/androidSession'
 import { AgentSession, type MessageOrigin } from './agentSession'
 import { ProviderFailoverSession } from './providerFailover'
 import { createConversationLock } from './conversationLock'
@@ -212,6 +214,8 @@ import { ferramentasDaRodada } from './tarefas/ferramentasRodada'
 import { BrilhoDasTarefas, brilhoWmi, criarIsBusy } from './tarefas/acordado'
 import { windowsControl } from './windowsControl/service'
 import { chromeBridgeStatus, openInstall as openChromeInstall, startChromeBridge, stopChromeBridge } from './chromeBridge/runtime'
+import { pickElementInChrome } from './chromeBridge/pickElement'
+import { chromeBridge } from './chromeBridge/state'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { createProjectColorService, parseProjectColorCwds } from './projectColorStore'
@@ -235,7 +239,6 @@ import type {
   ChatEvent,
   AppConfig,
   AppUpdateState,
-  BrowserInput,
   FileAttachment,
   FileBytes,
   FileRefAttachment,
@@ -250,7 +253,6 @@ import type {
   PermissionResponse,
   RemoteStatePayload,
   StartAgentOptions,
-  TabKind,
   PostgresConnectionDraft,
   ConversationQueryDto,
   SecretVaultItem,
@@ -441,24 +443,9 @@ async function prepareSessionResume(
   await repository.markSessionResumeReady(convId, sessionId, true, verifiedHash)
 }
 
-// One independent browser per conversation. Only the conversation currently
-// shown in the panel (`activeConvId`) streams its frames/state to the renderer;
-// the others keep their page alive in the background.
+// Um navegador por conversa: uma janela real do Chrome, aberta na primeira
+// ferramenta browser_* e fechada quando a conversa é descartada ou o app sai.
 const browsers = new Map<string, BrowserController>()
-let activeConvId: string | null = null
-// Panel size (CSS px) the renderer last reported; every browser adopts it so the
-// visible page always matches the panel the user is looking at.
-let desiredViewport = { width: 1280, height: 800 }
-
-const EMPTY_BROWSER_STATE = {
-  url: '',
-  title: '',
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  launched: false,
-  tabs: []
-}
 
 // O observador paralelo: assiste ao tee de eventos e, quando uma premissa do
 // trabalho depende de algo que só o usuário sabe, levanta um chip na tela. Não
@@ -1076,7 +1063,7 @@ function updateShutdownSteps(): ShutdownStep[] {
       run: async () => {
         const open = [...browsers.values()]
         browsers.clear()
-        await Promise.all(open.map((b) => b.close()))
+        await Promise.all([...open.map((b) => b.close()), disposeAllAndroidSessions()])
       }
     },
     {
@@ -1723,27 +1710,10 @@ const relay = new RelayClient({
 function getBrowser(convId: string): BrowserController {
   let b = browsers.get(convId)
   if (!b) {
-    // Callbacks are gated on `activeConvId` so a background conversation's
-    // browser never paints over the one the user is looking at.
-    b = new BrowserController(
-      {
-        onFrame: (frame) => convId === activeConvId && send(Channels.browserFrame, frame),
-        onState: (state) => convId === activeConvId && send(Channels.browserStateChanged, state),
-        onPicked: (el) => convId === activeConvId && send(Channels.browserPicked, el),
-        // Boot progress is tagged with convId so the renderer shows it on the right chat.
-        onAndroidProgress: (line) => send(Channels.androidProgress, { convId, line })
-      },
-      convId
-    )
-    void b.setViewport(desiredViewport.width, desiredViewport.height)
+    b = new BrowserController(convId)
     browsers.set(convId, b)
   }
   return b
-}
-
-/** The browser shown in the panel right now, if any (does not create one). */
-function activeBrowser(): BrowserController | null {
-  return activeConvId ? browsers.get(activeConvId) ?? null : null
 }
 
 function createWindow(startMinimized = false): void {
@@ -2029,7 +1999,7 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.authLogin, async () => {
     authLog('=== auth:login start ===')
     // The FIRST login opens the user's own SYSTEM browser (product decision) — not
-    // the app's embedded browser. The CLI runs a loopback to capture the code.
+    // the agent's Chrome window. The CLI runs a loopback to capture the code.
     const openUrl = (url: string): void => {
       authLog(`opening system browser: ${url}`)
       void shell.openExternal(url)
@@ -3238,50 +3208,6 @@ export function registerIpc(): void {
     await sessions.get(convId)?.refreshUsage()
   })
 
-  // Manual panel controls act on the browser of the conversation being viewed.
-  ipcMain.handle(Channels.browserLaunch, async () => {
-    if (activeConvId) await getBrowser(activeConvId).ensureLaunched()
-  })
-  ipcMain.handle(Channels.browserNavigate, (_e, url: string) =>
-    activeConvId ? getBrowser(activeConvId).navigate(url) : ''
-  )
-  ipcMain.handle(Channels.browserBack, () => activeBrowser()?.back())
-  ipcMain.handle(Channels.browserForward, () => activeBrowser()?.forward())
-  ipcMain.handle(Channels.browserReload, () => activeBrowser()?.reload())
-  ipcMain.handle(Channels.browserSetSelectMode, (_e, on: boolean) => activeBrowser()?.setSelectMode(on))
-  ipcMain.handle(Channels.browserInput, (_e, ev: BrowserInput) => activeBrowser()?.forwardInput(ev))
-  ipcMain.handle(Channels.browserClose, () => activeBrowser()?.close())
-
-  ipcMain.handle(Channels.browserSetViewport, (_e, width: number, height: number) => {
-    desiredViewport = { width, height }
-    void activeBrowser()?.setViewport(width, height)
-  })
-
-  // Tab controls act on the conversation currently shown in the panel. newTab
-  // uses getBrowser so "+" can launch the browser for a conversation that has none.
-  // Returns the result string so the renderer can surface success/errors (e.g.
-  // an Android tab failing because the toolchain isn't installed).
-  ipcMain.handle(Channels.browserNewTab, async (_e, kind?: TabKind, url?: string): Promise<string> => {
-    if (!activeConvId) return 'Nenhuma conversa ativa.'
-    return getBrowser(activeConvId).newTab(kind ?? 'web', url)
-  })
-  ipcMain.handle(Channels.browserSelectTab, (_e, tabId: string) => activeBrowser()?.selectTab(tabId))
-  ipcMain.handle(Channels.browserCloseTab, (_e, tabId: string) => activeBrowser()?.closeTab(tabId))
-  ipcMain.handle(Channels.browserSetAndroidSize, (_e, width: number, height: number, dpi?: number) =>
-    activeBrowser()?.setAndroidSize(width, height, dpi)
-  )
-
-  ipcMain.handle(Channels.browserSetActive, async (_e, convId: string | null) => {
-    activeConvId = convId
-    const b = convId ? browsers.get(convId) : null
-    // Repaint the panel for the newly-shown conversation: either its live page
-    // (resized to the current panel) or the empty placeholder if it has none yet.
-    if (b) {
-      await b.setViewport(desiredViewport.width, desiredViewport.height)
-      await b.refreshView()
-    } else send(Channels.browserStateChanged, EMPTY_BROWSER_STATE)
-  })
-
   // ---- remote control (smartfone-remote) ----
   // Persist the ON/OFF intent so the bridge auto-starts on the next launch. The
   // HTTP server itself can't survive the process exit, but the user's choice does:
@@ -3340,14 +3266,18 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle(Channels.browserDispose, async (_e, convId: string) => {
+    void disposeAndroidSession(convId)
     const b = browsers.get(convId)
     if (!b) return
     browsers.delete(convId)
     await b.close()
-    if (activeConvId === convId) {
-      activeConvId = null
-      send(Channels.browserStateChanged, EMPTY_BROWSER_STATE)
-    }
+  })
+
+  // "Selecionar" do composer: o elemento escolhido no Chrome do usuário vai ao chat por browserPicked.
+  ipcMain.handle(Channels.browserPickElement, async () => {
+    const { result, element } = await pickElementInChrome(chromeBridge())
+    if (element) send(Channels.browserPicked, element)
+    return result
   })
 }
 
@@ -3420,10 +3350,10 @@ app.on('second-instance', (_event, argv) => {
   }
 })
 
-// No exe portátil o Chromium do Playwright vai embutido em resources/ms-playwright
-// (o pacote não tem acesso ao %LOCALAPPDATA%\ms-playwright da máquina de build).
+// O Chromium do Playwright não viaja no instalador: é a reserva de PC sem Google
+// Chrome, baixada no primeiro uso para a pasta local da máquina (browserInstall.ts).
 if (app.isPackaged && !process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'ms-playwright')
+  process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersDir()
 }
 
 app.whenReady().then(async () => {
@@ -3782,6 +3712,7 @@ app.on('window-all-closed', () => {
   stopChromeBridge()
   for (const b of browsers.values()) void b.close()
   browsers.clear()
+  void disposeAllAndroidSessions()
   for (const s of sessions.values()) s.dispose()
   sessions.clear()
   planningIpc?.close()

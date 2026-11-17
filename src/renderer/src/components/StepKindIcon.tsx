@@ -45,7 +45,7 @@ const PATHS: Record<StepGlyph, ReactNode> = {
       <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
     </>
   ),
-  // Janela com o cursor (o navegador embutido).
+  // Janela com o cursor (o navegador do agente).
   browser: (
     <>
       <rect x="3" y="4" width="18" height="15" rx="2.5" />

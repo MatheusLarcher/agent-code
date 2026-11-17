@@ -32,7 +32,7 @@ async function setup() {
     container,
     canvas,
     { onFocus: vi.fn(), onOpen: vi.fn() },
-    { createRenderer: renderer, raf: (cb) => queue.push(cb), caf: () => {}, now: () => t, source: { getSnapshot: () => feed, subscribe: () => () => {} }, board: fake.api, browser: null }
+    { createRenderer: renderer, raf: (cb) => queue.push(cb), caf: () => {}, now: () => t, source: { getSnapshot: () => feed, subscribe: () => () => {} }, board: fake.api }
   )
   await settle()
   const flush = (n: number): void => {

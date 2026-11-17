@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest'
-import type { BrowserState } from '../shared/ipc'
+import type { BrowserContext } from 'playwright'
 import { BrowserController } from './browserController'
 
 // Offline, deterministic pages (no network) so the test is fast and reliable.
@@ -7,13 +7,13 @@ const pageUrl = (t: string): string =>
   'data:text/html,' + encodeURIComponent(`<title>${t}</title><h1>${t}</h1>`)
 
 describe('BrowserController — múltiplas abas (o que o LLM controla)', () => {
-  const ctrl = new BrowserController({ onFrame: () => {}, onState: () => {}, onPicked: () => {} })
+  const ctrl = new BrowserController('tabs-test')
   afterAll(async () => {
     await ctrl.close()
   })
 
   it('abre várias abas, lista e enxerga/controla a aba ativa correta', async () => {
-    // Primeira aba (criada sob demanda) navega para Alpha e fica ativa.
+    // A janela nasce com uma aba em branco: a primeira navegação a reaproveita.
     await ctrl.navigate(pageUrl('Alpha'))
     let tabs = ctrl.tabsInfo()
     expect(tabs).toHaveLength(1)
@@ -46,10 +46,10 @@ describe('BrowserController — múltiplas abas (o que o LLM controla)', () => {
     expect(list).toContain('web - Beta')
     expect(list).toMatch(/▶.*Alpha/)
 
-    // iPhone segue reservado: recusado e sem criar aba. (Android agora é suportado,
-    // mas seu boot real de device/emulador não é exercitado neste teste de abas web.)
-    const iphone = await ctrl.newTab('iphone')
-    expect(iphone.toLowerCase()).toContain('implement')
+    // Só existem abas web: Android/iPhone são recusados e não criam aba.
+    for (const kind of ['android', 'iphone', 'file']) {
+      expect(await ctrl.newTab(kind)).toContain('Só existem abas web')
+    }
     expect(ctrl.tabsInfo()).toHaveLength(2)
 
     // Fechar a aba ativa (Alpha) faz a outra assumir o controle.
@@ -61,35 +61,45 @@ describe('BrowserController — múltiplas abas (o que o LLM controla)', () => {
   }, 120000)
 })
 
-describe('BrowserController — regressões das ferramentas web', () => {
-  it('troca uma aba de arquivo por uma aba web segura ao receber snapshot', async () => {
-    const states: BrowserState[] = []
-    const ctrl = new BrowserController({ onFrame: () => {}, onState: (state) => states.push(state), onPicked: () => {} }, 'file-regression')
+describe('BrowserController — a janela é do usuário também', () => {
+  it('aba aberta e fechada por fora das ferramentas entra e sai da lista', async () => {
+    const ctrl = new BrowserController('window-user-tabs')
     try {
-      await ctrl.newTab('file', 'C:/tmp/exemplo.pdf')
-      const snapshot = await ctrl.snapshot()
-      expect(snapshot).toContain('web -')
-      expect(ctrl.tabsInfo().find((tab) => tab.active)?.kind).toBe('web')
-      expect(states.at(-1)?.launched).toBe(true)
+      await ctrl.navigate(pageUrl('Minha'))
+      // Página criada direto no contexto = o usuário abrindo uma aba (Ctrl+T) na janela.
+      const { context } = ctrl as unknown as { context: BrowserContext }
+      const userPage = await context.newPage()
+      await userPage.goto(pageUrl('Popup'))
+      await expect.poll(() => ctrl.tabsInfo().length, { timeout: 15000 }).toBe(2)
+      // A aba nova entra na lista, mas a ativa continua sendo a do agente.
+      expect(ctrl.tabsInfo().find((t) => t.active)?.title).toBe('Minha')
+      await expect.poll(() => ctrl.tabsInfo().some((t) => t.title === 'Popup'), { timeout: 15000 }).toBe(true)
+
+      const popup = ctrl.tabsInfo().find((t) => t.title === 'Popup')!
+      await ctrl.selectTab(popup.id)
+      await userPage.close() // o "usuário" fecha a aba ativa
+      await expect.poll(() => ctrl.tabsInfo().length, { timeout: 15000 }).toBe(1)
+      expect(ctrl.tabsInfo()[0]).toMatchObject({ title: 'Minha', active: true })
     } finally {
       await ctrl.close()
     }
   }, 120000)
 
-  it('publica launched na primeira ferramenta e reflete o histórico real', async () => {
-    const states: BrowserState[] = []
-    const ctrl = new BrowserController({ onFrame: () => {}, onState: (state) => states.push(state), onPicked: () => {} }, 'history-regression')
+  it('janela fechada pelo usuário reabre na próxima ferramenta, com histórico novo', async () => {
+    const ctrl = new BrowserController('window-reopen')
     try {
-      await ctrl.snapshot()
-      expect(states.some((state) => state.launched)).toBe(true)
-      expect(states.at(-1)?.canGoBack).toBe(false)
-      expect(states.at(-1)?.canGoForward).toBe(false)
       await ctrl.navigate(pageUrl('Primeira'))
       await ctrl.navigate(pageUrl('Segunda'))
-      expect(states.at(-1)?.canGoBack).toBe(true)
-      expect(states.at(-1)?.canGoForward).toBe(false)
       await ctrl.back()
-      expect(states.at(-1)?.canGoForward).toBe(true)
+      expect(ctrl.tabsInfo()[0].title).toBe('Primeira')
+
+      // Fechar a janela inteira = fechar o contexto por fora do controller.
+      await (ctrl as unknown as { context: BrowserContext }).context.close()
+      await expect.poll(() => ctrl.tabsInfo().length, { timeout: 15000 }).toBe(0)
+
+      expect(await ctrl.navigate(pageUrl('Depois'))).toContain('Depois')
+      expect(ctrl.tabsInfo()).toHaveLength(1)
+      expect(ctrl.tabsInfo()[0]).toMatchObject({ title: 'Depois', active: true })
     } finally {
       await ctrl.close()
     }

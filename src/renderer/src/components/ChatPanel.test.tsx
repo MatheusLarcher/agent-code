@@ -208,6 +208,7 @@ describe('ChatPanel — coluna estreita sem mexer no chat em largura normal', ()
     expect(classesOf(container.querySelector('.composer-row'))).toEqual([
       'ref-wrap',
       'ref-btn',
+      'ref-btn pick-btn',
       'mic-wrap',
       'composer-input-wrap',
       'ref-btn',

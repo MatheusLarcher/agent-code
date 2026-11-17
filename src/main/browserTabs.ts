@@ -1,46 +1,16 @@
-import type { Page, CDPSession } from 'playwright'
-import type { AndroidDevice } from './android/androidDevice'
-import type { BrowserState, TabKind } from '../shared/ipc'
+import type { Page } from 'playwright'
 
-export const DEFAULT_VIEWPORT = { width: 1280, height: 800 }
-// Render at 2× and stream higher-quality JPEG so text stays crisp on any display
-// DPR (the frame is downscaled into the panel). MAX_FRAME caps a very large panel
-// so the JPEGs don't explode in size.
-export const DEVICE_SCALE = 2
-export const JPEG_QUALITY = 90
-export const MAX_FRAME = { width: 3840, height: 2400 }
+/** Tamanho da página só nos testes (headless); no app a página segue a janela do Chrome. */
+export const TEST_VIEWPORT = { width: 1280, height: 800 }
 
-/**
- * A live preview tab. A `web` tab is backed by a Playwright page + CDP screencast;
- * an `android` tab is backed by an AndroidDevice (emulator/phone) streamed via adb.
- * Exactly one of `page`/`device` is set, per `kind`.
- */
+/** Uma aba real da janela do Chrome do agente. */
 export interface Tab {
   id: string
-  kind: TabKind
-  page: Page | null
-  cdp: CDPSession | null
-  device: AndroidDevice | null
-  /** Cached so emitState() is synchronous (titles are async to read). */
+  kind: 'web'
+  page: Page
+  /** Em cache para a listagem ser síncrona (ler o título é assíncrono). */
   title: string
   url: string
-  /** True while the page is navigating/loading (drives the toolbar spinner). */
-  loading: boolean
-  /** Cached navigation availability so emitState() stays synchronous. */
-  canGoBack: boolean
-  canGoForward: boolean
-}
-
-export const isAndroid = (t: Tab): boolean => t.kind === 'android'
-
-export const EMPTY_STATE: BrowserState = {
-  url: '',
-  title: '',
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  launched: false,
-  tabs: []
 }
 
 let tabCounter = 0

@@ -152,14 +152,8 @@ function installApi(): Record<string, ReturnType<typeof vi.fn>> {
     boardList: vi.fn(async () => ({ available: true, items: [] })),
     tasksBoard: vi.fn(async () => ({ available: false, items: [] })),
     boardDismiss: vi.fn(async () => null),
-    setActiveBrowser: vi.fn(async () => {}),
     disposeBrowser: vi.fn(async () => {}),
-    newTab: vi.fn(async () => {}),
-    closeTab: vi.fn(async () => {}),
-    onBrowserFrame: vi.fn(() => () => {}),
-    onBrowserState: vi.fn(() => () => {}),
     onBrowserPicked: vi.fn(() => () => {}),
-    onAndroidProgress: vi.fn(() => () => {}),
     remoteStatus: vi.fn(async () => remote),
     publishRemoteState: vi.fn(async () => {}),
     onRemoteInbound: vi.fn(() => () => {}),
@@ -256,7 +250,7 @@ describe('App — aba Escritório', () => {
   it('o Quadro só conta como aberto na aba Conversa: sem scan de disco com o Escritório; volta aberto na Conversa', async () => {
     const { container } = render(<UiProvider><App /></UiProvider>)
     await screen.findByPlaceholderText(/Mensagem para o Agent/i)
-    fireEvent.click(screen.getByTitle('Quadro: as tarefas do projeto e quem está trabalhando em cada uma'))
+    fireEvent.click(document.querySelector('.pane-tabs [role="tab"]') as HTMLElement)
     await waitFor(() => expect(api.projectTree).toHaveBeenCalledTimes(1))
 
     fireEvent.click(tab(/Escritório/))

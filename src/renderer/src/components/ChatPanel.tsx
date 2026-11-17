@@ -472,7 +472,7 @@ export function ChatPanel(props: Props): JSX.Element {
           {props.connectAccount ? props.connectAccount : (<>
           <p>
             {hasActive
-              ? 'Peça ao Claude para construir, editar ou pesquisar. Ele abre o navegador embutido à direita quando precisar.'
+              ? 'Peça ao Claude para construir, editar ou pesquisar. Ele abre uma janela do Chrome quando precisar.'
               : 'Conecte na sua conta do Claude Code para começar. Você escolhe a pasta do projeto e o app cria a primeira conversa.'}
           </p>
           {!hasActive && props.onStart && (

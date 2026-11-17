@@ -7,13 +7,14 @@ directories:
   buildResources: build
 
 # asar desligado de propósito: o Agent SDK (claude.exe) e o Playwright
-# executam binários de dentro de node_modules — dentro do asar não rodam.
+# executam binários de dentro de node_modules — dentro do asar não rodam (o
+# download do Chromium roda node_modules/playwright/cli.js pelo próprio Electron).
 asar: false
 
 files:
   # Só o que o app carrega de out/. NÃO `out/**` com exclusões: o electron-builder
-  # põe as negações antes do `out/**`, que as reinclui — o Chromium, o controle do
-  # Windows e o Postgres iam duplicados (resources/ e resources/app/out/).
+  # põe as negações antes do `out/**`, que as reinclui — o controle do Windows e o
+  # Postgres iam duplicados (resources/ e resources/app/out/).
   - out/main/**
   - out/preload/**
   - out/renderer/**
@@ -49,9 +50,6 @@ extraResources:
   # Helper nativo do controle do Windows (resolveHelperPath → resources/windows-control)
   - from: out/windows-control
     to: windows-control
-  # Chromium do Playwright embutido (PLAYWRIGHT_BROWSERS_PATH aponta pra cá em produção)
-  - from: out/ms-playwright
-    to: ms-playwright
   # PostgreSQL 18.6 embutido, gerenciado pelo app (persistence/localPostgres.ts → resources/postgres)
   - from: out/postgres
     to: postgres

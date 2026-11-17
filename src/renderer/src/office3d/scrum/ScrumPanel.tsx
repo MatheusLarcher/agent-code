@@ -28,21 +28,24 @@ export interface ScrumPanelProps {
   /** Testes: o "agora" do agrupamento por dia. */
   now?: number
   initialTab?: ScrumTab
+  /** Dentro do painel da direita (aba Scrum Master): ocupa a aba inteira, sem Esc e sem ser um dialog. */
+  embedded?: boolean
 }
 
-export function ScrumPanel({ data, colorOf, onClose, onLocate, onOpenConversation, onSend, now, initialTab = 'agora' }: ScrumPanelProps): JSX.Element {
+export function ScrumPanel({ data, colorOf, onClose, onLocate, onOpenConversation, onSend, now, initialTab = 'agora', embedded = false }: ScrumPanelProps): JSX.Element {
   const [tab, setTab] = useState<ScrumTab>(initialTab)
   const [sobre, setSobre] = useState<string | null>(null)
   const [toggleErr, setToggleErr] = useState<string | null>(null)
   const snap = data.snapshot
 
   useEffect(() => {
+    if (embedded) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, embedded])
 
   const askAbout = useCallback((d: ScrumDecisao) => {
     setSobre(d.id)
@@ -62,7 +65,7 @@ export function ScrumPanel({ data, colorOf, onClose, onLocate, onOpenConversatio
   )
 
   return (
-    <aside className="smp" role="dialog" aria-label="Diário do Scrum Master" onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
+    <aside className={embedded ? 'smp smp-embedded' : 'smp'} role={embedded ? 'region' : 'dialog'} aria-label="Diário do Scrum Master" onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <div className="smp-head">
         <div>
           <div className="smp-kicker">Gestão do escritório</div>

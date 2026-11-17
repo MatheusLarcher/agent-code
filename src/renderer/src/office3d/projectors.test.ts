@@ -17,7 +17,6 @@ import { PROJECTOR_IDLE_MS } from './projectorUse'
 import { HTML_SHOW_MS } from './agentHtml'
 import { callMarks } from './officeCalls'
 import { OfficeScene } from './scene'
-import { fakeBrowserApi, jpegFrame } from './testBrowserApi'
 
 const NOW = 1_800_000_000_000
 const URL = 'http://localhost:5173/carrinho'
@@ -148,51 +147,8 @@ describe('A TV da sala de reunião: sempre ligada; o teste ao vivo entra e sai',
   })
 })
 
-describe('Projectors: os quadros do navegador', () => {
-  function bitmaps() {
-    const made: Array<{ close: ReturnType<typeof vi.fn> }> = []
-    vi.stubGlobal('createImageBitmap', vi.fn(async () => {
-      const b = { width: 960, height: 540, close: vi.fn() }
-      made.push(b)
-      return b as unknown as ImageBitmap
-    }))
-    return made
-  }
-  const flush = async (): Promise<void> => {
-    for (let i = 0; i < 5; i++) await Promise.resolve()
-  }
-
-  it(`decodifica só com a tela acesa e no máximo a cada ${MIN_PAINT_MS} ms; o bitmap velho fecha na hora; dispose fecha o último e tira os ouvintes`, async () => {
-    const made = bitmaps()
-    const paint = vi.spyOn(RoomProjector.prototype, 'paint')
-    const api = fakeBrowserApi()
-    const s = setup()
-    s.p.connect(api, () => 'a', () => false)
-    expect(api.listeners()).toBe(2)
-    s.setDark(true)
-    s.run(2)
-    s.feed()
-    api.frame(jpegFrame(btoa('q1')))
-    expect(made).toHaveLength(0) // apagada (sem energia): nada decodifica
-    s.setDark(false)
-    s.run(4)
-    await flush()
-    expect(made).toHaveLength(1) // acendeu: o quadro guardado aparece
-    api.frame(jpegFrame(btoa('q2')))
-    await flush()
-    expect(made).toHaveLength(1) // dentro do intervalo
-    s.tick(MIN_PAINT_MS + 50)
-    await flush()
-    expect(made).toHaveLength(2)
-    expect(made[0].close).toHaveBeenCalledTimes(1)
-    expect(made[1].close).not.toHaveBeenCalled()
-    expect(paint.mock.calls.at(-1)![0].live).toBe(true)
-    s.p.dispose()
-    expect(made[1].close).toHaveBeenCalledTimes(1)
-    expect(api.listeners()).toBe(0)
-  })
-
-  it('a tela acesa desenha a página: o quadro real, a página falsa na demo ou o esqueleto com URL e título', () => {
+describe('Projectors: a página do teste (sem imagem ao vivo)', () => {
+  it('a tela acesa desenha a página: a página falsa na demo ou o esqueleto com o endereço e o título', () => {
     const paint = vi.spyOn(RoomProjector.prototype, 'paint')
     const demo = setup(testing('demo-1-0'))
     demo.p.demo = true

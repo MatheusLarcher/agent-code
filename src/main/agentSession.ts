@@ -29,6 +29,7 @@ import { presenceRemove, presenceSnapshot, presenceUpdate, recentTopics, renderC
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
 import { createAndroidMcpServer } from './android/androidTools'
+import { androidSessionFor } from './android/androidSession'
 import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
 import { windowsControl } from './windowsControl/service'
 import { createChromeMcpServer } from './chromeBridge/tools'
@@ -141,28 +142,28 @@ import { buildSecretsHintWithMask } from './contextSnapshot/secretsHint'
 import type { ContextTurnChanged } from '../shared/contextSnapshot'
 
 export const OPENAI_MAX_TURNS = 64
-const BROWSER_HINT = `You have an embedded web browser available through the "browser" MCP tools
+const BROWSER_HINT = `You have a web browser available through the "browser" MCP tools
 (browser_navigate, browser_form_fields, browser_run_steps, browser_snapshot, browser_screenshot,
 browser_click, browser_type, browser_get_text, browser_evaluate, browser_back, browser_reload).
 When the user asks you to look something up on the web, open a site, or interact with a page,
-use these tools — the page is rendered live inside the app for the user to see.
+use these tools — the pages open in a real Google Chrome window on the user's PC, which the
+user can watch (and use) while you work.
 
 To interact with a page (forms, clicks, choices): first browser_form_fields, then ONE
 browser_run_steps with all the steps, targeting by label/text; come back to the model only if
 it stops (continue from the state it returns). Use browser_snapshot/browser_screenshot as the
 fallback: canvas pages, empty form_fields or an ambiguous result.
 
-The preview is organized into TABS. There is always exactly one ACTIVE tab, and every
-browser action targets it. Each tab has a name like "web - <site>" (only "web" tabs exist
-today; "android"/"iphone" are reserved for the future). Tab tools: browser_list_tabs (see
-all tabs and which is active), browser_new_tab (open another tab), browser_select_tab (switch
-the active tab by id), browser_close_tab.
+That window has TABS, and they are real Chrome tabs. There is always exactly one ACTIVE tab,
+and every browser action targets it. Each tab has a name like "web - <site>". Tab tools:
+browser_list_tabs (see all tabs and which is active), browser_new_tab (open another tab),
+browser_select_tab (switch the active tab by id), browser_close_tab. The user may open or
+close tabs in that window too — browser_list_tabs always shows the current ones.
 
 Default to REUSING the current tab: use browser_navigate to go elsewhere in the same tab.
 Only open a new tab when you truly need a second page side-by-side — do not open tabs
 needlessly. If you are unsure which tab you control, call browser_list_tabs or browser_snapshot
-(both report the active tab name). When the user picks an element with "Select", the message
-tells you which tab it came from — act on that tab.`
+(both report the active tab name).`
 
 const ANDROID_HINT = `You can also build and test ANDROID apps through the "android" MCP tools.
 When the user asks to create an Android app, generate an APK, or test something on Android,
@@ -177,17 +178,16 @@ android/ folder; for a native app, a Kotlin/Gradle project), then call "android_
 with the Gradle project root (the folder containing gradlew). Then "android_install_run" with
 the resulting .apk installs and launches it on the device.
 
-Previewing/testing: "android_open_preview" boots a device/emulator (a connected phone if any,
-otherwise the default AVD) and streams its screen into a preview tab named "android - <app>",
-right next to the web tabs (same tab strip, Android icon). Interact with the running app using
-android_screenshot / android_tap / android_swipe / android_type / android_key (taps use
-normalized 0..1 coordinates that match the screenshot). Pass appName to android_install_run so
-the tab reads "android - <app name>".
+Testing on a device: "android_open_preview" boots a device/emulator (a connected phone if any,
+otherwise the default AVD). The emulator opens in its OWN WINDOW on the user's PC, where the
+user watches and can touch it — nothing is drawn inside this app. You see the screen only by
+calling android_screenshot; interact with android_tap / android_swipe / android_type /
+android_key (taps use normalized 0..1 coordinates that match the screenshot).
 
-Screen sizes: the preview starts as a Galaxy S26 Ultra. To test the app on different screens,
+Screen sizes: the emulator starts at its own resolution. To test the app on different screens,
 use "android_list_device_models" to see the presets, then "android_set_device" with a modelId
-(e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator and the
-on-screen device frame follows. Test responsiveness across a few phone and tablet sizes.`
+(e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator
+screen. Test responsiveness across a few phone and tablet sizes.`
 
 // Lets the model hand the user a downloadable file straight from the chat (works
 // on the desktop AND on the Android remote app). The renderer turns the marker
@@ -1148,7 +1148,7 @@ export class AgentSession {
 
     const mcpServers: Record<string, McpServerConfig> = {
       browser: createBrowserMcpServer(this.browser),
-      android: createAndroidMcpServer(this.browser),
+      android: createAndroidMcpServer(androidSessionFor(this.opts.convId)),
       // Em TODA sessão (o app_chamar_usuario); o app_restart só com o coordenador e fora do Agent Manager.
       app: createAppMcpServer({
         restart: this.opts.planning ? undefined : this.restartRegistration?.request,

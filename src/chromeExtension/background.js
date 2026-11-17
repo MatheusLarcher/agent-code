@@ -3,7 +3,7 @@
 // config.js é gerado pelo Agent Code na pasta instalada; sem ele a extensão
 // fica ociosa em vez de derrubar o service worker.
 try { importScripts('config.js') } catch { /* não instalada pelo Agent Code */ }
-importScripts('snapshot.js', 'cdp.js')
+importScripts('snapshot.js', 'picker.js', 'cdp.js')
 
 const CONFIG = self.AGENT_CODE_CONFIG || { ports: [], token: '' }
 const VERSION = chrome.runtime.getManifest().version
@@ -15,6 +15,10 @@ const GROUP_TITLE = 'Agent Code'
 const GROUP_COLOR = 'orange'
 const WAIT_MAX_MS = 25_000
 const EVAL_MAX_CHARS = 8000
+// O app espera 120 s pela resposta; a página desiste antes e se limpa sozinha.
+const PICK_MAX_MS = 110_000
+// O que o CDP devolve quando a página navega/recarrega com a seleção aberta.
+const PICK_NAVIGATED = /context was destroyed|navigated or closed|promise was collected|cannot find context|target closed/i
 
 let ws = null
 let connected = false
@@ -115,7 +119,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 // ---------- fila por aba ----------
 
 const ACTIVE_TAB_METHODS = new Set(['snapshot', 'screenshot', 'scroll', 'wait', 'navigate', 'click', 'type',
-  'pressKey', 'selectOption', 'evaluate'])
+  'pressKey', 'selectOption', 'evaluate', 'pickElement'])
 const queues = new Map()
 function enqueue(key, fn) {
   const prev = queues.get(key) || Promise.resolve()
@@ -335,5 +339,28 @@ const METHODS = {
     let value = raw === undefined ? 'undefined' : JSON.stringify(raw)
     if (value.length > EVAL_MAX_CHARS) value = value.slice(0, EVAL_MAX_CHARS) + '…(truncado)'
     return { value, ...(await info(tabId)) }
+  },
+
+  /**
+   * O "Selecionar" do Agent Code: liga o seletor na aba em foco do usuário e
+   * espera UM clique (ou o Esc). Devolve { element } ou { element: null, canceled }.
+   */
+  async pickElement(p) {
+    const tab = await getTab(p.tabId)
+    // Traz o Chrome para a frente: o clique seguinte é do usuário, na página.
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {})
+    await cdp.ensureAttached(tab)
+    const release = cdp.hold(tab.id)
+    const timeoutMs = Math.min(Math.max(Number(p.timeoutMs) || PICK_MAX_MS, 1000), PICK_MAX_MS)
+    try {
+      const out = await cdp.evaluate(tab.id, `(${agentCodePickElement.toString()})(${timeoutMs})`)
+      const at = await info(tab.id)
+      return { element: out?.element ?? null, canceled: out?.element ? null : out?.canceled || 'esc', ...at }
+    } catch (err) {
+      if (PICK_NAVIGATED.test(String(err?.message || err))) throw new Error(ERR.pickNavigated)
+      throw err
+    } finally {
+      release()
+    }
   }
 }
