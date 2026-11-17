@@ -58,9 +58,14 @@ export function stopChromeBridge(): void {
   void bridge?.stop()
 }
 
-/** Botão "Instalar extensão": reescreve a pasta, abre-a e tenta abrir chrome://extensions. */
-export async function openInstall(): Promise<string> {
+/**
+ * Botão "Instalar extensão": reescreve a pasta e, no modo manual (`open`), abre-a e
+ * tenta abrir chrome://extensions. Com `open = false` só prepara a pasta — é o agente
+ * quem abre o Chrome e carrega a extensão ("Instalar para mim").
+ */
+export async function openInstall(open = true): Promise<string> {
   const dir = install(await ensureToken())
+  if (!open) return dir
   const err = await shell.openPath(dir)
   if (err) console.error(`[chrome-bridge] openPath: ${err}`)
   openChromeExtensionsPage()

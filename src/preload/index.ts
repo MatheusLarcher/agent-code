@@ -251,7 +251,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   getChromeBridgeStatus: (): Promise<ChromeBridgeStatus> => ipcRenderer.invoke(Channels.chromeBridgeStatus),
   onChromeBridgeStatusChanged: (cb: (status: ChromeBridgeStatus) => void): (() => void) =>
     on(Channels.chromeBridgeStatusChanged, cb),
-  installChromeExtension: (): Promise<string> => ipcRenderer.invoke(Channels.chromeExtensionInstall),
+  installChromeExtension: (open?: boolean): Promise<string> => ipcRenderer.invoke(Channels.chromeExtensionInstall, open),
 
   // directory picker
   pathExists: (path: string): Promise<boolean> => ipcRenderer.invoke(Channels.pathExists, path),

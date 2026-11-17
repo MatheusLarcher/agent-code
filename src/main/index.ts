@@ -1986,7 +1986,7 @@ export function registerIpc(): void {
     await updateAppConfig({ chromeControlEnabled: enabled })
   })
   ipcMain.handle(Channels.chromeBridgeStatus, () => chromeBridgeStatus())
-  ipcMain.handle(Channels.chromeExtensionInstall, () => openChromeInstall())
+  ipcMain.handle(Channels.chromeExtensionInstall, (_e, open?: unknown) => openChromeInstall(open !== false))
 
   // Chat voice (dictation + read-aloud) on this machine — see voiceService.ts.
   // Model downloads stream as speechSetupProgress to the asking window.

@@ -44,6 +44,7 @@ import { DEFAULT_TITLE } from './types'
 import { findBlankConversation } from './blankConversation'
 import { groupSidebarProjects, newChatTarget, shouldOpenSandboxOnBoot } from './sandbox/sandboxFlow'
 import { openSandboxConversation, useSandboxRoot } from './sandbox/useSandbox'
+import { useSetupAssistant } from './setup/setupAssistant'
 import { ConnectAccountCard } from './components/connectAccount/ConnectAccountCard'
 import { useConnectAccount } from './components/connectAccount/useConnectAccount'
 import { hasAnyProvider, modelForNewConversation } from './components/connectAccount/providerModels'
@@ -4092,6 +4093,12 @@ export function App(): JSX.Element {
     const conv = convsRef.current.find((c) => c.id === convId)
     if (conv) void dispatch(conv, text, text, [], [], [])
   }
+  // "Instalar para mim" das Configurações: fecha o modal e manda o pedido a um chat de sandbox.
+  useSetupAssistant((task) => {
+    closeSettings()
+    setMainTab('chat')
+    void openSandboxChat().then((conv) => conv && dispatch(conv, task.prompt, task.display, [], [], []))
+  })
 
   // id → título, para o quadro nomear a conversa de origem de cada cartão sem
   // o main precisar consultar conversas (o renderer já tem todas na mão).

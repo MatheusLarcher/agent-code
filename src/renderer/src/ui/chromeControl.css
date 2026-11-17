@@ -1,0 +1,22 @@
+/* Seção "Permitir controle do Chrome": os dois jeitos de instalar a extensão. */
+.chrome-install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.chrome-install-note {
+  display: block;
+  margin-top: 6px;
+}
+.chrome-install-steps {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+.chrome-install-steps li + li {
+  margin-top: 4px;
+}
+.chrome-install-steps code {
+  word-break: break-all;
+}

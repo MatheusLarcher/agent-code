@@ -314,8 +314,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** Status da ponte Chrome (extensão conectada, versão, navegador). */
   getChromeBridgeStatus(): Promise<ChromeBridgeStatus>
   onChromeBridgeStatusChanged(cb: (status: ChromeBridgeStatus) => void): () => void
-  /** Copia/atualiza a extensão, abre a pasta e chrome://extensions; devolve o caminho da pasta. */
-  installChromeExtension(): Promise<string>
+  /** Copia/atualiza a extensão e devolve a pasta; abre a pasta e chrome://extensions, salvo `open = false`. */
+  installChromeExtension(open?: boolean): Promise<string>
   /** Whether a path exists and is a directory (project-folder guard). */
   pathExists(path: string): Promise<boolean>
   pickDirectory(): Promise<string | null>
