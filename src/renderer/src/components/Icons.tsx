@@ -373,7 +373,13 @@ export const IconCheck = (p: IconProps): JSX.Element => (
     <polyline points="5 12.5 10 17.5 19 7" />
   </Svg>
 )
-export const IconCheckCircle = (p: IconProps): JSX.Element => (
+export const IconCopy = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+  </Svg>
+)
+export const IconCheckCircle =(p: IconProps): JSX.Element => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="9" />
     <polyline points="8.5 12.2 11 14.7 15.8 9.6" />

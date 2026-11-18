@@ -23,6 +23,25 @@ function quoteOf(id: string, who: string, text: string): CentralQuote | null {
 import { BlurText, isPlainText } from './motion'
 import { ToolCard } from './ToolCard'
 
+/** Só o ícone de copiar; vira check por 1,5 s. */
+function PhoneCopy({ text }: { text: string }): JSX.Element {
+  const [done, setDone] = useState(false)
+  const copy = (): void => {
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setDone(true)
+        setTimeout(() => setDone(false), 1500)
+      },
+      () => undefined
+    )
+  }
+  return (
+    <button type="button" className={`msg-copy${done ? ' done' : ''}`} onClick={copy} aria-label="Copiar texto">
+      <Icon name={done ? 'check' : 'copy'} size={16} />
+    </button>
+  )
+}
+
 /** A sua mensagem: cartão escuro com borda e degradê quente (não mais o bloco laranja chapado). */
 function UserBubble({ m, flash, resolveRef, fresh }: { m: UserMsg; flash: boolean; resolveRef?: CardRefResolver | null; fresh: boolean }): JSX.Element {
   const text = m.text ? readableMedia(m.text) : ''
@@ -76,6 +95,7 @@ function AssistantBubble({ id, text, answer, done, voiceReady, speaking, onSpeak
           <Icon name="download" size={15} /> Baixar {basename(path)}
         </button>
       ))}
+      {(answer || done) && parsed.clean && <PhoneCopy text={parsed.clean} />}
       {/* "Ouvir": na resposta final e na narração pronta, só quando o PC oferece voz (sintetizada lá). */}
       {(answer || done) && voiceReady && parsed.clean && (
         <button type="button" className={`msg-speak${speaking ? ' active' : ''}`} onClick={() => onSpeak(id, parsed.clean)}>

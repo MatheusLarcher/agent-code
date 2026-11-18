@@ -1579,6 +1579,26 @@ button svg {
   background: rgba(217, 119, 87, 0.28);
 }
 /* "Ouvir" / "Parar" read-aloud button under a final answer. */
+.msg-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.msg-copy:hover {
+  color: var(--text);
+  background: var(--line);
+}
+.msg-copy.done {
+  color: #3fb950;
+}
 .msg-speak {
   display: inline-flex;
   align-items: center;

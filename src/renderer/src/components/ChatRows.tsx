@@ -22,7 +22,7 @@ import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { AccountSwitchNote } from './AccountSwitchNote'
 import { TarefaAvisoNote } from './TarefaAvisoNote'
-import { IconBrain, IconSpeaker, IconStopSmall } from './Icons'
+import { IconBrain, IconCheck, IconCopy, IconSpeaker, IconStopSmall } from './Icons'
 import { CardRefText, type CardRefResolver } from './Markdown'
 import { LazyMarkdown } from './lazyMarkdown'
 import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
@@ -76,6 +76,30 @@ function DownloadChip({ path }: { path: string }): JSX.Element {
   return (
     <button className="msg-download" onClick={download} title={path}>
       ⬇️ Baixar {fileLabel(path)}
+    </button>
+  )
+}
+
+/** Só o ícone de copiar (como no Claude Code); vira um check por 1,5 s ao copiar. */
+function CopyButton({ text }: { text: string }): JSX.Element {
+  const [done, setDone] = useState(false)
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setDone(true)
+      setTimeout(() => setDone(false), 1500)
+    } catch {
+      /* sem permissão de clipboard: nada a fazer */
+    }
+  }
+  return (
+    <button
+      className={`msg-copy ${done ? 'done' : ''}`}
+      onClick={copy}
+      aria-label="Copiar texto"
+      data-tip={done ? 'Copiado' : 'Copiar'}
+    >
+      {done ? <IconCheck size={14} /> : <IconCopy size={14} />}
     </button>
   )
 }
@@ -212,6 +236,7 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
   const listen = !!tts && (!!m.answer || m.final) && !!clean
   // Texto que chegou ao vivo: palavra a palavra (BlurText). O histórico entra pronto.
   const blur = useFreshOnce(m.id, 'text')
+  const copyable = (!!m.answer || m.final) && !!clean
   return (
     <div className={`msg assistant ${m.answer ? '' : 'narration'} ${m.aborted ? 'aborted' : ''}`}>
       <div className="bubble">
@@ -223,8 +248,9 @@ function AssistantRow({ m, ctx }: { m: AssistantMsg; ctx: ChatRowContext }): JSX
         {paths.map((p, k) => (
           <DownloadChip key={k} path={p} />
         ))}
-        {(listen || (m.id === lastTsId && m.ts)) && (
+        {(listen || copyable || (m.id === lastTsId && m.ts)) && (
           <div className="msg-foot">
+            {copyable && <CopyButton text={clean} />}
             {listen && tts && (
               <button
                 className={`msg-speak ${speaking ? 'active' : ''}`}
