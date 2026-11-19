@@ -31,6 +31,14 @@ const PAGE = `<!doctype html><html><head><title>E2E</title></head><body>
 <script>document.addEventListener('keydown', (e) => { document.body.dataset.key = e.key })</script>
 </body></html>`
 
+// Casos que o evento do mouse não alcança: botão disabled, botão com
+// pointer-events:none (o clique cai no pai) e elemento dentro de iframe.
+const HARD = `<!doctype html><html><head><title>Difícil</title></head><body style="margin:0">
+<div id="wrap" style="padding:20px"><button id="dis" disabled style="width:160px;height:40px">Assinar</button></div>
+<div id="pewrap" style="padding:20px"><button id="pe" style="pointer-events:none;width:160px;height:40px">Sem ponteiro</button></div>
+<iframe id="fr" style="width:300px;height:120px;border:0" srcdoc="<body style='margin:0'><button id='inner' style='width:160px;height:40px'>Dentro</button></body>"></iframe>
+</body></html>`
+
 function freePort(): Promise<number> {
   return new Promise((res, rej) => {
     const s = createNetServer()
@@ -67,7 +75,7 @@ describe.skipIf(!hasChromium)('ponte Chrome ponta a ponta', () => {
     dir = mkdtempSync(join(tmpdir(), 'agent-chrome-e2e-'))
     http = createHttpServer((req, res) => {
       res.setHeader('content-type', 'text/html; charset=utf-8')
-      res.end(req.url === '/two' ? '<title>Dois</title><p>Página dois</p>' : PAGE)
+      res.end(req.url === '/two' ? '<title>Dois</title><p>Página dois</p>' : req.url === '/hard' ? HARD : PAGE)
     })
     await new Promise<void>((r) => http.listen(0, '127.0.0.1', () => r()))
     base = `http://127.0.0.1:${(http.address() as { port: number }).port}`
@@ -176,6 +184,30 @@ describe.skipIf(!hasChromium)('ponte Chrome ponta a ponta', () => {
     // Um clique = um elemento: depois dele a página volta a funcionar.
     await page.click('#btn')
     expect(await page.evaluate(() => document.getElementById('out')!.textContent)).toBe('ok:')
+  })
+
+  it('Selecionar: alcança botão disabled, pointer-events:none e elemento dentro de iframe', async () => {
+    await page.goto(base + '/hard')
+    await page.bringToFront()
+    const pickAt = async (box: { x: number; y: number; width: number; height: number }) => {
+      const pending = pickElementInChrome(bridge)
+      await picking()
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x - 30, y - 30)
+      await page.mouse.move(x, y, { steps: 5 })
+      await page.waitForTimeout(100)
+      await page.mouse.click(x, y)
+      return pending
+    }
+    const dis = await pickAt((await page.locator('#dis').boundingBox())!)
+    expect(dis.element).toMatchObject({ selector: '#dis', tagName: 'button', text: 'Assinar' })
+    const pe = await pickAt((await page.locator('#pe').boundingBox())!)
+    expect(pe.element).toMatchObject({ selector: '#pe', tagName: 'button' })
+    const frameBox = (await page.locator('#fr').boundingBox())!
+    const inner = await pickAt({ x: frameBox.x, y: frameBox.y, width: 160, height: 40 })
+    expect(inner.element).toMatchObject({ selector: '#fr >>> #inner', tagName: 'button', text: 'Dentro' })
+    expect(await page.evaluate(() => !!document.getElementById('__agent_pick_shield__'))).toBe(false)
   })
 
   it('Selecionar: Esc cancela sem erro e limpa a página', async () => {
