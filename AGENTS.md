@@ -35,3 +35,7 @@ project that packages that `www/` into the APK.
   default commit template, which suggests one.
 - Keep working files out of the repo root: `src/`, `tests/`, `docs/`, `scripts/`.
 - Keep files under 500 lines. Validate input at system boundaries.
+- EVERY change to the app adds a line to `"proxima"` in `src/shared/novidades.json`
+  (shown in Configurações > Novidades). Write in plain Portuguese for a non-technical
+  user: what they can now do or what stopped breaking — no file names, no jargon.
+  `scripts/bump-version.mjs` stamps those lines with the new version at build time.

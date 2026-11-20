@@ -3,9 +3,11 @@
  * atualização>". O estado vem do main pelo `useAppUpdate`; "Verificar agora"
  * fica travado enquanto há verificação, download ou instalação em curso.
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AppUpdateState } from '@shared/ipc'
 import { useAppUpdate } from '../components/useAppUpdate'
+import { NovidadesDialog } from './NovidadesDialog'
 import { useUI } from './UiProvider'
 
 const TICK_MS = 30_000
@@ -49,6 +51,8 @@ export function AppUpdateStatus({ appVersion }: { appVersion: string }): JSX.Ele
   const { notify } = useUI()
   const { state, checkNow } = useAppUpdate({ onError: (m) => notify('erro', m) })
   const [now, setNow] = useState(() => Date.now())
+  const [showNews, setShowNews] = useState(false)
+  const closeNews = useCallback(() => setShowNews(false), [])
 
   // "há N min" precisa andar com o relógio enquanto o modal está aberto.
   useEffect(() => {
@@ -59,6 +63,10 @@ export function AppUpdateStatus({ appVersion }: { appVersion: string }): JSX.Ele
   return (
     <div className="settings-nav-version update-status">
       <span>Versão {appVersion}</span>
+      <button type="button" className="update-status-check" onClick={() => setShowNews(true)}>
+        Novidades
+      </button>
+      {showNews && createPortal(<NovidadesDialog appVersion={appVersion} onClose={closeNews} />, document.body)}
       <button type="button" className="update-status-check" disabled={BUSY.has(state.phase)} onClick={() => void checkNow()}>
         Verificar agora
       </button>

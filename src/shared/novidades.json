@@ -1,0 +1,55 @@
+{
+  "proxima": [],
+  "versoes": [
+    {
+      "versao": "0.1.186",
+      "data": "2026-11-19",
+      "itens": [
+        "Novo botão \"Novidades\" ao lado da versão, em Configurações: mostra o que mudou em cada atualização."
+      ]
+    },
+    {
+      "versao": "0.1.185",
+      "data": "2026-11-19",
+      "itens": [
+        "O botão \"Selecionar\" agora consegue marcar botões desativados e itens dentro de partes embutidas da página."
+      ]
+    },
+    {
+      "versao": "0.1.184",
+      "data": "2026-11-18",
+      "itens": [
+        "Ícone para copiar as respostas do agente, no computador e no celular."
+      ]
+    },
+    {
+      "versao": "0.1.183",
+      "data": "2026-11-17",
+      "itens": [
+        "Botão \"Instalar para mim\": o próprio agente instala a extensão do Chrome para você."
+      ]
+    },
+    {
+      "versao": "0.1.182",
+      "data": "2026-11-17",
+      "itens": [
+        "O painel da direita agora mostra o Quadro de tarefas e o Scrum Master.",
+        "O navegador e o emulador que ficavam dentro do app foram retirados, deixando o app mais leve."
+      ]
+    },
+    {
+      "versao": "0.1.181",
+      "data": "2026-11-13",
+      "itens": [
+        "O botão Parar agora para todos os agentes de uma vez, e a mensagem parada não volta sozinha."
+      ]
+    },
+    {
+      "versao": "0.1.180",
+      "data": "2026-11-12",
+      "itens": [
+        "Na tela de Planejamento, o agente agora pode usar o navegador, o seu Chrome e o Windows."
+      ]
+    }
+  ]
+}

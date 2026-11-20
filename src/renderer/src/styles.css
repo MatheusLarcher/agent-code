@@ -5464,6 +5464,64 @@ img.inline-att[data-caret] {
 .update-status-state.err {
   color: var(--err);
 }
+/* Novidades: o que mudou em cada versão (acima do modal de Configurações). */
+.modal-overlay:has(> .novidades-modal) {
+  z-index: 1120;
+}
+.modal-card.novidades-modal {
+  max-width: 520px;
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+.novidades-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 4px 0 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.novidades-item {
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.novidades-item.atual {
+  border-left-color: var(--accent);
+}
+.novidades-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.novidades-versao {
+  font-weight: 600;
+  color: var(--text);
+}
+.novidades-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.novidades-data {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.novidades-item ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.novidades-item ul li + li {
+  margin-top: 2px;
+}
 
 /* ============ Configurações em abas ============ */
 .settings-modal {

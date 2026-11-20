@@ -29,5 +29,22 @@ if (atualizado === bruto) {
 
 writeFileSync(caminho, atualizado)
 console.error(`[bump-version] ${anterior} -> ${nova}`)
+
+// Novidades: os itens de "proxima" viram a nota da versao nova (mostrada em
+// Configuracoes > Novidades). Sem itens, so avisa: o build nao para por isso.
+const caminhoNotas = join(raiz, 'src', 'shared', 'novidades.json')
+const notas = JSON.parse(readFileSync(caminhoNotas, 'utf8'))
+const itens = Array.isArray(notas.proxima) ? notas.proxima.filter((s) => typeof s === 'string' && s.trim()) : []
+if (itens.length === 0) {
+  console.error('[bump-version] AVISO: src/shared/novidades.json sem itens em "proxima"; a versao sai sem nota.')
+} else {
+  const hoje = new Date()
+  const data = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`
+  const versoes = (Array.isArray(notas.versoes) ? notas.versoes : []).filter((v) => v.versao !== nova)
+  notas.versoes = [{ versao: nova, data, itens }, ...versoes]
+  notas.proxima = []
+  writeFileSync(caminhoNotas, JSON.stringify(notas, null, 2) + '\n')
+  console.error(`[bump-version] novidades da ${nova}: ${itens.length} item(ns).`)
+}
 // stdout recebe apenas a versao nova: o .bat le daqui.
 console.log(nova)
