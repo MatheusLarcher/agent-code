@@ -11,7 +11,11 @@
 .md .qc-pre > .md-code {
   margin: 0;
 }
-.md .md-code > pre {
+.md .md-code-body {
+  position: relative;
+  overflow: hidden;
+}
+.md .md-code-body > pre {
   border: none;
   border-radius: 0;
   margin: 0;
@@ -58,8 +62,76 @@
   outline-offset: 1px;
 }
 .md-code-copy.done {
-  color: var(--ok, #3fb950);
+  color: var(--ok, #7fae6f);
+  border-color: color-mix(in srgb, var(--ok, #7fae6f) 55%, transparent);
+  background: color-mix(in srgb, var(--ok, #7fae6f) 14%, transparent);
+  animation: md-code-pulse 0.6s ease-out;
 }
 .md-code-copy.fail {
   color: var(--danger, #f85149);
+  animation: md-code-shake 0.35s ease-in-out;
+}
+
+/* ---- Animação de "copiado" ----
+   1) o ícone novo entra girando de leve e crescendo;
+   2) no check, o traço se desenha;
+   3) o botão solta um anel verde;
+   4) uma faixa clara varre o código, mostrando O QUE foi copiado. */
+.md-code-copy-icon {
+  display: inline-flex;
+  animation: md-code-icon-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.md-code-copy.done .md-code-copy-icon polyline {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: md-code-check-draw 0.32s 0.08s ease-out forwards;
+}
+.md-code-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--ok, #7fae6f) 22%, transparent) 45%,
+    color-mix(in srgb, var(--ok, #7fae6f) 30%, transparent) 50%,
+    transparent 60%
+  );
+  transform: translateX(-100%);
+  animation: md-code-sweep 0.7s ease-out forwards;
+}
+
+@keyframes md-code-icon-in {
+  from { transform: scale(0.4) rotate(-25deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
+@keyframes md-code-check-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes md-code-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok, #7fae6f) 55%, transparent); }
+  100% { box-shadow: 0 0 0 8px transparent; }
+}
+@keyframes md-code-sweep {
+  0% { transform: translateX(-100%); opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+@keyframes md-code-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-code-copy.done,
+  .md-code-copy.fail,
+  .md-code-copy-icon,
+  .md-code-copy.done .md-code-copy-icon polyline {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .md-code-sweep {
+    display: none;
+  }
 }

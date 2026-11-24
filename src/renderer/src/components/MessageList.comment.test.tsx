@@ -86,8 +86,7 @@ describe('MessageList — "Comentar" nos blocos da resposta do agente', () => {
     const pre = md.querySelector('pre') as HTMLElement
     // <pre> dentro da barra do bloco (.md-code, com o "Copiar"), e ela dentro do invólucro comentável.
     const wrap = pre.closest('.qc-pre') as HTMLElement
-    expect(pre.parentElement?.classList.contains('md-code')).toBe(true)
-    expect(pre.parentElement?.parentElement).toBe(wrap)
+    expect(pre.closest('.md-code')?.parentElement).toBe(wrap)
     expect(within(wrap).getByRole('button', { name: BTN })).toBeTruthy()
     // "1. solto\n\n2. outro solto": o <li> tem <p> dentro — o botão fica só no parágrafo.
     const loose = md.querySelector('ol > li') as HTMLElement

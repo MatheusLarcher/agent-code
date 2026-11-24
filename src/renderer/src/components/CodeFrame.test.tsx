@@ -36,6 +36,11 @@ describe('CodeFrame (Copiar no bloco de código)', () => {
     })
     expect(writeText).toHaveBeenCalledWith('npm run build\nnpm test')
     expect(first.textContent).toBe('Copiado')
+    expect(first.classList.contains('done')).toBe(true)
+    // A faixa da animação passa só no bloco copiado.
+    const sweeps = document.querySelectorAll('.md-code-sweep')
+    expect(sweeps).toHaveLength(1)
+    expect(sweeps[0].closest('.md-code')).toBe(first.closest('.md-code'))
     act(() => {
       vi.advanceTimersByTime(2000)
     })

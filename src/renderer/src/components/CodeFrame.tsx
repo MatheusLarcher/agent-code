@@ -65,13 +65,14 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 
 type CopyState = 'idle' | 'done' | 'fail'
 
-export function CopyCodeButton({ text }: { text: string }): JSX.Element {
+export function CopyCodeButton({ text, onCopied }: { text: string; onCopied?: () => void }): JSX.Element {
   const [state, setState] = useState<CopyState>('idle')
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
   const copy = async (): Promise<void> => {
     const ok = await copyToClipboard(text)
     setState(ok ? 'done' : 'fail')
+    if (ok) onCopied?.()
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setState('idle'), 1800)
   }
@@ -85,7 +86,10 @@ export function CopyCodeButton({ text }: { text: string }): JSX.Element {
       onMouseDown={(e) => e.preventDefault()}
       onClick={copy}
     >
-      {state === 'done' ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      {/* key: o ícone novo entra com animação a cada troca (copiar → check desenhado). */}
+      <span className="md-code-copy-icon" key={state === 'done' ? 'ok' : 'copy'}>
+        {state === 'done' ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      </span>
       <span>{label}</span>
     </button>
   )
@@ -98,13 +102,18 @@ export function CodeFrame({ node, children, ...rest }: PreProps): JSX.Element {
   const hast = node as unknown as HastLike | undefined
   const text = codeText(hast)
   const lang = codeLanguage(hast)
+  // Cada cópia bem-sucedida remonta a faixa que varre o código (key = contador).
+  const [sweeps, setSweeps] = useState(0)
   return (
     <div className="md-code">
       <div className="md-code-head">
         <span className="md-code-lang">{lang || 'código'}</span>
-        <CopyCodeButton text={text} />
+        <CopyCodeButton text={text} onCopied={() => setSweeps((n) => n + 1)} />
       </div>
-      <pre {...rest}>{children}</pre>
+      <div className="md-code-body">
+        <pre {...rest}>{children}</pre>
+        {sweeps > 0 && <span key={sweeps} className="md-code-sweep" aria-hidden="true" />}
+      </div>
     </div>
   )
 }

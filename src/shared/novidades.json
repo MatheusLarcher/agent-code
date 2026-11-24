@@ -2,6 +2,14 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.191",
+      "data": "2026-11-24",
+      "itens": [
+        "O botão \"Copiar\" do app volta a funcionar: antes ele não colocava nada na área de transferência. Vale para os blocos de código e para a cópia da mensagem inteira.",
+        "Ao copiar um código, o botão fica verde com um sinal de confirmado e uma faixa de luz passa pelo bloco, mostrando o que foi copiado."
+      ]
+    },
+    {
       "versao": "0.1.190",
       "data": "2026-11-24",
       "itens": [

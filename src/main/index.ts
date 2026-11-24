@@ -1795,10 +1795,13 @@ function createWindow(startMinimized = false): void {
   // Both handlers are needed: the async request prompt AND the sync check that
   // getUserMedia consults first.
   const sess = mainWindow.webContents.session
+  // 'clipboard-sanitized-write': os botões "Copiar" (navigator.clipboard.writeText)
+  // eram negados por este handler — só escrita de texto, leitura continua bloqueada.
+  const allowed = (permission: string): boolean => permission === 'media' || permission === 'clipboard-sanitized-write'
   sess.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media')
+    callback(allowed(permission))
   })
-  sess.setPermissionCheckHandler((_wc, permission) => permission === 'media')
+  sess.setPermissionCheckHandler((_wc, permission) => allowed(permission))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) void mainWindow.loadURL(devUrl)
