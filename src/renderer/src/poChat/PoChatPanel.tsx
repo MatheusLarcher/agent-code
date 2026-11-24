@@ -301,7 +301,6 @@ export function PoChatPanel(props: PoChatPanelProps): JSX.Element {
           projectMissing={false}
           projectMissingMsg=""
           placeholder="Pergunte ao PO…"
-          hideCodeReview
         />
       </div>
     </section>

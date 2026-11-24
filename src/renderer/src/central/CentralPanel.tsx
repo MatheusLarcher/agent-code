@@ -205,7 +205,6 @@ export function CentralPanel(props: CentralPanelProps): JSX.Element {
           projectMissing={false}
           projectMissingMsg=""
           placeholder="Fale com o agent…"
-          hideCodeReview
           beforeSend={gate}
         />
         <div className="central-hint">o destino é escolhido pelo assunto</div>

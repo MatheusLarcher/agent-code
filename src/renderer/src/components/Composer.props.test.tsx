@@ -3,12 +3,11 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import type { FileAttachment, FileRefAttachment, ImageAttachment } from '@shared/ipc'
 import { UiProvider } from '../ui/UiProvider'
-import { CODE_REVIEW_PROMPT, Composer } from './Composer'
+import { Composer } from './Composer'
 import type { EditorElement } from '../inlineMedia/InlineEditor'
 
 /**
- * As props opcionais do Composer (a Central usa as três): placeholder próprio,
- * escudo de revisão escondido e `beforeSend`, que recusa um envio sem limpar o
+ * As props opcionais do Composer: placeholder próprio e `beforeSend`, que recusa um envio sem limpar o
  * campo. Sem elas, o Composer é o de sempre.
  */
 
@@ -18,7 +17,6 @@ type SendFn = (text: string, images: ImageAttachment[], files: FileAttachment[],
 type DraftFn = (convId: string, text: string, media?: unknown[]) => void
 interface Options {
   placeholder?: string
-  hideCodeReview?: boolean
   beforeSend?: () => boolean
   disabled?: boolean
 }
@@ -78,18 +76,16 @@ function setup(opts: Options = {}) {
     await screen.findByAltText(alt)
     await waitFor(() => expect(sendButton().disabled).toBe(false))
   }
-  const shield = (): HTMLElement | null => screen.queryByTitle(/Revisar código/)
   const mirror = (): string | null | undefined => r.container.querySelector('.composer-placeholder')?.textContent
-  return { onSend, onDraftChange, box, attach, attached, sendButton, shield, mirror }
+  return { onSend, onDraftChange, box, attach, attached, sendButton, mirror }
 }
 
 describe('Composer — sem as props novas, nada muda', () => {
-  it('placeholder padrão, escudo que manda o pedido de revisão, e Enter envia e limpa o campo', () => {
-    const { box, shield, mirror, onSend, onDraftChange } = setup()
+  it('placeholder padrão, sem escudo de revisão, e Enter envia e limpa o campo', () => {
+    const { box, mirror, onSend, onDraftChange } = setup()
     expect(box().getAttribute('aria-placeholder')).toBe(DEFAULT_PLACEHOLDER)
     expect(mirror()).toBe(DEFAULT_PLACEHOLDER)
-    fireEvent.click(shield()!)
-    expect(onSend).toHaveBeenLastCalledWith(CODE_REVIEW_PROMPT, [], [], [], [])
+    expect(screen.queryByTitle(/Revisar código/)).toBeNull()
     fireEvent.change(box(), { target: { value: 'oi' } })
     fireEvent.keyDown(box(), { key: 'Enter' })
     expect(onSend).toHaveBeenLastCalledWith('oi', [], [], [], [])
@@ -98,7 +94,7 @@ describe('Composer — sem as props novas, nada muda', () => {
   })
 })
 
-describe('Composer — placeholder e escudo', () => {
+describe('Composer — placeholder', () => {
   it('`placeholder` troca o texto padrão do campo vazio (no campo e no espelho)', () => {
     const { box, mirror } = setup({ placeholder: 'Fale com o agent…' })
     expect(screen.getByPlaceholderText('Fale com o agent…')).toBe(box())
@@ -111,12 +107,6 @@ describe('Composer — placeholder e escudo', () => {
     expect(box().getAttribute('aria-placeholder')).toBe('Inicie uma sessão primeiro…')
   })
 
-  it('`hideCodeReview` esconde o escudo; anexar e enviar continuam na linha', () => {
-    const { shield, sendButton } = setup({ hideCodeReview: true })
-    expect(shield()).toBeNull()
-    expect(sendButton()).toBeTruthy()
-    expect(screen.getByTitle(/Anexar arquivo/)).toBeTruthy()
-  })
 })
 
 describe('Composer — beforeSend', () => {
@@ -134,13 +124,12 @@ describe('Composer — beforeSend', () => {
     expect(onDraftChange).not.toHaveBeenCalledWith('c1', '')
   })
 
-  it('false no botão de enviar e no escudo: nada sai e o campo fica como estava', () => {
+  it('false no botão de enviar: nada sai e o campo fica como estava', () => {
     const beforeSend = vi.fn(() => false)
-    const { box, sendButton, shield, onSend } = setup({ beforeSend })
+    const { box, sendButton, onSend } = setup({ beforeSend })
     fireEvent.change(box(), { target: { value: 'deixa mais escuro' } })
     fireEvent.click(sendButton())
-    fireEvent.click(shield()!)
-    expect(beforeSend).toHaveBeenCalledTimes(2)
+    expect(beforeSend).toHaveBeenCalledTimes(1)
     expect(onSend).not.toHaveBeenCalled()
     expect(box().value).toBe('deixa mais escuro')
   })
@@ -167,11 +156,6 @@ describe('Composer — beforeSend', () => {
     expect(box().value).toBe('')
   })
 
-  it('true no escudo: manda o pedido de revisão como sempre', () => {
-    const { shield, onSend } = setup({ beforeSend: () => true })
-    fireEvent.click(shield()!)
-    expect(onSend).toHaveBeenCalledWith(CODE_REVIEW_PROMPT, [], [], [], [])
-  })
 
   it('só roda no envio: campo vazio e Enter que escolhe item do menu "/" não o chamam', async () => {
     const beforeSend = vi.fn(() => false)

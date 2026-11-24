@@ -2,6 +2,13 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.187",
+      "data": "2026-11-24",
+      "itens": [
+        "O botão de escudo (revisar código) saiu do campo de mensagem."
+      ]
+    },
+    {
       "versao": "0.1.186",
       "data": "2026-11-19",
       "itens": [

@@ -6,7 +6,6 @@ import type { UIMessage } from '../types'
 import { UiProvider } from '../ui/UiProvider'
 import { ManagerChatFloat } from '../planning/ManagerChatFloat'
 import { ChatPanel } from './ChatPanel'
-import { CODE_REVIEW_PROMPT } from './Composer'
 import { QUOTE_MAX_CHARS } from './quoteComment/quoteFormat'
 import type { SendFn } from './quoteComment/useQuoteComments'
 import type { EditorElement } from '../inlineMedia/InlineEditor'
@@ -303,17 +302,6 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
     rerender({ convId: 'c1', draft: saved[1], draftMedia: saved[2] })
     expect(tokens()).toEqual(['Trecho citado 1: Primeiro parágrafo.'])
     expect(firstP(container).classList.contains('qc-pending')).toBe(true)
-  })
-
-  it('o botão de revisão (/code-review) não leva o trecho; ele continua no campo', () => {
-    const { container, onSend } = renderPanel()
-    commentOn(firstP(container))
-    fireEvent.click(screen.getByTitle(/Revisar código/))
-    expect(onSend).toHaveBeenCalledWith(CODE_REVIEW_PROMPT, [], [], [], [])
-    expect(CODE_REVIEW_PROMPT).toMatch(/code-review com --fix/)
-    expect(CODE_REVIEW_PROMPT).toMatch(/commit/)
-    expect(CODE_REVIEW_PROMPT).toMatch(/push/)
-    expect(tokens()).toHaveLength(1)
   })
 
   it('o botão "Comentar" não rouba o foco do campo no mousedown (é isso que mantém o cursor)', () => {

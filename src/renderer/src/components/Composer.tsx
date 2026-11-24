@@ -19,7 +19,7 @@ import type {
   SkillInfo,
   SpeechSetupProgress
 } from '@shared/ipc'
-import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconShieldCheck, IconSpinner, IconStop } from './Icons'
+import { IconArrowUp, IconAt, IconBox, IconChevronDown, IconClose, IconFile, IconFolder, IconMic, IconPaperclip, IconSpinner, IconStop } from './Icons'
 import { useUI } from '../ui/UiProvider'
 import { PickElementButton } from './elementPick/PickElementButton'
 import { frameRms, newVadState, shouldRotatePreroll, vadStep, type VadState } from '../vad'
@@ -42,11 +42,6 @@ import { appendInjected, type ComposerInject } from './promptSuggestion'
 
 const NO_CARDS: readonly RefCard[] = []
 
-/** Shield button: review + apply fixes, then verify and ship (commit + push) the result. */
-export const CODE_REVIEW_PROMPT =
-  'Rode a skill code-review com --fix sobre as mudanças atuais. Depois de aplicar as correções, ' +
-  'rode typecheck e testes; se passarem, faça commit das mudanças e push para o remoto. ' +
-  'Se não houver nada a corrigir nem a commitar, apenas informe.'
 /** O que o `useHasTextSignal` avalia quando há trecho citado: um caractere
  *  que não é anexo, ou seja, "tem texto" (ver o uso no Composer). */
 const QUOTE_AS_TEXT = '↳'
@@ -108,8 +103,6 @@ interface Props {
   /** Texto do campo vazio no lugar do padrão (os avisos de sem sessão e de
    *  pasta ausente continuam por cima). */
   placeholder?: string
-  /** Esconde o escudo (revisão de código + commit + push). */
-  hideCodeReview?: boolean
   /** Chamado logo antes de cada envio (Enter, botão de enviar, escudo): `false`
    *  cancela — `onSend` não é chamado e o texto e os anexos ficam no campo. */
   beforeSend?: () => boolean
@@ -1317,18 +1310,6 @@ export function Composer(props: Props): JSX.Element {
         {props.busy && (
           <button className="btn stop" onClick={props.onInterrupt} title="Parar tarefa atual">
             <IconStop size={14} />
-          </button>
-        )}
-        {!props.hideCodeReview && (
-          <button
-            className="ref-btn"
-            onClick={() => {
-              if (allowSend()) props.onSend(CODE_REVIEW_PROMPT, [], [], [], [])
-            }}
-            disabled={props.disabled || blocked}
-            title="Revisar código, corrigir e fazer commit + push (skill code-review --fix)"
-          >
-            <IconShieldCheck />
           </button>
         )}
         <button
