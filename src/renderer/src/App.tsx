@@ -173,6 +173,7 @@ import {
 import { DeadlineIndicator } from './handoffTracking/DeadlineIndicator'
 import {
   handoffConversationFields,
+  withHandoffPrompts,
   handoffPlanOf,
   inheritedFastMode,
   isPlanningConversation,
@@ -3266,7 +3267,15 @@ export function App(): JSX.Element {
   // O resultado distingue "conversa criada, envio falhou" de "nada criado": no
   // primeiro, o diálogo fecha em vez de deixar criar uma segunda conversa.
   const startHandoff = useCallback(
-    async (folder: string, slug: string, titulo: string, prompts: string[], names: string[], fastMode = false): Promise<HandoffSendOutcome> => {
+    async (
+      folder: string,
+      slug: string,
+      titulo: string,
+      prompts: string[],
+      names: string[],
+      fastMode = false,
+      targetId?: string
+    ): Promise<HandoffSendOutcome> => {
       // O modelo do Manager lido agora (o último escolhido, inclusive em
       // Configurações); sem o IPC, o que a tela conhece.
       const manager = await window.api
@@ -3276,6 +3285,13 @@ export function App(): JSX.Element {
       // Texto e arquivo pareados ANTES do filtro de prompt em branco do launchHandoff.
       const launched = await launchHandoff(prompts.map((text, i) => ({ text, name: names[i] })), {
         create: () => {
+          // Reenvio escolhido "na mesma conversa": ela recebe os prompts e vira a ativa.
+          const existing = targetId ? convsRef.current.find((c) => c.id === targetId) : undefined
+          if (existing) {
+            patchConv(existing.id, (c) => withHandoffPrompts(c, names))
+            selectConversation(existing.id)
+            return existing
+          }
           const conv = createConversation(
             folder,
             undefined,
@@ -3304,7 +3320,7 @@ export function App(): JSX.Element {
       })
       return handoffOutcome(launched)
     },
-    [dispatch, notify]
+    [dispatch, notify, patchConv, selectConversation]
   )
 
   // Resend a message whose turn failed. The bubble already exists, so we don't
@@ -4735,7 +4751,9 @@ export function App(): JSX.Element {
           slug={activePlanning.planningSlug}
           managerBusy={busyIds.has(activePlanning.id)}
           onAskManager={(text) => askPlanningManager(activePlanning.id, text)}
-          onSend={(prompts, titulo, names, options) => startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names, options?.fastMode)}
+          onSend={(prompts, titulo, names, options) =>
+            startHandoff(activePlanning.cwd, activePlanning.planningSlug, titulo, prompts, names, options?.fastMode, options?.targetConversationId)
+          }
           fastModeDefault={inheritedFastMode(conversations, activePlanning.cwd, activePlanning)}
           conversationExists={(id) => convsRef.current.some((c) => c.id === id)}
           onOpenConversation={selectConversation}

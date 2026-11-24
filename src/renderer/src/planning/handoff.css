@@ -12,6 +12,10 @@
 }
 .modal-card.pl-handoff-modal.wide { max-width: 820px; }
 
+/* A pergunta "mesma conversa ou nova" (HandoffTarget.tsx): por cima do diálogo. */
+.modal-overlay.pl-handoff-target-overlay { z-index: 1101; }
+.modal-card.pl-handoff-target { max-width: 460px; }
+
 .pl-handoff-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
 .pl-handoff-eyebrow {
   overflow: hidden;

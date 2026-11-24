@@ -2,6 +2,13 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.188",
+      "data": "2026-11-24",
+      "itens": [
+        "No planejamento, um plano já enviado pode ser enviado de novo: o app pergunta se vai para a mesma conversa ou para uma nova, sem precisar refazer o planejamento."
+      ]
+    },
+    {
       "versao": "0.1.187",
       "data": "2026-11-24",
       "itens": [

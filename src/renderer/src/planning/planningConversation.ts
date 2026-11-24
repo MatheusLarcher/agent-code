@@ -86,6 +86,15 @@ export function handoffConversationFields(
   }
 }
 
+/** Reenvio na MESMA conversa de implementação: os arquivos novos entram na
+ *  lista de prompts do plano dela (sem repetir). Sem `handoffPlan`, fica igual. */
+export function withHandoffPrompts<C extends Pick<Conversation, 'handoffPlan'>>(conv: C, names: readonly string[]): C {
+  const plan = conv.handoffPlan
+  if (!plan) return conv
+  const prompts = [...new Set([...plan.prompts, ...names])]
+  return prompts.length === plan.prompts.length ? conv : { ...conv, handoffPlan: { ...plan, prompts } }
+}
+
 type FastModeShape = Pick<Conversation, 'cwd' | 'fastMode' | 'mode' | 'planningSlug'> & { id?: string }
 
 /** O fast mode com que uma conversa nova do projeto `folder` nasceria — a regra do

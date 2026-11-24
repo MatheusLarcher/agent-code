@@ -85,9 +85,14 @@ export function ReviewStep(props: {
   onReviewPending: () => void
   /** Os prompts antigos (selo "desatualizado"). */
   stale?: ReadonlySet<string>
+  /** Os já enviados que dá para mandar de novo, e a ação (ver HandoffTarget). */
+  resendable?: ReadonlySet<string>
+  onResend?: (names: string[]) => void
 }): JSX.Element {
   const { blockers, warnings, working } = props
   const blocked = blockers.length > 0 && !props.override
+  // Na ordem do envio (a dos nomes), como a lista de enviados.
+  const resendAll = [...(props.resendable ?? [])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
   return (
     <>
       <p className="modal-message">
@@ -119,7 +124,14 @@ export function ReviewStep(props: {
         </div>
       )}
       <PendingHandoffs pending={props.pending} disabled={working !== null} onMarkSent={props.onMarkSent} stale={props.stale} />
-      <SentHandoffs sent={props.sent} conversationExists={props.conversationExists} onOpenConversation={props.onOpenConversation} />
+      <SentHandoffs
+        sent={props.sent}
+        conversationExists={props.conversationExists}
+        onOpenConversation={props.onOpenConversation}
+        resendable={props.resendable}
+        onResend={props.onResend}
+        disabled={working !== null}
+      />
       <div className="modal-actions">
         <button type="button" className="btn ghost" onClick={props.onClose}>
           Cancelar
@@ -135,6 +147,15 @@ export function ReviewStep(props: {
             </button>
             <button type="button" className="btn primary" disabled={working !== null} onClick={props.onReviewPending}>
               {props.reviewCount > 1 ? `Revisar ${props.reviewCount} prompts` : 'Revisar prompt'}
+            </button>
+          </>
+        ) : resendAll.length > 0 && props.onResend ? (
+          <>
+            <button type="button" className="btn" disabled={blocked || working !== null} onClick={props.onAskManager}>
+              Pedir ao Agent Manager
+            </button>
+            <button type="button" className="btn primary" disabled={working !== null} onClick={() => props.onResend?.(resendAll)}>
+              {resendAll.length > 1 ? `Enviar os ${resendAll.length} de novo` : 'Enviar de novo'}
             </button>
           </>
         ) : (

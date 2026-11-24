@@ -16,9 +16,9 @@
  *    antes do envio (o original fica "substituído por" ele em enviados.json),
  *    com as MESMAS etapas declaradas da original. Cada prompt mostra o total
  *    estimado das etapas dele pelo roteiro atual (handoffEstimate).
- *    `onSend` cria a conversa; os prompts ENTREGUES são registrados como
- *    enviados a ela. Criada, o diálogo fecha mesmo se o envio falhar.
- *
+ *    `onSend` cria a conversa (ou usa a anterior, se o usuário escolher — ver
+ *    HandoffTarget: "Enviar de novo" nos já enviados); os ENTREGUES são
+ *    registrados como enviados a ela. O diálogo fecha mesmo se o envio falhar.
  * Esc/clique fora fecham sem perder nada (HandoffSession por plano). Falha de
  * IPC vira toast; nada aqui lança.
  */
@@ -53,6 +53,7 @@ import {
 import { roteiroEtapaIds } from './handoffEstimate'
 import { buildDraftHandoff, handoffReadiness } from './handoffReadiness'
 import { StaleNotice, useStaleHandoffs } from './HandoffStale'
+import { resendableHandoffs, sendOptions, useHandoffTarget, type HandoffSendOptions } from './HandoffTarget'
 import {
   draftFrom,
   draftOf,
@@ -77,8 +78,9 @@ export interface HandoffActions {
   onAskManager: (text: string) => void
   /** Cria a conversa de implementação e envia os prompts na ordem (ver
    *  HandoffSendOutcome). `names`: o arquivo de _handoff/ de cada prompt.
-   *  `options`: só com a opção de Fast mode na tela ("Leitura guiada"). */
-  onSend: (prompts: string[], titulo: string, names: string[], options?: { fastMode: boolean }) => Promise<HandoffSendOutcome>
+   *  `options`: fastMode só com a opção na tela ("Leitura guiada");
+   *  targetConversationId = mandar na conversa existente em vez de criar outra. */
+  onSend: (prompts: string[], titulo: string, names: string[], options?: HandoffSendOptions) => Promise<HandoffSendOutcome>
   /** O Fast mode das conversas do projeto (inheritedFastMode): o valor inicial da opção. */
   fastModeDefault?: boolean
   /** A conversa ainda existe? Sem isso, todas contam como existentes. */
@@ -102,6 +104,7 @@ interface Listing {
 }
 
 const everyConversation = (): boolean => true
+const NO_SENT: PlanningHandoffSentDto[] = []
 
 export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const { projectCwd, slug, plan, managerBusy, onAskManager, onSend, onClose } = props
@@ -127,15 +130,18 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
   const blocked = blockers.length > 0 && !override
   const pending = useMemo(() => (listing ? pendingHandoffs(listing.handoffs, listing.sent) : []), [listing])
   const outside = pending.filter((h) => !drafts.some((d) => d.name === h.name))
+  // Reenvio: a pergunta "mesma conversa ou nova" e os enviados que dá para mandar de novo.
+  const target = useHandoffTarget(listing?.sent ?? NO_SENT, conversationExists)
+  const resendable = useMemo(() => (listing ? resendableHandoffs(listing.handoffs, listing.sent) : undefined), [listing])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       // Fechar não descarta nada: o estado fica guardado por plano.
-      if (e.key === 'Escape' && working !== 'send') onClose()
+      if (e.key === 'Escape' && working !== 'send' && !target.open) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, step, working])
+  }, [onClose, step, working, target.open])
 
   const list = useCallback(async (): Promise<PlanningHandoffDto[] | null> => {
     const res = await safe(() => window.api.planningListHandoffs({ projectCwd, slug }))
@@ -146,8 +152,9 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
 
   // Guarda onde o diálogo está: fechá-lo não perde o pedido nem as edições.
   useEffect(() => {
-    if (ready) saveHandoffSession(projectCwd, slug, { step, waiting: waitingRef.current, drafts })
-  }, [projectCwd, slug, step, drafts, ready])
+    // Durante o envio, não: o fim dele limpa a sessão, e uma gravação atrasada a ressuscitaria.
+    if (ready && working !== 'send') saveHandoffSession(projectCwd, slug, { step, waiting: waitingRef.current, drafts })
+  }, [projectCwd, slug, step, drafts, ready, working])
 
   // _handoff/ acompanha o disco (abrir, planning:changed, fim de turno); só vale
   // a resposta da busca mais recente — podem chegar fora de ordem.
@@ -299,6 +306,9 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
 
   const send = async (): Promise<void> => {
     if (blocked || drafts.length === 0 || drafts.some((d) => !d.text.trim())) return
+    // Já enviado a uma conversa viva: pergunta agora se vai nela ou numa nova.
+    const choice = await target.choose()
+    if (!choice) return
     setWorking('send')
     // O _handoff/ guarda exatamente o que foi enviado: o editado vira arquivo
     // novo antes — uma vez. O que já foi gravado numa tentativa anterior (e não
@@ -343,7 +353,8 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
     const names = drafts.map((d, i) => written.get(i)?.name ?? d.name)
     let outcome: HandoffSendOutcome
     try {
-      outcome = await (fast.sendOptions ? onSend(prompts, titulo, names, fast.sendOptions) : onSend(prompts, titulo, names))
+      const opts = sendOptions(fast.sendOptions, choice)
+      outcome = await (opts ? onSend(prompts, titulo, names, opts) : onSend(prompts, titulo, names))
     } catch (err) {
       notify('erro', `Não consegui enviar para a implementação: ${errText(err)}`)
       setWorking(null)
@@ -373,6 +384,13 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
       notify('erro', 'Nada foi enviado para a implementação: nenhum prompt com texto.')
       setWorking(null)
     }
+  }
+
+  // "Enviar de novo": os já enviados voltam à revisão (o envio pergunta a conversa).
+  const resend = (names: string[]): void => {
+    waitingRef.current = null
+    setDrafts((listing?.handoffs ?? []).filter((h) => names.includes(h.name)).map(draftFrom))
+    setStep('prompts')
   }
 
   const openConversation = (id: string): void => {
@@ -429,8 +447,11 @@ export function HandoffDialog(props: HandoffDialogProps): JSX.Element {
             onAutoDraft={() => void writeAutoDraft()}
             onAskManager={() => void askManager()}
             onReviewPending={reviewPending}
+            resendable={resendable}
+            onResend={resend}
           />
         )}
+        {target.dialog}
 
         {ready && step === 'waiting' && (
           <WaitingStep

@@ -116,10 +116,16 @@ export function SentHandoffs(props: {
   sent: readonly PlanningHandoffSentDto[]
   conversationExists: (id: string) => boolean
   onOpenConversation: (id: string) => void
+  /** Os que dá para mandar de novo (o arquivo existe e não foi substituído). */
+  resendable?: ReadonlySet<string>
+  /** "Enviar de novo": leva esses prompts à revisão; o envio pergunta a conversa. */
+  onResend?: (names: string[]) => void
+  disabled?: boolean
 }): JSX.Element | null {
   if (props.sent.length === 0) return null
   // Numérico: "-100" depois de "-99", como a ordem do listHandoffs.
   const list = [...props.sent].sort((a, b) => a.nome.localeCompare(b.nome, undefined, { numeric: true }))
+  const canResend = (nome: string): boolean => !!props.onResend && !!props.resendable?.has(nome)
   return (
     <section className="pl-handoff-saved" aria-label="Prompts enviados">
       <h4>{list.length > 1 ? `${list.length} prompts enviados` : '1 prompt enviado'}</h4>
@@ -128,6 +134,17 @@ export function SentHandoffs(props: {
           <li key={e.nome}>
             <code>_handoff/{e.nome}</code>
             <span className="pl-handoff-when">{when(e.enviadoEm)}</span>
+            {canResend(e.nome) && (
+              <button
+                type="button"
+                className="btn ghost small pl-handoff-row-act"
+                disabled={props.disabled}
+                title="Manda este prompt de novo: na mesma conversa ou numa nova"
+                onClick={() => props.onResend?.([e.nome])}
+              >
+                Reenviar
+              </button>
+            )}
             {e.conversaId ? (
               <>
                 <span title={e.conversaTitulo}>{e.conversaTitulo}</span>
