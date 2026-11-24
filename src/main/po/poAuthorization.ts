@@ -79,6 +79,15 @@ export function routineText(parentTitle: string, push: boolean): string {
     : `Faça o commit das mudanças de: ${title}.`
 }
 
+/**
+ * O turno que fecha É a própria rotina? Aí a pendência de commit que sair dele
+ * não vira rotina de novo: se o agente avisou que sobrou mudança, ela espera o
+ * usuário. Sem isso, cada rotina gerava outra igual, em cadeia.
+ */
+export function isRoutineTurn(userText: string | null | undefined): boolean {
+  return /^\s*Faça o commit das mudanças de: /.test(userText ?? '')
+}
+
 /** O motivo da pendência que virou rotina (não é "aguardando você"). */
 export const PO_ROUTINE_REASON = 'autorizado: o commit sai sozinho, como rotina na fila'
 

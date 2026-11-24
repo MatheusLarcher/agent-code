@@ -7,7 +7,7 @@ import { decideQueue } from '../handoffTracking/handoffQueue'
 import { registerHandoffQueueIpc, type HandoffQueueIpcListener } from '../handoffTracking/handoffQueueIpc'
 import { CONV, closeHarnesses, harness, type Harness } from '../handoffTracking/handoffTrackerHarness'
 import { applyPoVerdict, type PoApplyDeps } from './poApply'
-import { parsePoAuthorization, PO_ROUTINE_REASON, PoAuthorizationStore, routineFor, routineText } from './poAuthorization'
+import { isRoutineTurn, parsePoAuthorization, PO_ROUTINE_REASON, PoAuthorizationStore, routineFor, routineText } from './poAuthorization'
 import { createPoAuthorizations } from './poAuthorizationBoot'
 import { PO_AWAITING_AUTHORIZATION_REASON } from './poPromptText'
 
@@ -203,5 +203,14 @@ describe('a frase da pendência que espera o usuário', () => {
   it('o PO e o quadro usam a MESMA frase (o selo "Aguardando você" depende dela)', async () => {
     const { BOARD_PO_AWAITING_REASON } = await import('../../shared/ipc')
     expect(PO_AWAITING_AUTHORIZATION_REASON).toBe(BOARD_PO_AWAITING_REASON)
+  })
+})
+
+describe('rotina não gera rotina', () => {
+  it('reconhece o turno da própria rotina (com e sem push)', () => {
+    expect(isRoutineTurn(routineText('Trocar ícone', true))).toBe(true)
+    expect(isRoutineTurn(routineText('Trocar ícone', false))).toBe(true)
+    expect(isRoutineTurn('commita isso e faz o push')).toBe(false)
+    expect(isRoutineTurn(null)).toBe(false)
   })
 })

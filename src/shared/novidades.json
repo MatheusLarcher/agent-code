@@ -2,6 +2,13 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.189",
+      "data": "2026-11-24",
+      "itens": [
+        "Com o PO autorizado a fazer commit sozinho, ele não repete mais o mesmo pedido de commit duas vezes seguidas."
+      ]
+    },
+    {
       "versao": "0.1.188",
       "data": "2026-11-24",
       "itens": [

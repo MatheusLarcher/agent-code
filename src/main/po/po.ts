@@ -6,7 +6,7 @@ import { poReturnedCards } from './poCloseDefault'
 import { poGitSince, type PoGitEvidence } from './poGit'
 import type { PoNextPrompt } from './poHold'
 import type { PoAuthorization } from '../../shared/poAuthorization'
-import type { PoAuthorizationOp } from './poAuthorization'
+import { isRoutineTurn, type PoAuthorizationOp } from './poAuthorization'
 import { defaultScheduleFlush, newConvState, type ConvState } from './poConvState'
 import { listPoBoard, releaseAdopted, settleAdoption } from './poForeign'
 import { listConvTasks, type PoLedgerDeps } from './poLedger'
@@ -417,7 +417,9 @@ export class Po {
 
         // A lista que o modelo julgou é de antes da consulta: criar e pôr em
         // andamento são conferidos de novo contra o quadro de agora (poApply.ts).
-        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: authorization?.current, orphans, envioEtapas, foreign: view.foreign, outside: view.outside }
+        // O fechamento da PRÓPRIA rotina não gera outra: o commit que sobrar espera o usuário.
+        const routineAuth = isRoutineTurn(merged.userText) ? null : authorization?.current
+        const target = { convId, cwd: turn.cwd, projectId, phase, startedAt: now, returned, next, authorization: routineAuth, orphans, envioEtapas, foreign: view.foreign, outside: view.outside }
         await applyPoVerdict(this.deps, target, text, cards, progress)
         // Com trabalho delegado (ou um turno novo rodando) o adotado continua em andamento.
         const stillWorking = background.length > 0 || (force && conv.userText !== null && !conv.fired)
