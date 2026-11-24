@@ -12,6 +12,12 @@
 .md .qc-pre > pre {
   margin: 0;
 }
+/* No código, os botões entram na barra do bloco, à esquerda do "Copiar"
+   (em cima dele, o clique no Copiar cairia no "Comentar"). */
+.md .qc-pre > .qc-actions {
+  top: 3px;
+  right: 100px;
+}
 
 /* Os botões ("Ler daqui" e "Comentar"), lado a lado no canto de cima à direita. */
 .qc-actions {

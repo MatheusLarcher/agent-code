@@ -7,6 +7,7 @@ import type { PlanningCardType } from '@shared/ipc'
 import { refHrefTipo, refsToMarkdownLinks, splitRefs, type RefCard } from '../planning/cardRefs'
 import { CARD_TYPE_LABEL, typeColorVar } from '../planning/cardTypes'
 import { quoteBlockComponents, useQuotableBlocks } from './quoteComment/quoteBlocks'
+import { CodeFrame } from './CodeFrame'
 
 /** Rótulo de [[...]] → card do plano (null = não é um card: fica como texto). */
 export type CardRefResolver = (label: string) => RefCard | null
@@ -14,8 +15,10 @@ export type CardRefResolver = (label: string) => RefCard | null
 // Links must open in the system browser, not navigate the app frame. Forcing
 // target=_blank routes the click through the main process' window-open handler
 // (shell.openExternal), so the Electron renderer never navigates away.
+// Bloco de código: barra com a linguagem e o botão "Copiar" (CodeFrame).
 const mdComponents = {
-  a: (props: ComponentPropsWithoutRef<'a'>) => <a {...props} target="_blank" rel="noreferrer" />
+  a: (props: ComponentPropsWithoutRef<'a'>) => <a {...props} target="_blank" rel="noreferrer" />,
+  pre: CodeFrame
 }
 
 /** [[Nome]] que resolveu: o nome com a cor do tipo do card (a mesma do canvas). */
@@ -36,6 +39,7 @@ export function CardRefChip({ tipo, children }: { tipo: string; children: ReactN
 // Com referências: o link '#card-ref/<tipo>/<id>' (refsToMarkdownLinks) vira a
 // pílula colorida — não é link, não navega. Os outros links seguem como acima.
 const mdComponentsWithRefs = {
+  pre: CodeFrame,
   a: (props: ComponentPropsWithoutRef<'a'>) => {
     const tipo = refHrefTipo(props.href)
     return tipo ? <CardRefChip tipo={tipo}>{props.children}</CardRefChip> : mdComponents.a(props)

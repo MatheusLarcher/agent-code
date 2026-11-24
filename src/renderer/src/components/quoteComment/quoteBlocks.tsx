@@ -19,6 +19,7 @@ import {
 import type { ExtraProps } from 'react-markdown'
 import { IconSpeaker, IconStopSmall } from '../Icons'
 import { readFromText } from './readFrom'
+import { CodeFrame } from '../CodeFrame'
 import './quoteComment.css'
 
 /** 'pending': o trecho está no campo de mensagem ("[trecho N]"); 'commented': já foi enviado. */
@@ -192,10 +193,15 @@ function inlineBlock(tag: string): (props: BlockProps) => JSX.Element {
 function QuotablePre({ node, children, ...rest }: BlockProps): JSX.Element {
   const api = useContext(QuoteBlockContext)
   const text = hastText(node)
-  if (!api || !text.trim()) return <pre {...rest}>{children}</pre>
+  const frame = (
+    <CodeFrame node={node} {...rest}>
+      {children}
+    </CodeFrame>
+  )
+  if (!api || !text.trim()) return frame
   return (
     <div className={`qc-block qc-pre${markClass(api.markOf(text))}`}>
-      <pre {...rest}>{children}</pre>
+      {frame}
       <BlockActions api={api} text={text} />
     </div>
   )

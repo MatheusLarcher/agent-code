@@ -1,0 +1,65 @@
+/* Bloco de código das respostas: barra (linguagem + Copiar) e o <pre> embaixo.
+   A borda passa do <pre> para o invólucro, para a barra fazer parte do bloco. */
+.md .md-code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0 0 8px;
+  overflow: hidden;
+  min-width: 0;
+}
+.md .qc-pre > .md-code {
+  margin: 0;
+}
+.md .md-code > pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px 3px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--muted);
+  user-select: none;
+}
+.md-code-lang {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-transform: lowercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.md-code-copy:hover {
+  color: var(--text);
+  background: var(--bg-2, rgba(127, 127, 127, 0.12));
+  border-color: var(--line);
+}
+.md-code-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.md-code-copy.done {
+  color: var(--ok, #3fb950);
+}
+.md-code-copy.fail {
+  color: var(--danger, #f85149);
+}

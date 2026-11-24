@@ -2,6 +2,13 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.190",
+      "data": "2026-11-24",
+      "itens": [
+        "Quando a resposta traz um script ou comando, o bloco agora tem um botão \"Copiar\" no canto, que copia o código inteiro num clique (no computador e no celular)."
+      ]
+    },
+    {
       "versao": "0.1.189",
       "data": "2026-11-24",
       "itens": [
