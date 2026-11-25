@@ -41,7 +41,7 @@ internal sealed class Sessao
 {
     /// <summary>Recursos que este exe sabe fazer hoje (os demais existem só como chave travada).</summary>
     internal static readonly string[] Disponiveis =
-        [Contrato.RecursoTela, Contrato.RecursoComandos, Contrato.RecursoArquivos, Contrato.RecursoAdministrador];
+        [Contrato.RecursoTela, Contrato.RecursoComandos, Contrato.RecursoArquivos, Contrato.RecursoChrome, Contrato.RecursoCelular, Contrato.RecursoAdministrador];
 
     private const int MaximoRegistro = 2000;
     private readonly object trava = new();

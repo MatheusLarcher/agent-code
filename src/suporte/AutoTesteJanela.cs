@@ -138,6 +138,36 @@ internal static class AutoTesteJanela
         Assentar();
         Confere(janela.BotaoAviso.Content as string == "Baixar", "aviso de versão antiga errado");
 
+        // Extensão que sobrou no Chrome: uma linha ao cliente, que some no "Entendi".
+        sessao.DefinirFase(Fase.Aguardando);
+        janela.AvisarSobra();
+        Assentar();
+        Confere(Visivel(janela.PainelAviso) && janela.TituloAviso.Text == "Ficou uma Extensão no Chrome" && janela.BotaoAviso.Content as string == "Entendi",
+            "aviso de extensão que sobrou errado");
+        Confere(janela.DetalheAviso.Text.Contains("chrome://extensions"), "o aviso não diz como tirar a extensão");
+        Clicar(janela.PainelAviso, "Entendi");
+        Assentar();
+        Confere(Visivel(janela.PainelCodigo), "\"Entendi\" não fechou o aviso");
+
+        // Pedidos dos recursos que instalam algo dizem, em uma linha, o que acontece no PC.
+        sessao.DefinirFase(Fase.Aguardando);
+        var deNovo = sessao.PedirAcesso("pedido3", "Maria");
+        sessao.Responder(true);
+        sessao.Ativar();
+        foreach (var (recurso, titulo, detalhe) in new[]
+        {
+            (Contrato.RecursoChrome, "Permitir o Controle do Chrome?", "Instala uma extensão, removida ao encerrar."),
+            (Contrato.RecursoCelular, "Permitir o Controle do Celular?", "Baixa ferramentas do Google (15 MB), apagadas ao encerrar.")
+        })
+        {
+            var pergunta = sessao.PedirRecurso(recurso);
+            Assentar();
+            Confere(janela.TituloRecurso.Text == titulo && janela.DetalheRecurso.Text == detalhe, $"pedido de {recurso}: {janela.TituloRecurso.Text} / {janela.DetalheRecurso.Text}");
+            Clicar(janela.PainelRecurso, "Não");
+            Confere(pergunta.IsCompleted && !pergunta.Result, $"\"Não\" não recusou {recurso}");
+        }
+        sessao.Encerrar("teste");
+
         // As outras duas janelas também montam.
         var pilula = new Pilula(() => { }, () => { });
         ((FrameworkElement)pilula.Content).Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));

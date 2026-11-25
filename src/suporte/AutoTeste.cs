@@ -49,6 +49,16 @@ internal static class AutoTeste
             ("captura de tela não vazia", CapturaDeTela),
             ("janelas: lista sem as do suporte e escala do clique", Janelas),
             ("servidor MCP: token, tools/list e tools/call", ServidorMcp),
+            ("chrome: pasta da extensão com token novo e manifest do suporte", AutoTesteChrome.Pasta),
+            ("chrome: a ponte só aceita extensão com o token da sessão", AutoTesteChrome.Ponte),
+            ("chrome: sem o Permitir, toda ferramenta responde \"peça ao cliente\"", AutoTesteChrome.SemPermitir),
+            ("chrome: Permitir prepara, as ferramentas repassam e a chave desligada desfaz", AutoTesteChrome.Ciclo),
+            ("chrome: com o Chrome fechado, encerrar avisa que sobrou a extensão", AutoTesteChrome.Sobra),
+            ("celular: a assinatura digital diz quem assinou e recusa arquivo alterado", AutoTesteAndroid.AssinaturaDigital),
+            ("celular: baixa, extrai só o adb e não usa arquivo sem a assinatura esperada", AutoTesteAndroid.Download),
+            ("celular: a chave de pareamento criada na sessão some ao limpar; a que já existia fica", AutoTesteAndroid.Chave),
+            ("celular: sem o Permitir, toda ferramenta responde \"peça ao cliente\"", AutoTesteAndroid.SemPermitir),
+            ("celular: cada ferramenta monta o comando certo do adb; desligar e encerrar param o adb", AutoTesteAndroid.Comandos),
             ("elevação: canal entrega a sessão só ao próprio exe", CanalDaElevacao)
         ];
         var falhas = 0;
@@ -72,12 +82,12 @@ internal static class AutoTeste
 
     // ---- Apoio -------------------------------------------------------------------
 
-    private static void Confere(bool condicao, string oQue)
+    internal static void Confere(bool condicao, string oQue)
     {
         if (!condicao) throw new InvalidOperationException(oQue);
     }
 
-    private static async Task<string> Ativar(Sessao sessao)
+    internal static async Task<string> Ativar(Sessao sessao)
     {
         sessao.DefinirFase(Fase.Aguardando);
         var clique = sessao.PedirAcesso("pedido", "Teste");
@@ -89,14 +99,14 @@ internal static class AutoTeste
     private static Dictionary<string, JsonElement> Arg(object valores)
         => JsonSerializer.SerializeToElement(valores).EnumerateObject().ToDictionary((p) => p.Name, (p) => p.Value.Clone());
 
-    private static async Task<(string Texto, bool Erro, CallToolResult Bruto)> Chamar(Nucleo nucleo, string nome, object? argumentos = null)
+    internal static async Task<(string Texto, bool Erro, CallToolResult Bruto)> Chamar(Nucleo nucleo, string nome, object? argumentos = null)
     {
         var resultado = await nucleo.Ferramentas.Chamar(Contrato.PrefixoFerramenta + nome, Arg(argumentos ?? new { }), CancellationToken.None);
         var texto = string.Join("\n", resultado.Content.OfType<TextContentBlock>().Select((bloco) => bloco.Text));
         return (texto, resultado.IsError == true, resultado);
     }
 
-    private static string PastaDeTeste()
+    internal static string PastaDeTeste()
     {
         var pasta = Path.Combine(Path.GetTempPath(), $"AgentCodeSuporte-teste-{Guid.NewGuid():N}");
         Directory.CreateDirectory(pasta);
@@ -168,8 +178,8 @@ internal static class AutoTeste
         Confere(nucleo.Sessao.Recurso(Contrato.RecursoAdministrador) == EstadoRecurso.Travado, "recurso travado ligou pela chave");
         (texto, erro, _) = await Chamar(nucleo, "elevar");
         Confere(erro && texto.Contains("remoto_pedir_recurso"), $"elevar passou sem o recurso: {texto}");
-        (texto, erro, _) = await Chamar(nucleo, "pedir_recurso", new { recurso = Contrato.RecursoChrome });
-        Confere(erro && texto.Contains("não está disponível"), $"chrome deveria estar indisponível: {texto}");
+        (texto, erro, _) = await Chamar(nucleo, "pedir_recurso", new { recurso = "impressora" });
+        Confere(erro && texto.Contains("recurso deve ser um de"), $"aceitou um recurso que não existe: {texto}");
 
         // Pergunta aberta: nada mexe no mouse nem no teclado, e só o clique responde.
         var pedido = Chamar(nucleo, "pedir_recurso", new { recurso = Contrato.RecursoAdministrador });
@@ -190,7 +200,11 @@ internal static class AutoTeste
             "list_windows", "list_apps", "launch_app", "activate_window", "get_state", "click_element", "click", "type_text",
             "press_key", "scroll", "drag", "set_value", "fill", "secondary_action", "form_fields", "run_steps",
             "executar", "processo_ler", "processo_parar", "arquivo_ler", "arquivo_escrever", "arquivo_editar", "arquivo_buscar",
-            "arquivo_procurar", "arquivo_enviar", "arquivo_baixar", "captura_tela", "info", "pedir_recurso", "elevar"
+            "arquivo_procurar", "arquivo_enviar", "arquivo_baixar", "captura_tela", "info", "pedir_recurso", "elevar",
+            "chrome_status", "chrome_list_tabs", "chrome_snapshot", "chrome_screenshot", "chrome_scroll", "chrome_wait", "chrome_open_tab",
+            "chrome_select_tab", "chrome_close_tab", "chrome_navigate", "chrome_click", "chrome_type", "chrome_press_key",
+            "chrome_select_option", "chrome_evaluate",
+            "android_dispositivos", "android_captura", "android_tocar", "android_deslizar", "android_digitar", "android_tecla", "android_instalar", "android_shell"
         ];
         Confere(declaradas.Count == esperadas.Length, $"{declaradas.Count} ferramentas, esperava {esperadas.Length}");
         foreach (var nome in esperadas)
@@ -202,7 +216,7 @@ internal static class AutoTeste
             Confere(!string.IsNullOrWhiteSpace(ferramenta.Description), $"{ferramenta.Name} sem descrição");
             Confere(ferramenta.Annotations?.ReadOnlyHint is not null && ferramenta.Annotations.DestructiveHint is not null, $"{ferramenta.Name} sem anotações");
         }
-        string[] destrutivas = ["executar", "processo_parar", "arquivo_escrever", "arquivo_editar", "arquivo_enviar"];
+        string[] destrutivas = ["executar", "processo_parar", "arquivo_escrever", "arquivo_editar", "arquivo_enviar", "android_instalar", "android_shell"];
         foreach (var ferramenta in declaradas)
         {
             var deveria = destrutivas.Contains(ferramenta.Name[Contrato.PrefixoFerramenta.Length..]);

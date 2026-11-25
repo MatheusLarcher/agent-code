@@ -23,7 +23,10 @@ internal sealed class Mcp(Sessao sessao, Ferramentas ferramentas)
         "Para mexer num programa: remoto_list_windows → remoto_form_fields → UM remoto_run_steps com todos os passos, alvo por nome; " +
         "remoto_get_state com captura e coordenadas só quando não houver acessibilidade. Nunca invente windowId. " +
         "O cliente liga e desliga recursos na janela dele: \"o cliente desligou este recurso\" não se contorna. " +
-        "Recurso extra (administrador) se pede com remoto_pedir_recurso; a janela do suporte, o UAC e a tela de bloqueio só o cliente opera.";
+        "Recursos extras (chrome, celular, administrador) se pedem com remoto_pedir_recurso, um por vez e só quando forem necessários; a janela do suporte, o UAC e a tela de bloqueio só o cliente opera. " +
+        "Chrome do cliente (remoto_chrome_*): depois do Permitir, instale a extensão pela tela como a resposta ensina e confira com remoto_chrome_status; use só refs [eN] do snapshot mais recente; " +
+        "nunca digite senha nem código de verificação (peça ao cliente) e feche só as abas que você abriu. " +
+        "Celular do cliente (remoto_android_*): só por USB; a pergunta \"Permitir depuração USB?\" no aparelho só o cliente responde; capture a tela (remoto_android_captura) antes de tocar e use frações de 0 a 1 dessa captura.";
 
     private readonly ConcurrentDictionary<string, CancellationTokenSource> emAndamento = new();
     private int tokensRecusados;

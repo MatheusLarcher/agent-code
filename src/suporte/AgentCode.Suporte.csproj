@@ -33,4 +33,11 @@
              LinkBase="AutomacaoLocal" />
     <PackageReference Include="ModelContextProtocol.Core" Version="2.4.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- A extensão do Chrome é a do controle local, embutida por referência (nada copiado):
+         o exe a grava no PC do cliente só depois do Permitir. O config.js (token) nunca
+         entra: é gerado por sessão. -->
+    <EmbeddedResource Include="..\chromeExtension\**\*" Exclude="..\chromeExtension\config.js"
+                      LogicalName="extensao/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

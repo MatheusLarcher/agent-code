@@ -9,7 +9,8 @@ namespace AgentCode.Suporte;
 /// O que não é janela, comando nem arquivo: a foto da tela inteira, o retrato do
 /// computador, o pedido de um recurso extra ao cliente e a elevação.
 /// </summary>
-internal sealed class FerramentasSistema(Sessao sessao, Action sairDepoisDeElevar)
+internal sealed class FerramentasSistema(
+    Sessao sessao, Action sairDepoisDeElevar, Func<string, CancellationToken, Task<string?>> prepararRecurso)
 {
     internal IEnumerable<Ferramenta> Criar() =>
     [
@@ -35,7 +36,8 @@ internal sealed class FerramentasSistema(Sessao sessao, Action sairDepoisDeEleva
 
         new(Contrato.PrefixoFerramenta + "pedir_recurso",
             "Pede ao cliente, na janela do suporte, que libere um recurso extra. Só ele responde. " +
-            "Tela, Comandos e Arquivos já vêm ligados e, se ele desligar, só ele religa. Recursos extras hoje: administrador.",
+            "Tela, Comandos e Arquivos já vêm ligados e, se ele desligar, só ele religa. Recursos extras: chrome (instala uma extensão no Chrome dele, removida ao encerrar), " +
+            "celular (baixa as ferramentas do Android, apagadas ao encerrar) e administrador. Diga ao técnico por que precisa antes de pedir.",
             Esquema.Objeto([Esquema.Opcoes("recurso", "Recurso a pedir.", Contrato.Recursos)], "recurso"),
             null, SoLeitura: false, Destrutiva: false,
             PedirRecurso,
@@ -91,9 +93,18 @@ internal sealed class FerramentasSistema(Sessao sessao, Action sairDepoisDeEleva
         }
         sessao.Registrar($"Cliente permitiu: {rotulo}");
         sessao.AvisarRecurso(recurso);
-        return Resultado.Texto(recurso == Contrato.RecursoAdministrador
+        string? proximoPasso;
+        try { proximoPasso = await prepararRecurso(recurso, ct); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception erro)
+        {
+            sessao.Registrar($"Não foi possível preparar: {rotulo}");
+            return Resultado.Erro($"O cliente permitiu ({rotulo}), mas a preparação falhou: {Resultado.Encurtar(erro.GetBaseException().Message, 400)} " +
+                "O recurso continua liberado: a próxima chamada a uma ferramenta dele tenta preparar de novo.");
+        }
+        return Resultado.Texto(proximoPasso ?? (recurso == Contrato.RecursoAdministrador
             ? "O cliente permitiu. Chame remoto_elevar: o Windows vai pedir a confirmação dele na tela."
-            : $"O cliente permitiu ({rotulo}).");
+            : $"O cliente permitiu ({rotulo})."));
     }
 
     private async Task<CallToolResult> Elevar(Args a, CancellationToken ct)

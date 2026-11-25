@@ -15,6 +15,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createBroker } from '../broker/src/broker.js'
 import { createSuporte } from '../broker/src/suporte.js'
+import { casoDoCelular, celularDepoisDeEncerrar, celularSemPermitir } from './suporte-e2e-celular.mjs'
+import { casoDoChrome, chromeAntesDeEncerrar, chromeDepoisDeEncerrar, chromeSemPermitir, fecharChromeDeTeste } from './suporte-e2e-chrome.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const exePath = resolve(root, 'dist/AgentCode-Suporte.exe')
@@ -84,6 +86,7 @@ function controle(method, params = {}) {
 let exe = null
 let pasta = null
 let eventosAbort = null
+let chromeDeTeste = null
 const sairam = { codigo: undefined }
 
 async function janelaDoSuporte() {
@@ -192,7 +195,9 @@ try {
   confere(tools.every((tool) => tool.annotations && typeof tool.annotations.readOnlyHint === 'boolean'), 'ferramenta sem anotações')
   ok(`tools/list: ${tools.length} ferramentas, todas com o prefixo remoto_`)
 
-  const chamar = (name, args = {}) => cliente.callTool({ name, arguments: args })
+  // Instalar a extensão pela tela leva mais que o minuto padrão do cliente MCP.
+  const chamar = (name, args = {}) => cliente.callTool({ name, arguments: args }, undefined, { timeout: 200_000 })
+  const ctx = { chamar, textoDe, confere, ate, ok, campos, clicar, controle, eventos, janela, tools }
   const retrato = await chamar('remoto_info')
   const dados = JSON.parse(textoDe(retrato))
   confere(dados.pc.toLowerCase() === hostname().toLowerCase() && dados.recursos.tela === 'ligado' && dados.recursos.administrador === 'travado', 'remoto_info errado')
@@ -259,6 +264,16 @@ try {
   confere(semSessao.status === 404, `sessão desconhecida devolveu ${semSessao.status}`)
   ok('token errado, ausente e sessão desconhecida são recusados')
 
+  // ---- Recursos extras: só depois do Permitir do cliente -------------------------------
+  await chromeSemPermitir(ctx)
+  await celularSemPermitir(ctx)
+  ok('sem o Permitir, as ferramentas do Chrome e do celular respondem "peça ao cliente"')
+  chromeDeTeste = {}
+  await casoDoChrome(ctx, chromeDeTeste)
+  await chromeAntesDeEncerrar(ctx, chromeDeTeste)
+  const celularDeTeste = {}
+  await casoDoCelular(ctx, celularDeTeste)
+
   // ---- Encerrar ----------------------------------------------------------------------
   const fundo = await chamar('remoto_executar', { comando: 'Start-Sleep -Seconds 300', segundoPlano: true })
   const pid = Number(/p(\d+)/.exec(textoDe(fundo))?.[1])
@@ -271,6 +286,8 @@ try {
   confere(depois.status === 404, `depois de encerrar o relay devolveu ${depois.status}`)
   await ate(() => { try { process.kill(pid, 0); return false } catch { return true } }, 'o processo em segundo plano morrer', 10_000)
   ok('Encerrar fecha o exe, derruba a sessão, avisa o técnico e mata o que ficou rodando')
+  await chromeDepoisDeEncerrar(ctx, chromeDeTeste)
+  await celularDepoisDeEncerrar(ctx, celularDeTeste)
 
   // ---- O registro do relay não leva segredo ------------------------------------------
   const linhas = registroDoRelay.join('\n')
@@ -286,6 +303,7 @@ try {
 } finally {
   eventosAbort?.abort()
   if (exe && sairam.codigo === undefined) exe.kill()
+  fecharChromeDeTeste(chromeDeTeste)
   helper.stdin.end()
   helper.kill()
   if (pasta) rmSync(pasta, { recursive: true, force: true })

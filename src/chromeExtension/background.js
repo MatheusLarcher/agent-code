@@ -120,6 +120,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 
 const ACTIVE_TAB_METHODS = new Set(['snapshot', 'screenshot', 'scroll', 'wait', 'navigate', 'click', 'type',
   'pressKey', 'selectOption', 'evaluate', 'pickElement'])
+// Pausada, a extensão ainda diz como está e ainda se remove ao fim do suporte remoto.
+const EVEN_PAUSED = new Set(['status', 'uninstallSelf'])
 const queues = new Map()
 function enqueue(key, fn) {
   const prev = queues.get(key) || Promise.resolve()
@@ -135,7 +137,7 @@ async function handleRequest({ id, method, params }) {
   try {
     const fn = METHODS[method]
     if (!fn) throw new Error(`Método desconhecido: ${method}`)
-    if (paused && method !== 'status') throw new Error(ERR.paused)
+    if (paused && !EVEN_PAUSED.has(method)) throw new Error(ERR.paused)
     // Sem tabId, a aba ativa é resolvida ANTES de enfileirar: senão a mesma aba
     // teria duas filas ('default' e 'tab:N') e comandos correriam em paralelo.
     if (p.tabId == null && ACTIVE_TAB_METHODS.has(method)) p.tabId = (await getTab()).id
@@ -196,6 +198,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const METHODS = {
   async status() {
     return { paused, userAgent: navigator.userAgent }
+  },
+
+  /**
+   * Suporte remoto: a extensão instalada para a sessão sai do Chrome quando ela acaba.
+   * Só vale na pasta gravada pelo exe de suporte (config.js com `suporte: true`); a do
+   * Agent Code local nunca se remove. Não pede permissão no manifest.
+   */
+  async uninstallSelf() {
+    if (CONFIG.suporte !== true) throw new Error('Só a extensão instalada pelo suporte remoto se remove sozinha')
+    // Responde antes: a remoção derruba este service worker e a conexão.
+    setTimeout(() => { chrome.management.uninstallSelf().catch(() => {}) }, 150)
+    return { removing: true }
   },
 
   async listTabs() {

@@ -30,6 +30,8 @@ public partial class Janela : Window
     private Registro? registro;
     private bool saindo;
     private bool sincronizando;
+    private bool sobrouExtensao;
+    private bool despedida;
 
     internal Janela(Nucleo nucleo)
     {
@@ -41,6 +43,7 @@ public partial class Janela : Window
         sessao.Mudou += () => Dispatcher.BeginInvoke(Atualizar);
         sessao.PedidoNovo += () => Dispatcher.BeginInvoke(ChamarAtencao);
         nucleo.Sair += () => Dispatcher.BeginInvoke(SairSemAvisar);
+        nucleo.SobrouExtensao += () => Dispatcher.BeginInvoke(AvisarSobra);
         relogio.Tick += (_, _) => AtualizarTempo();
         copiado.Tick += (_, _) => { copiado.Stop(); TextoCopiar.Text = "Copiar"; };
         // Enquanto a IA envia mouse ou teclado a outro programa, esta janela não aceita
@@ -109,8 +112,11 @@ public partial class Janela : Window
         if (saindo) return;
         var fase = sessao.Fase;
         var recursoPedido = sessao.RecursoPedido;
+        // Uma pergunta ao cliente passa na frente do aviso; o resto espera o "Entendi".
+        var mostrarSobra = sobrouExtensao && fase != Fase.PedidoAcesso && recursoPedido is null;
         UIElement painel = fase switch
         {
+            _ when mostrarSobra => PainelAviso,
             Fase.PedidoAcesso => PainelPedido,
             Fase.Ativa when recursoPedido is not null => PainelRecurso,
             Fase.Ativa => PainelAtivo,
@@ -122,6 +128,9 @@ public partial class Janela : Window
 
         switch (fase)
         {
+            case var _ when mostrarSobra:
+                Aviso(fase == Fase.Ativa ? "Chrome desligado" : "Suporte encerrado", "Ficou uma Extensão no Chrome", TextoDaSobra, "Entendi");
+                break;
             case Fase.Conectando:
             case Fase.Aguardando:
                 var pronto = fase == Fase.Aguardando && sessao.Codigo.Length == Contrato.CodigoDigitos;
@@ -140,7 +149,7 @@ public partial class Janela : Window
                 {
                     Contrato.RecursoAdministrador => ("Permitir Acesso de Administrador?", "O Windows vai pedir a sua confirmação."),
                     Contrato.RecursoChrome => ("Permitir o Controle do Chrome?", "Instala uma extensão, removida ao encerrar."),
-                    Contrato.RecursoCelular => ("Permitir o Controle do Celular?", "Vale só para o celular ligado a este computador."),
+                    Contrato.RecursoCelular => ("Permitir o Controle do Celular?", "Baixa ferramentas do Google (15 MB), apagadas ao encerrar."),
                     _ => ($"Permitir {Sessao.Rotulo(recursoPedido)}?", "")
                 };
                 break;
@@ -254,6 +263,17 @@ public partial class Janela : Window
 
     private void AoBotaoAviso(object sender, RoutedEventArgs e)
     {
+        if (despedida)
+        {
+            Application.Current.Shutdown();
+            return;
+        }
+        if (sobrouExtensao)
+        {
+            sobrouExtensao = false;
+            Atualizar();
+            return;
+        }
         if (sessao.Fase == Fase.Expirado)
         {
             sessao.DefinirFase(Fase.Conectando);
@@ -268,14 +288,39 @@ public partial class Janela : Window
 
     // ---- Sair -----------------------------------------------------------------------
 
+    private const string TextoDaSobra = "Ela não funciona mais. Para tirar, abra chrome://extensions e clique em Remover.";
+
+    /// <summary>A sessão acabou e a extensão não pôde ser removida (Chrome fechado): uma linha ao cliente.</summary>
+    internal void AvisarSobra()
+    {
+        if (saindo) return;
+        sobrouExtensao = true;
+        Atualizar();
+    }
+
     /// <summary>Encerrar (botão, barra pequena ou fechar a janela): acaba a sessão e o programa.</summary>
     private async void Encerrar()
     {
         if (saindo) return;
         saindo = true;
         Fechar();
-        await nucleo.EncerrarAsync();
-        Application.Current.Shutdown();
+        var sobrou = false;
+        try { sobrou = await nucleo.EncerrarAsync(); } catch { /* sai mesmo assim */ }
+        if (!sobrou)
+        {
+            Application.Current.Shutdown();
+            return;
+        }
+        // Tudo já foi encerrado; a janela volta só para dizer o que ficou no Chrome.
+        despedida = true;
+        foreach (var cada in new UIElement[] { PainelCodigo, PainelPedido, PainelAtivo, PainelRecurso })
+            cada.Visibility = Visibility.Collapsed;
+        PainelAviso.Visibility = Visibility.Visible;
+        Aviso("Suporte encerrado", "Ficou uma Extensão no Chrome", TextoDaSobra, "Fechar");
+        Topmost = false;
+        WindowState = WindowState.Normal;
+        Show();
+        Activate();
     }
 
     /// <summary>O exe reaberto como administrador assumiu a sessão: este sai sem avisar "encerrado".</summary>
@@ -298,7 +343,8 @@ public partial class Janela : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
-        if (!saindo)
+        if (despedida) Application.Current.Shutdown();
+        else if (!saindo)
         {
             e.Cancel = true;
             Encerrar();

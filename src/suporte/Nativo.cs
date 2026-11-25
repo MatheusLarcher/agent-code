@@ -250,6 +250,12 @@ internal static class Nativo
         return job;
     }
 
+    /// <summary>Fecha o job: o Windows encerra na hora tudo o que ainda roda nele.</summary>
+    internal static void FecharJob(nint job)
+    {
+        if (job != 0) CloseHandle(job);
+    }
+
     internal static void PorNoJob(nint job, Process processo)
     {
         if (job == 0) return;

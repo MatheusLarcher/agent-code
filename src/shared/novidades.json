@@ -1,5 +1,7 @@
 {
-  "proxima": [],
+  "proxima": [
+    "A extensão do Chrome do Agent Code ganhou uma versão nova, que se atualiza sozinha. O controle do Chrome continua funcionando como antes."
+  ],
   "versoes": [
     {
       "versao": "0.1.193",
