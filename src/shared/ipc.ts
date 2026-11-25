@@ -2794,6 +2794,8 @@ export const Channels = {
   /** Os chamados do agente: renderer → main (abertos, encerrados, se o usuário está olhando, títulos) e o clique na notificação (main → renderer). */
   officeCallsState: 'office:calls-state',
   officeCallOpen: 'office:call-open',
+  /** "Reportar bug / sugerir melhoria": o resumo técnico (versão, Windows, GPU) que vai no relatório. */
+  feedbackDiagnostico: 'feedback:diagnostico',
   /** Tarefas agendadas (main/tarefas): a lista (renderer → main), a mudança ao vivo
    *  (main → renderer, TarefaVista[]), pausar/retomar/cancelar/visto (renderer → main)
    *  e o clique no aviso do Windows, que abre a conversa de origem (main → renderer). */
@@ -3290,4 +3292,15 @@ export interface RevealFileResult {
   ok: boolean
   message: string
   missing?: boolean
+}
+
+/** Resumo técnico anexado ao "Reportar bug / sugerir melhoria" (main/feedbackDiagnostico.ts). */
+export interface FeedbackDiagnostico {
+  versao: string
+  sistema: string
+  memoriaGb: number
+  /** Modo da GPU em uso: normal ou modo seguro (main/gpuSafeMode.ts). */
+  gpu: string
+  /** Últimas linhas do log da tela (quedas de GPU/tela), já cortadas. */
+  eventosTela: string[]
 }

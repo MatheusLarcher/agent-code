@@ -85,7 +85,8 @@ import type {
   SuggestTitleResult,
   OutboxEntryDto,
   WhisperStatus,
-  FreezeLogApi
+  FreezeLogApi,
+  FeedbackDiagnostico
 } from './ipc'
 import type {
   AccountUsageResult,
@@ -239,6 +240,8 @@ export type PoAuthorizationListResult = { ok: true; authorizations: PoAuthorizat
 export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** App version from package.json (matches the installer/build). */
   getAppVersion(): Promise<string>
+  /** Resumo técnico para o "Reportar problema / sugerir melhoria" (versão, Windows, GPU). */
+  feedbackDiagnostico(): Promise<FeedbackDiagnostico>
   /** Atualização automática: o estado atual (fase, versão, progresso, se pode instalar agora). */
   getUpdateState(): Promise<AppUpdateState>
   /** O main avisa a cada mudança de estado da atualização. */

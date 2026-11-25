@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom'
 import type { AppUpdateState } from '@shared/ipc'
 import { useAppUpdate } from '../components/useAppUpdate'
 import { NovidadesDialog } from './NovidadesDialog'
+import { FeedbackDialog } from './FeedbackDialog'
 import { useUI } from './UiProvider'
 
 const TICK_MS = 30_000
@@ -53,6 +54,8 @@ export function AppUpdateStatus({ appVersion }: { appVersion: string }): JSX.Ele
   const [now, setNow] = useState(() => Date.now())
   const [showNews, setShowNews] = useState(false)
   const closeNews = useCallback(() => setShowNews(false), [])
+  const [showFeedback, setShowFeedback] = useState(false)
+  const closeFeedback = useCallback(() => setShowFeedback(false), [])
 
   // "há N min" precisa andar com o relógio enquanto o modal está aberto.
   useEffect(() => {
@@ -67,6 +70,10 @@ export function AppUpdateStatus({ appVersion }: { appVersion: string }): JSX.Ele
         Novidades
       </button>
       {showNews && createPortal(<NovidadesDialog appVersion={appVersion} onClose={closeNews} />, document.body)}
+      <button type="button" className="update-status-check" onClick={() => setShowFeedback(true)}>
+        Reportar problema ou sugerir
+      </button>
+      {showFeedback && createPortal(<FeedbackDialog onClose={closeFeedback} />, document.body)}
       <button type="button" className="update-status-check" disabled={BUSY.has(state.phase)} onClick={() => void checkNow()}>
         Verificar agora
       </button>

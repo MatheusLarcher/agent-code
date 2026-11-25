@@ -2,6 +2,21 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.193",
+      "data": "2026-11-25",
+      "itens": [
+        "As Configurações não travam mais com o aviso \"Campo de configuração persistido inválido\". Se o Windows trocar a proteção das senhas salvas, só o item afetado volta em branco (por exemplo, a ligação com o Chrome, que o app recria sozinho) e o resto continua como estava."
+      ]
+    },
+    {
+      "versao": "0.1.192",
+      "data": "2026-11-25",
+      "itens": [
+        "Em PCs em que o vídeo (placa de vídeo) impedia o Agent Code de abrir, o app agora percebe o problema, reinicia sozinho num modo de vídeo mais seguro e continua abrindo assim nas próximas vezes.",
+        "Novo botão \"Reportar problema ou sugerir\" em Configurações, ao lado de Novidades: conte o que deu errado ou dê uma ideia, e o app prepara o relato com a versão e o Windows para você enviar."
+      ]
+    },
+    {
       "versao": "0.1.191",
       "data": "2026-11-24",
       "itens": [

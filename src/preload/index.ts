@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { Channels } from '../shared/ipc'
-import type { AppUpdateState } from '../shared/ipc'
+import type { AppUpdateState, FeedbackDiagnostico } from '../shared/ipc'
 import type { ProjectColorMap } from '../shared/projectColor'
 import type {
   CloudInspectionDto,
@@ -522,6 +522,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   officeAgentFile: (name: string): Promise<Uint8Array | null> => ipcRenderer.invoke(Channels.officeAgentFile, name),
   officeCallsState: (state: OfficeCallsState): Promise<void> => ipcRenderer.invoke(Channels.officeCallsState, state),
   onOfficeCallOpen: (cb: (e: OfficeCallOpen) => void): (() => void) => on(Channels.officeCallOpen, cb),
+  feedbackDiagnostico: (): Promise<FeedbackDiagnostico> => ipcRenderer.invoke(Channels.feedbackDiagnostico),
   tarefasList: (): Promise<TarefaVista[]> => ipcRenderer.invoke(Channels.tarefasList),
   onTarefasChanged: (cb: (tarefas: TarefaVista[]) => void): (() => void) => on(Channels.tarefasChanged, cb),
   tarefasAcao: (pedido: TarefaAcaoPedido): Promise<Validado<TarefaVista | null>> => ipcRenderer.invoke(Channels.tarefasAcao, pedido),

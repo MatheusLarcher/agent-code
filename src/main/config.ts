@@ -157,10 +157,24 @@ function decode(raw: string, sensitive = false): unknown {
   }
 }
 
+/**
+ * Segredos que estão no banco mas não decifram (a chave do Windows em
+ * `Local State` foi recriada, ou a proteção está fora do ar agora). Ficam com o
+ * padrão vazio na memória e NÃO são regravados vazios: se for só a proteção
+ * fora do ar, o valor volta na próxima leitura. Saem da lista quando o usuário
+ * grava um valor novo.
+ */
+let unreadableSecrets = new Set<string>()
+
 async function writeFields(config: AppConfig, only?: Set<string>): Promise<void> {
   for (const field of FIELDS) {
     if (only && !only.has(field.key)) continue
-    await writePersistedKv(field.key, encode(field.get(config), field.sensitive))
+    const value = field.get(config)
+    if (unreadableSecrets.has(field.key)) {
+      if (value === '') continue
+      unreadableSecrets.delete(field.key)
+    }
+    await writePersistedKv(field.key, encode(value, field.sensitive))
   }
 }
 
@@ -178,14 +192,28 @@ async function readConfig(): Promise<AppConfig> {
   ])
   let next = parseStoredAppConfig(stored.get('config') ?? null)
   const missing = new Set<string>()
+  const unreadable = new Set<string>()
   for (const field of FIELDS) {
     const raw = stored.get(field.key) ?? null
     if (raw === null) {
       missing.add(field.key)
       continue
     }
-    next = mergeAppConfig(next, field.patch(decode(raw, field.sensitive)))
+    // Um campo ilegível não derruba a config inteira: antes, um único token
+    // que não decifrava travava as Configurações em "Campo de configuração
+    // persistido inválido". Fica o padrão; segredo não é regravado vazio.
+    let value: unknown
+    try {
+      value = decode(raw, field.sensitive)
+    } catch (error) {
+      console.warn(`[config] ${field.key} ilegível, usando o padrão:`, (error as { cause?: unknown }).cause ?? error)
+      if (field.sensitive) unreadable.add(field.key)
+      else missing.add(field.key)
+      continue
+    }
+    next = mergeAppConfig(next, field.patch(value))
   }
+  unreadableSecrets = unreadable
   if (missing.has('config.voice.speed')) next = migrateLegacySpeed(next, stored.get(LEGACY_VOICE_SPEED_KEY) ?? null)
   const splitPending = (stored.get(PLANNING_EFFORT_SPLIT_KEY) ?? null) === null
   if (splitPending) {

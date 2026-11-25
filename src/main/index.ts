@@ -1,6 +1,8 @@
 // PRIMEIRO import, de propósito: na instância isolada de desenvolvimento, o
 // userData muda antes de qualquer outro módulo lê-lo (ver devDataDirBoot.ts).
 import './devDataDirBoot'
+import { gpuModeAtBoot } from './gpuSafeModeBoot'
+import { registerFeedbackIpc } from './feedbackDiagnostico'
 import { app, BrowserWindow, ipcMain, dialog, Notification, powerMonitor, powerSaveBlocker, safeStorage, shell } from 'electron'
 import type { MessageBoxOptions } from 'electron'
 import { openUrlExternally } from './openInBrowser'
@@ -3393,6 +3395,8 @@ app.whenReady().then(async () => {
   // <userData>/logs/tela.log (rendererRecovery.ts).
   initScreenLog(app.getPath('userData'))
   app.on('child-process-gone', (_event, details) => logChildProcessGone(details))
+  if (gpuModeAtBoot.level > 0) console.warn(`[gpu] nível de modo seguro em uso: ${gpuModeAtBoot.level}`)
+  registerFeedbackIpc()
   // Memória do processo principal em <userData>/logs/memoria.log + perfil de heap
   // perto do teto (memoryWatch.ts): o app fechava sem aviso por estouro de heap.
   stopMemoryWatch = startMemoryWatch({ userDataDir: app.getPath('userData') })
