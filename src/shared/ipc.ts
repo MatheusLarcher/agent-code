@@ -2008,6 +2008,13 @@ export interface AppConfig {
   chromeControlEnabled: boolean
   /** Token da ponte Chrome (hex de 16 bytes), gerado uma vez no boot. */
   chromeBridgeToken: string
+  /** Suporte remoto a clientes: interruptor, desligado por padrão. Sem chave não liga. */
+  suporteRemotoEnabled: boolean
+  /** Nome do técnico, mostrado na janela do cliente ao pedir acesso. */
+  suporteRemotoTecnico: string
+  /** Chave da equipe do suporte (cifrada no disco). Nunca vai à tela: o `config:get`
+   *  devolve vazio e o `config:set` ignora; só os canais `suporte:*` mexem nela. */
+  suporteRemotoChave: string
   /** Live gate for model reads/writes to the device-local encrypted secret vault. */
   secretVaultEnabled: boolean
   /** Fixed pairing token for the LAN remote bridge. Generated once and reused on
@@ -2305,6 +2312,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowsControlEnabled: false,
   chromeControlEnabled: false,
   chromeBridgeToken: '',
+  suporteRemotoEnabled: false,
+  suporteRemotoTecnico: '',
+  suporteRemotoChave: '',
   // Desligado por padrão: ligado, as senhas guardadas vão em texto puro no
   // system prompt e chegam ao provedor. Isso só acontece se o usuário marcar.
   secretVaultEnabled: false,
@@ -2818,6 +2828,20 @@ export const Channels = {
   windowsControlChanged: 'windows-control:changed',
   /** main → renderer: a permissão do controle do Chrome mudou. */
   chromeControlChanged: 'chrome-control:changed',
+  /** Suporte remoto: ajustes de Configurações (SuporteAjustes; a chave nunca vem). */
+  suporteAjustes: 'suporte:ajustes',
+  /** Suporte remoto: salva os ajustes (SuporteAjustesPatch), validados no main. */
+  suporteSalvarAjustes: 'suporte:ajustes:salvar',
+  /** main → renderer: os ajustes do suporte mudaram (SuporteAjustes). */
+  suporteAjustesMudou: 'suporte:ajustes:mudou',
+  /** Suporte remoto: estado da sessão (SuporteStatus, sem token). */
+  suporteStatus: 'suporte:status',
+  /** main → renderer: o estado da sessão de suporte mudou (SuporteStatus). */
+  suporteStatusMudou: 'suporte:status:mudou',
+  /** Suporte remoto: conecta a conversa ao cliente do código informado. */
+  suporteConectar: 'suporte:conectar',
+  /** Suporte remoto: encerra a sessão (ou desiste do pedido em aberto). */
+  suporteDesconectar: 'suporte:desconectar',
   /** main → renderer: o status da ponte Chrome mudou (ChromeBridgeStatus). */
   chromeBridgeStatusChanged: 'chrome-bridge:status-changed',
   browserPicked: 'browser:picked',

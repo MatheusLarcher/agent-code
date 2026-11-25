@@ -11,6 +11,7 @@ import { join } from 'node:path'
 const configState = vi.hoisted(() => ({
   windowsControlEnabled: false as unknown,
   chromeControlEnabled: false as unknown,
+  suporteRemotoEnabled: false as unknown,
   ollama: { enabled: false, apiKey: '' },
   deepseek: { enabled: false, apiKey: '' },
   kimi: { enabled: false, apiKey: '', region: 'intl' as const, contextWindow: 262_144, models: [] as string[] },
@@ -34,6 +35,7 @@ vi.mock('./config', () => ({
   loadConfig: () => ({
     windowsControlEnabled: configState.windowsControlEnabled,
     chromeControlEnabled: configState.chromeControlEnabled,
+    suporteRemotoEnabled: configState.suporteRemotoEnabled,
     // start() reads these two; the permission-gate tests never call start(), but
     // the fast-mode test below does.
     ollama: configState.ollama,
@@ -226,6 +228,7 @@ beforeEach(() => {
   haikuState.choose = null
   configState.windowsControlEnabled = false
   configState.chromeControlEnabled = false
+  configState.suporteRemotoEnabled = false
   configState.ollama = { enabled: false, apiKey: '' }
   configState.deepseek = { enabled: false, apiKey: '' }
   configState.skillCatalog = undefined
@@ -342,6 +345,48 @@ describe('AgentSession — fluxo de permissão', () => {
     s.setBypass(true)
     await expect(gate(s, 'mcp__chrome__chrome_type', { text: 'x' })).resolves.toEqual({ behavior: 'allow', updatedInput: { text: 'x' } })
     expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('suporte remoto: desligado nega mesmo com "permitir tudo", até leitura e o conectar', async () => {
+    const { s, ask } = makeSession()
+    s.setBypass(true)
+    for (const nome of ['mcp__remoto__remoto_info', 'mcp__remoto__remoto_executar', 'mcp__suporte__suporte_conectar']) {
+      await expect(gate(s, nome, {})).resolves.toMatchObject({ behavior: 'deny', message: expect.stringContaining('Suporte Remoto') })
+    }
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('suporte remoto ligado: leitura passa sem modal; escrita pergunta sem bypass', async () => {
+    configState.suporteRemotoEnabled = true
+    const { s, ask } = makeSession()
+    await expect(gate(s, 'mcp__remoto__remoto_info', {})).resolves.toEqual({ behavior: 'allow', updatedInput: {} })
+    await expect(gate(s, 'mcp__suporte__suporte_status', {})).resolves.toEqual({ behavior: 'allow', updatedInput: {} })
+    expect(ask).not.toHaveBeenCalled()
+    void gate(s, 'mcp__remoto__remoto_executar', { comando: 'Get-Service Spooler' })
+    void gate(s, 'mcp__suporte__suporte_conectar', { codigo: '482917305' })
+    expect(ask).toHaveBeenCalledTimes(2)
+    expect(ask.mock.calls[0][0]).toMatchObject({ toolName: 'mcp__remoto__remoto_executar' })
+  })
+
+  it('suporte remoto + "permitir tudo": escrita comum passa, destrutivo vai ao usuário mesmo assim', async () => {
+    configState.suporteRemotoEnabled = true
+    const { s, ask } = makeSession()
+    s.setBypass(true)
+    const comum = { comando: 'Restart-Service Spooler' }
+    await expect(gate(s, 'mcp__remoto__remoto_executar', comum)).resolves.toEqual({ behavior: 'allow', updatedInput: comum })
+    expect(ask).not.toHaveBeenCalled()
+    void gate(s, 'mcp__remoto__remoto_executar', { comando: 'shutdown /r /t 0' })
+    void gate(s, 'mcp__remoto__remoto_android_shell', { comando: 'rm -rf /sdcard/DCIM' })
+    expect(ask).toHaveBeenCalledTimes(2)
+    expect(ask.mock.calls[0][0]).toMatchObject({ toolName: 'mcp__remoto__remoto_executar', input: { comando: 'shutdown /r /t 0' } })
+  })
+
+  it('suporte remoto: ferramenta desconhecida que se diz "só leitura" pergunta como escrita', async () => {
+    configState.suporteRemotoEnabled = true
+    const { s, ask } = makeSession()
+    void gate(s, 'mcp__remoto__remoto_ler_tudo', { readOnlyHint: true })
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(ask.mock.calls[0][0]).toMatchObject({ toolName: 'mcp__remoto__remoto_ler_tudo' })
   })
 
   it('ligar "permitir tudo" ao vivo resolve a permissão pendente (com updatedInput)', async () => {

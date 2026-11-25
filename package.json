@@ -1,6 +1,6 @@
 {
   "name": "agent-code-desktop",
-  "version": "0.1.193",
+  "version": "0.1.194",
   "description": "Desktop UI for Claude Code with an embedded agent-driven browser (Claude Desktop style)",
   "type": "module",
   "main": "./out/main/index.js",
@@ -15,6 +15,7 @@
     "suporte:build": "node scripts/build-suporte.mjs",
     "suporte:test": "dotnet run --project src/suporte/AgentCode.Suporte.csproj -c Release -- --self-test",
     "suporte:e2e": "node scripts/suporte-e2e.mjs",
+    "suporte:e2e:uac": "node scripts/suporte-e2e-uac.mjs",
     "start": "electron-vite preview",
     "icon": "node scripts/make-icon.mjs",
     "engine:sync": "node scripts/sync-engine.mjs",

@@ -1,8 +1,15 @@
 {
-  "proxima": [
-    "A extensão do Chrome do Agent Code ganhou uma versão nova, que se atualiza sozinha. O controle do Chrome continua funcionando como antes."
-  ],
+  "proxima": [],
   "versoes": [
+    {
+      "versao": "0.1.194",
+      "data": "2026-11-25",
+      "itens": [
+        "A extensão do Chrome do Agent Code ganhou uma versão nova, que se atualiza sozinha. O controle do Chrome continua funcionando como antes.",
+        "Novo: suporte remoto a clientes. Ative em Configurações > Suporte Remoto com a chave da sua equipe, mande o link para o cliente e peça no chat \"conecta no cliente\" com o código de 9 números que aparece na tela dele. Depois que o cliente clica em Permitir, o Agent Code atende o computador dele: vê a tela, roda comandos e envia ou busca arquivos.",
+        "Durante o atendimento, uma faixa no topo da conversa mostra em qual computador você está e tem o botão Encerrar. O cliente acompanha tudo na tela dele, libera ou nega cada recurso extra (Chrome, celular, administrador) e pode encerrar quando quiser."
+      ]
+    },
     {
       "versao": "0.1.193",
       "data": "2026-11-25",

@@ -38,6 +38,11 @@ import { ghidraPreparer } from './ghidra/ghidraEnv'
 import { chromeBridge, chromeTabMemory } from './chromeBridge/state'
 import { CHROME_CONTROL_HINT } from './chromeBridge/hint'
 import { CHROME_DISABLED_MESSAGE, chromeGateDecision } from './chromeBridge/gate'
+import { SUPORTE_SERVIDOR_INTERNO } from '../shared/suporteRemoto'
+import { remotoGateDecision, remotoPreToolDecision } from './suporteRemoto/gate'
+import { REMOTO_HINT } from './suporteRemoto/hint'
+import { ligarSessaoDoAgente, servidorSuporteDaConversa, suporteAtivado, suporteRemoto } from './suporteRemoto/runtime'
+import type { LigacaoSuporte } from './suporteRemoto/sessaoMcp'
 import { loadConfig } from './config'
 import { getCacheInfo } from './store'
 import { localLeftoversSettled } from './localLeftovers'
@@ -725,6 +730,8 @@ export class AgentSession {
   private crossTopicsVersion = ''
   /** Per-session cancellation scope for Windows UI actions. */
   private windowsControlScope = windowsControl.createScope()
+  /** Suporte remoto: põe e tira os servidores `suporte`/`remoto` desta sessão (sessaoMcp.ts). */
+  private suporteLigacao: LigacaoSuporte | null = null
   /** Stops the task-folder watcher of the CURRENT sdk session (a resume/restart
    *  can hand us a different session id, and then we re-point the watcher). */
   private stopTaskWatch: (() => void) | null = null
@@ -1180,6 +1187,10 @@ export class AgentSession {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
     }
     mcpServers.chrome = createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId))
+    // Suporte remoto a clientes: conectar/status/desconectar, só com o recurso ativado e fora
+    // do Agent Manager. As ferramentas do PC do cliente (`remoto`) entram depois de conectar.
+    const suporteNaSessao = !this.opts.planning && suporteAtivado()
+    if (suporteNaSessao) mcpServers[SUPORTE_SERVIDOR_INTERNO] = servidorSuporteDaConversa(this.opts.convId)
     // REA embutido (reaMcp.ts); o planejamento o filtra (planningSession.ts).
     const rea = reaMcpConfig()
     if (rea) mcpServers.rea = rea
@@ -1286,6 +1297,7 @@ export class AgentSession {
     append += secretsHint.text
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
     append += `\n\n${CHROME_CONTROL_HINT}`
+    if (suporteNaSessao) append += `\n\n${REMOTO_HINT}`
     if (highSkills.text) append += `\n\n${highSkills.text}`
 
     // Conversa nascida de um handoff do planejamento: de onde veio, onde está o
@@ -1550,6 +1562,17 @@ export class AgentSession {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
               permissionDecisionReason: READ_PDF_DENY_REASON } }
           }
+          // Suporte remoto: o gate também aqui (um `allow` do settings.json pula o
+          // canUseTool) e o registro local de toda chamada ao PC do cliente.
+          const remotoInput = (input.tool_input ?? {}) as Record<string, unknown>
+          const remotoPre = remotoPreToolDecision(name, remotoInput, loadConfig().suporteRemotoEnabled)
+          if (remotoPre?.decision === 'deny') {
+            this.markActivity()
+            suporteRemoto().registrarDecisao(this.opts.convId, name, remotoInput, input.tool_use_id, false)
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'deny' as const,
+              permissionDecisionReason: remotoPre.reason } }
+          }
+          suporteRemoto().registrarDecisao(this.opts.convId, name, remotoInput, input.tool_use_id, true)
           // SDK task-level snapshots cover managed tasks, but arbitrary shell,
           // remote agents, custom MCPs and cron may outlive that registry.
           if (!VERIFIED_TOOLS.includes(name)) this.restartOpaqueCalls.add(input.tool_use_id)
@@ -1589,6 +1612,10 @@ export class AgentSession {
             return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'ask' as const,
               permissionDecisionReason: `Comando destrutivo (${destructive}): precisa da confirmação do usuário.`, ...withInput } }
           }
+          if (remotoPre?.decision === 'ask') {
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: 'ask' as const,
+              permissionDecisionReason: remotoPre.reason, ...withInput } }
+          }
           return updatedInput ? { hookSpecificOutput: { hookEventName: 'PreToolUse' as const, updatedInput } } : {}
         }] }],
         // Uma ferramenta que retornou (com sucesso ou erro) acabou. Sem estes dois,
@@ -1599,6 +1626,7 @@ export class AgentSession {
             this.detachedReturned(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
+            suporteRemoto().registrarResultado(input.tool_use_id, (input.tool_response as { isError?: unknown } | null | undefined)?.isError === true)
             if (!input.agent_id) this.stageCompaction?.observeTool(input.tool_name, input.tool_input, input.tool_response)
             // Handoff: o aviso de prazo da etapa (80% e 100%, uma vez por marco).
             // Só texto anexado — nunca interrompe; null no resto (handoffDeadlineHook.ts).
@@ -1613,6 +1641,7 @@ export class AgentSession {
             this.detachedReturned(input.tool_use_id)
             this.toolsInFlight.delete(input.tool_use_id)
             this.markActivity()
+            suporteRemoto().registrarResultado(input.tool_use_id, true)
           }
           return {}
         }] }],
@@ -1645,6 +1674,7 @@ export class AgentSession {
           this.restartOpaqueCalls.delete(options.toolUseID)
           this.toolsInFlight.delete(options.toolUseID)
         }
+        if (result.behavior === 'deny') suporteRemoto().registrarDecisao(this.opts.convId, toolName, input, options?.toolUseID, false)
         return result
       }
     }
@@ -1680,6 +1710,18 @@ export class AgentSession {
       return false
     }
     void this.consumeMessages(this.q)
+    // Suporte remoto: o `remoto` (PC do cliente) entra e sai desta sessão por setMcpServers,
+    // só se esta conversa for a dona da sessão de suporte. Fora do Agent Manager.
+    this.suporteLigacao?.desligar()
+    this.suporteLigacao = this.opts.planning
+      ? null
+      : ligarSessaoDoAgente({
+          convId: this.opts.convId,
+          base: options.mcpServers ?? {},
+          consulta: () => this.q,
+          aoFalhar: (text) => this.emit({ kind: 'status', id: nextId(), text })
+        })
+    void this.suporteLigacao?.aplicar()
     // Processing rows left by a crashed/restarted session is safe: the queue
     // claims in sequence order and rows are completed only after handing the
     // exact SDK message to the input stream.
@@ -2336,6 +2378,8 @@ export class AgentSession {
     if (this.stallTimer) clearInterval(this.stallTimer)
     this.stallTimer = undefined
     this.windowsControlScope.cancel()
+    this.suporteLigacao?.desligar()
+    this.suporteLigacao = null
     this.stopTaskWatch?.()
     this.stopTaskWatch = null
     for (const pending of this.pendingPermissions.values()) {
@@ -2600,6 +2644,17 @@ ${lines}
     const chrome = chromeGateDecision(toolName, loadConfig().chromeControlEnabled)
     if (chrome === 'deny') return Promise.resolve({ behavior: 'deny', message: CHROME_DISABLED_MESSAGE })
     if (chrome === 'allow') return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    // Suporte remoto: interruptor próprio que "Permitir tudo" não atravessa; leitura (lista
+    // fixa no app) liberada; o que estraga ou derruba o PC do cliente vai ao técnico sempre;
+    // o resto segue o fluxo normal (null).
+    const remoto = remotoGateDecision(toolName, input, loadConfig().suporteRemotoEnabled)
+    if (remoto?.decisao === 'negar') return Promise.resolve({ behavior: 'deny', message: remoto.mensagem })
+    if (remoto?.decisao === 'liberar') return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    if (remoto?.decisao === 'perguntar') {
+      const id = nextId()
+      this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS })
+      return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve, true))
+    }
     // Checked BEFORE bypassAll: whether MEMORY.md matches the database must not
     // depend on the permission toggle. Reading the folder stays allowed.
     const memoryDenial = memoryWriteDenial(getCacheInfo().memoriesDir, toolName, input)

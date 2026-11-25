@@ -33,6 +33,7 @@ import { useQuoteComments } from './quoteComment/useQuoteComments'
 import { CentralBackButton } from '../central/CentralBackButton'
 import { ChatOpacityControl } from './ChatOpacityControl'
 import { ChatContextDetails } from './ChatContextDetails'
+import { SuporteRemotoFaixa } from '../suporte/SuporteRemotoFaixa'
 
 /** Live elapsed time of the running task; when idle, the last task's duration. `totalMs`: o somado dos turnos já terminados. */
 function RunTimer({ since, lastMs, totalMs }: { since: number | null; lastMs: number | null; totalMs: number | null }): JSX.Element | null {
@@ -460,6 +461,9 @@ export function ChatPanel(props: Props): JSX.Element {
           </button>
         </div>
       )}
+
+      {/* Suporte remoto a clientes: campo do código e estado da sessão desta conversa. */}
+      {!compact && props.convId && <SuporteRemotoFaixa convId={props.convId} />}
 
       {props.topNotice}
 

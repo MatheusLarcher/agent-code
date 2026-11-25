@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Publica o trio da atualização (AgentCode-setup.exe, .blockmap e latest.yml) numa
-// Release do GitHub, na tag v<versão do package.json>.
+// Publica o trio da atualização (AgentCode-setup.exe, .blockmap e latest.yml) e o exe do
+// cliente do suporte remoto (AgentCode-Suporte.exe) numa Release do GitHub, na tag
+// v<versão do package.json>.
 //
 // Fluxo: valida dist/ contra a versão → apaga rascunho antigo da mesma tag (release
-// publicada aborta) → cria RASCUNHO → sobe os 3 anexos em stream → confere tamanhos
+// publicada aborta) → cria RASCUNHO → sobe os anexos em stream → confere tamanhos
 // e o latest.yml byte a byte → só então torna a release pública (draft: false).
 //
 // Flags: --dry-run (valida token, versão e arquivos; não cria nada)
@@ -21,6 +22,12 @@ import { Readable, Transform } from 'node:stream';
 export const OWNER = 'MatheusLarcher';
 export const REPO = 'agent-code';
 export const EXE_NAME = 'AgentCode-setup.exe';
+// Anexos que não vêm do latest.yml. O exe do cliente do suporte remoto vai na mesma
+// release porque o link curto (agent-code.larchertech.com/suporte) baixa
+// releases/latest/download/<nome>: release sem ele quebraria o link do cliente. Ele não
+// faz parte do setup nem do feed de atualização (o electron-updater só lê o latest.yml).
+export const SUPORTE_EXE_NAME = 'AgentCode-Suporte.exe';
+export const EXTRA_ASSETS = [{ name: SUPORTE_EXE_NAME, build: 'npm run suporte:build' }];
 export const API_BASE = 'https://api.github.com';
 const USER_AGENT = 'agent-code-publish';
 const REPO_PATH = `/repos/${OWNER}/${REPO}`;
@@ -245,6 +252,13 @@ function loadLocal(root) {
       `dist/${EXE_NAME} tem ${exe.size} bytes, mas latest.yml diz ${latest.files[0].size}: ` +
         'a build está inconsistente, rode scripts\\build-installer.bat'
     );
+  }
+  // Depois do trio, na ordem: o latest.yml já subiu quando o anexo extra entra.
+  for (const extra of EXTRA_ASSETS) {
+    const path = join(dist, extra.name);
+    const size = existsSync(path) ? statSync(path).size : 0;
+    if (!size) throw new PublishError(`dist/${extra.name} não existe ou está vazio: rode ${extra.build}`);
+    files.push({ name: extra.name, path, size });
   }
   return { version: pkgVersion, files, latestPath };
 }

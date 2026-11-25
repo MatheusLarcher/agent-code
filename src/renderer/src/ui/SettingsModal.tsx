@@ -19,6 +19,7 @@ import { TypeSafePauseNote } from './TypeSafePauseNote'
 import { MemorySelectorSetting } from './MemorySelectorSetting'
 import { AutoModeClassifierSetting } from './AutoModeClassifierSetting'
 import { ChromeControlSection } from './ChromeControlSection'
+import { SuporteRemotoSection } from './SuporteRemotoSection'
 import { VoiceSettingsSection } from './VoiceSettingsSection'
 import { HandoffSettingsSection } from './HandoffSettingsSection'
 import { ScrumMasterSettingsSection } from './ScrumMasterSettingsSection'
@@ -373,6 +374,8 @@ export function SettingsModal({
                 </section>
 
                 <ChromeControlSection />
+
+                <SuporteRemotoSection />
 
                 <section className={`settings-section settings-switch-section ${cfg.preventSleepWhileBusy ? 'on' : ''}`}>
                   <label className="settings-switch-row">

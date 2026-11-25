@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { SuporteAjustes, SuporteAjustesPatch, SuporteStatus } from '../shared/suporteRemoto'
+import type { SuporteResultadoAjustes, SuporteResultadoConectar } from '../shared/suporteApi'
 import { Channels } from '../shared/ipc'
 import type { AppUpdateState, FeedbackDiagnostico } from '../shared/ipc'
 import type { ProjectColorMap } from '../shared/projectColor'
@@ -248,6 +250,16 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   setChromeControlEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(Channels.chromeControlSetEnabled, enabled),
   onChromeControlChanged: (cb: (enabled: boolean) => void): (() => void) => on(Channels.chromeControlChanged, cb),
+  // Suporte remoto a clientes (suporteRemoto/canais.ts): a chave da equipe só sobe, nunca desce.
+  getSuporteAjustes: (): Promise<SuporteAjustes> => ipcRenderer.invoke(Channels.suporteAjustes),
+  salvarSuporteAjustes: (patch: SuporteAjustesPatch): Promise<SuporteResultadoAjustes> =>
+    ipcRenderer.invoke(Channels.suporteSalvarAjustes, patch),
+  onSuporteAjustesMudou: (cb: (ajustes: SuporteAjustes) => void): (() => void) => on(Channels.suporteAjustesMudou, cb),
+  getSuporteStatus: (): Promise<SuporteStatus> => ipcRenderer.invoke(Channels.suporteStatus),
+  onSuporteStatusMudou: (cb: (status: SuporteStatus) => void): (() => void) => on(Channels.suporteStatusMudou, cb),
+  conectarSuporte: (convId: string, codigo: string): Promise<SuporteResultadoConectar> =>
+    ipcRenderer.invoke(Channels.suporteConectar, convId, codigo),
+  desconectarSuporte: (): Promise<boolean> => ipcRenderer.invoke(Channels.suporteDesconectar),
   getChromeBridgeStatus: (): Promise<ChromeBridgeStatus> => ipcRenderer.invoke(Channels.chromeBridgeStatus),
   onChromeBridgeStatusChanged: (cb: (status: ChromeBridgeStatus) => void): (() => void) =>
     on(Channels.chromeBridgeStatusChanged, cb),

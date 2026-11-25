@@ -163,6 +163,34 @@ if not exist "dist\AgentCode-setup.exe.blockmap" (
     exit /b 1
 )
 
+REM --- Exe do cliente do suporte remoto: vai na mesma Release, FORA do setup ---
+REM --- (o link do cliente baixa releases/latest/download/AgentCode-Suporte.exe) ---
+echo.
+echo Gerando o exe do suporte remoto...
+call npm run suporte:build
+if errorlevel 1 (
+    echo.
+    echo [ERRO] A geracao de dist\AgentCode-Suporte.exe falhou.
+    echo.
+    pause
+    exit /b 1
+)
+if not exist "dist\AgentCode-Suporte.exe" (
+    echo.
+    echo [ERRO] dist\AgentCode-Suporte.exe nao foi gerado.
+    echo.
+    pause
+    exit /b 1
+)
+dir /s /b "dist\win-unpacked\*Suporte*.exe" >nul 2>nul
+if not errorlevel 1 (
+    echo.
+    echo [ERRO] O exe do suporte foi parar dentro do setup; ele so pode ir na Release.
+    echo.
+    pause
+    exit /b 1
+)
+
 for %%F in ("!ARTIFACT!") do (
     echo ============================================
     echo   EXE GERADO COM SUCESSO
@@ -172,7 +200,7 @@ for %%F in ("!ARTIFACT!") do (
     echo Gerado em: %%~tF
 )
 echo.
-echo O arquivo esta na pasta dist\.
+echo O arquivo esta na pasta dist\, junto com o AgentCode-Suporte.exe do suporte remoto.
 echo.
 
 REM --- Publicacao na Release do GitHub: so com S explicito (padrao N) ---

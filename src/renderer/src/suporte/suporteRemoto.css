@@ -1,0 +1,188 @@
+/* Suporte remoto a clientes: a faixa no topo da conversa e a seção de Configurações.
+   Só as cores e medidas do app (styles.css): nada de paleta própria. */
+
+/* ---- faixa da conversa ---- */
+.suporte-faixa {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  /* O painel do chat pode ser estreito (quadro aberto ao lado): o que não couber desce. */
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-height: 42px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.suporte-faixa[data-estado='conectado'] {
+  border-bottom-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+  background: color-mix(in srgb, var(--ok) 11%, var(--bg-2));
+}
+.suporte-faixa[data-estado='caiu'] {
+  border-bottom-color: color-mix(in srgb, var(--err) 55%, var(--line));
+  background: color-mix(in srgb, var(--err) 9%, var(--bg-2));
+}
+.suporte-faixa-icone {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.suporte-faixa[data-estado='conectado'] .suporte-faixa-icone {
+  color: var(--ok);
+}
+.suporte-faixa[data-estado='caiu'] .suporte-faixa-icone {
+  color: var(--err);
+}
+.suporte-faixa-corpo {
+  flex: 1 1 140px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.suporte-faixa-estado {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.suporte-faixa-estado:empty {
+  display: none;
+}
+.suporte-faixa-titulo {
+  white-space: nowrap;
+  font-weight: 600;
+}
+.suporte-faixa-texto {
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.suporte-faixa-pc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suporte-faixa-erro {
+  min-width: 0;
+  color: var(--err);
+  font-size: 12px;
+}
+.suporte-ponto {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.suporte-tag {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.suporte-faixa-form {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.suporte-faixa-botao {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+}
+/* O código como o cliente o lê na janela dele: três grupos de três, largura fixa. */
+.suporte-codigo {
+  width: 16ch;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.suporte-codigo::placeholder {
+  color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+.suporte-codigo:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+.suporte-codigo[aria-invalid='true'] {
+  border-color: var(--err);
+}
+
+/* ---- seção de Configurações ---- */
+.suporte-secao {
+  transition: border-color 0.18s, background-color 0.18s;
+}
+.suporte-secao.on {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--line));
+  background: color-mix(in srgb, var(--ok) 7%, transparent);
+}
+.suporte-secao.on .switch-input:checked + .switch-visual {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+.suporte-secao-campos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.suporte-chave-salva {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.suporte-chave-salva svg {
+  color: var(--ok);
+}
+.suporte-link {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+.suporte-icone-botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .suporte-secao {
+    transition: none;
+  }
+}

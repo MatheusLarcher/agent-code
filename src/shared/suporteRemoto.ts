@@ -249,3 +249,69 @@ export function codigoSuporteValido(codigo: string): boolean {
 export function ehRecursoSuporte(valor: unknown): valor is SuporteRecurso {
   return typeof valor === 'string' && (SUPORTE_RECURSOS as readonly string[]).includes(valor)
 }
+
+// ---- Lado do Agent Code: sessão na tela e ajustes --------------------------
+
+/** Link que o técnico manda ao cliente (o relay redireciona para o download). */
+export const SUPORTE_LINK_CLIENTE = 'https://agent-code.larchertech.com/suporte'
+
+/** Servidor MCP do exe do cliente, ligado só na conversa que conectou. */
+export const SUPORTE_SERVIDOR_REMOTO = 'remoto'
+/** Servidor MCP interno (conectar, status, desconectar), só com o recurso ativado. */
+export const SUPORTE_SERVIDOR_INTERNO = 'suporte'
+
+/** Estado da sessão de suporte no Agent Code do técnico. Uma por vez no app. */
+export type SuporteEstadoSessao =
+  | 'desligado'
+  /** O pedido de pareamento saiu e o relay ainda não respondeu. */
+  | 'conectando'
+  /** O relay achou o cliente: a janela dele está perguntando. */
+  | 'aguardando'
+  | 'conectado'
+  /** A conexão com o PC do cliente caiu sem ninguém encerrar. */
+  | 'caiu'
+
+/** Por que a última sessão ou tentativa acabou. `n` sobe a cada aviso (um toast por aviso). */
+export interface SuporteAvisoSessao {
+  n: number
+  tipo: 'recusado' | 'caiu' | 'encerrado' | 'erro'
+  texto: string
+}
+
+/** O que a tela vê da sessão. Nunca traz o token nem a chave da equipe. */
+export interface SuporteStatus {
+  estado: SuporteEstadoSessao
+  /** Conversa dona da sessão (ou da tentativa em curso). */
+  convId: string | null
+  pc?: string
+  sistema?: string
+  admin?: boolean
+  recursos?: Partial<Record<SuporteRecurso, SuporteEstadoRecurso>>
+  aviso?: SuporteAvisoSessao
+}
+
+/** Ajustes de Configurações > Suporte Remoto. A chave nunca volta à tela: só `temChave`. */
+export interface SuporteAjustes {
+  ativado: boolean
+  tecnico: string
+  temChave: boolean
+}
+
+/** O que a tela manda ao salvar. `chave: ''` apaga a chave (e desliga o recurso). */
+export interface SuporteAjustesPatch {
+  ativado?: boolean
+  tecnico?: string
+  chave?: string
+}
+
+/** Tamanhos aceitos nos ajustes. */
+export const SUPORTE_AJUSTES_LIMITES = { tecnicoMax: 40, chaveMin: 20, chaveMax: 200 } as const
+
+/** A chave da equipe tem formato aceitável? (Quem confere o valor é o relay.) */
+export function chaveSuporteValida(chave: string): boolean {
+  return (
+    chave.length >= SUPORTE_AJUSTES_LIMITES.chaveMin &&
+    chave.length <= SUPORTE_AJUSTES_LIMITES.chaveMax &&
+    /^[\x21-\x7e]+$/.test(chave)
+  )
+}

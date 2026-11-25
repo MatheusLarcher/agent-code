@@ -218,6 +218,8 @@ import { windowsControl } from './windowsControl/service'
 import { chromeBridgeStatus, openInstall as openChromeInstall, startChromeBridge, stopChromeBridge } from './chromeBridge/runtime'
 import { pickElementInChrome } from './chromeBridge/pickElement'
 import { chromeBridge } from './chromeBridge/state'
+import { configParaATela, patchSemSuporte, registrarCanaisDoSuporte, type CanaisDoSuporte } from './suporteRemoto/canais'
+import { definirArquivoDoRegistro } from './suporteRemoto/runtime'
 import { discoverSkills } from './skillDiscovery'
 import { readProjectIcon } from './projectIcon'
 import { createProjectColorService, parseProjectColorCwds } from './projectColorStore'
@@ -1296,6 +1298,9 @@ async function syncAppSkills(cacheDir: string, kits: SkillSyncTarget['kits']): P
   }
 }
 
+/** Suporte remoto a clientes: canais da tela e fim da sessão (suporteRemoto/canais.ts). */
+let suporteCanais: CanaisDoSuporte | null = null
+
 async function updateAppConfig(patch: Partial<AppConfig>): Promise<AppConfig> {
   if ('windowsControlEnabled' in patch && typeof patch.windowsControlEnabled !== 'boolean') {
     throw new TypeError('windowsControlEnabled deve ser booleano.')
@@ -1931,7 +1936,8 @@ export function registerIpc(): void {
     // fallback e devolvia interruptores "desligados" mesmo já ativados. Não
     // depende do banco: a config mora no SQLite local (localKvStore.ts).
     await ensureConfigLoaded()
-    return loadConfig()
+    // A chave da equipe do suporte remoto nunca vai à tela.
+    return configParaATela(loadConfig())
   })
   // Modo sandbox e "Conectar conta" (lógica em sandbox.ts / providerStatus.ts).
   ipcMain.handle(Channels.sandboxInfo, () => ({ root: sandboxRoot() }))
@@ -1968,9 +1974,10 @@ export function registerIpc(): void {
   claudeAuthExpiry.onChange(providersChanged)
   // Config, Windows e Chrome: só o SQLite local — salvam com o banco fora do ar.
   ipcMain.handle(Channels.configSet, async (_e, patch: Partial<AppConfig>) => {
-    const result = await updateAppConfig(patch)
+    // Os ajustes do suporte remoto só mudam pelos canais `suporte:*`, que validam.
+    const result = await updateAppConfig(patchSemSuporte(patch))
     if (patch && ('ollama' in patch || 'deepseek' in patch || 'kimi' in patch)) providersChanged()
-    return result
+    return configParaATela(result)
   })
   ipcMain.handle(Channels.typesafeIsConfigured, () => typeSafeConfigured())
   ipcMain.handle(Channels.typesafePauseStatus, () => typeSafePause.status())
@@ -1996,6 +2003,9 @@ export function registerIpc(): void {
   // Chat voice (dictation + read-aloud) on this machine — see voiceService.ts.
   // Model downloads stream as speechSetupProgress to the asking window.
   registerVoiceIpc(ipcMain)
+  // Suporte remoto a clientes: registro local das chamadas e os canais da tela.
+  definirArquivoDoRegistro(join(app.getPath('userData'), 'logs', 'suporte-remoto.jsonl'))
+  suporteCanais = registrarCanaisDoSuporte({ ipcMain, enviar: send, salvar: updateAppConfig, carregar: ensureConfigLoaded })
   // Settings: install each voice model / the Android toolchain ahead of time.
   registerVoiceComponentIpc(ipcMain)
   registerAndroidToolchainIpc(ipcMain)
@@ -2331,6 +2341,8 @@ export function registerIpc(): void {
       if (change.deleted) handoffTracker.conversationDeleted(change.id)
       // As tarefas agendadas dela também param (tarefas/servico.ts).
       if (change.deleted) tarefasServico()?.conversaApagada(change.id)
+      // E a sessão de suporte remoto aberta nela acaba junto.
+      if (change.deleted) suporteCanais?.conversaApagada(change.id)
     }
   })
   ipcMain.handle(Channels.conversationsCountByProject, () =>
@@ -3717,6 +3729,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   windowsControl.stop()
   stopChromeBridge()
+  suporteCanais?.fechar()
   for (const b of browsers.values()) void b.close()
   browsers.clear()
   void disposeAllAndroidSessions()
@@ -3731,6 +3744,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (event) => {
   quitRequested = true
+  // Sessão de suporte remoto aberta: avisa o relay já, enquanto o banco fecha.
+  suporteCanais?.fechar()
   // Fechar o app com a atualização agendada cancela o agendamento, sem instalar.
   appRestart?.releaseHold()
   // Antes de fechar o banco: sem sync nem nova tentativa da lista de contas depois.

@@ -247,6 +247,7 @@
   "springboot-tdd": {"tier":"low","category":"Testes e qualidade"},
   "springboot-verification": {"tier":"low","category":"Testes e qualidade"},
   "subagent-driven-development": {"tier":"medium","category":"IA e agentes"},
+  "suporte-remoto": {"tier":"medium","category":"Redes e infraestrutura"},
   "supply-chain-security": {"tier":"low","category":"Segurança"},
   "swift-actor-persistence": {"tier":"low","category":"Mobile"},
   "swift-concurrency-6-2": {"tier":"low","category":"Mobile"},

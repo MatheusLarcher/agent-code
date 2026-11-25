@@ -15,6 +15,8 @@ import {
   run,
   PublishError,
   API_BASE,
+  EXTRA_ASSETS,
+  SUPORTE_EXE_NAME,
 } from './publish-release.mjs';
 
 const FIXTURE_YML = [
@@ -92,6 +94,8 @@ function makeDist(version) {
   const exe = Buffer.alloc(1000, 1);
   writeFileSync(join(root, 'dist', 'AgentCode-setup.exe'), exe);
   writeFileSync(join(root, 'dist', 'AgentCode-setup.exe.blockmap'), Buffer.alloc(40, 2));
+  // O exe do cliente do suporte remoto: anexo da mesma release, fora do latest.yml.
+  writeFileSync(join(root, 'dist', 'AgentCode-Suporte.exe'), Buffer.alloc(300, 3));
   const yml = FIXTURE_YML.replace('0.1.145', version).replace('563614115', String(exe.length));
   writeFileSync(join(root, 'dist', 'latest.yml'), yml);
   return { root, ymlBytes: Buffer.from(yml) };
@@ -194,7 +198,7 @@ function deps(root, gh) {
   };
 }
 
-test('fluxo completo: apaga rascunho antigo, cria, sobe 3 anexos, confere e publica', async () => {
+test('fluxo completo: apaga rascunho antigo, cria, sobe o trio e o exe do suporte, confere e publica', async () => {
   const { root, ymlBytes } = makeDist('0.1.145');
   try {
     const gh = fakeGithub({ existing: [{ id: 5, tag_name: 'v0.1.145', draft: true, assets: [] }], ymlBytes });
@@ -208,7 +212,10 @@ test('fluxo completo: apaga rascunho antigo, cria, sobe 3 anexos, confere e publ
       ['AgentCode-setup.exe', 1000],
       ['AgentCode-setup.exe.blockmap', 40],
       ['latest.yml', ymlBytes.length],
+      ['AgentCode-Suporte.exe', 300],
     ]);
+    // O feed da atualização continua o mesmo: o latest.yml publicado é o local, sem o exe do suporte.
+    assert.ok(!ymlBytes.toString().includes('Suporte'));
     assert.ok(gh.calls.indexOf('PATCH /repos/MatheusLarcher/agent-code/releases/100') > gh.calls.indexOf('GET /repos/MatheusLarcher/agent-code/releases/assets/103'), 'publica só depois de conferir');
     assert.ok(lines.join('\n').includes('publicada'));
     assert.ok(!lines.join('\n').includes('segredo'));
@@ -252,7 +259,7 @@ test('upload que falha uma vez apaga o parcial e tenta de novo', async () => {
     const result = await run(['--draft-only'], d);
     assert.equal(result.draft, true);
     assert.ok(gh.calls.some((c) => c.startsWith('DELETE /repos/MatheusLarcher/agent-code/releases/assets/')));
-    assert.deepEqual(gh.state.releases[0].assets.map((a) => a.size), [1000, 40, ymlBytes.length]);
+    assert.deepEqual(gh.state.releases[0].assets.map((a) => a.size), [1000, 40, ymlBytes.length, 300]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -267,9 +274,33 @@ test('--dry-run valida token e arquivos sem criar release', async () => {
     assert.equal(result.dryRun, true);
     assert.deepEqual(gh.calls, ['GET /repos/MatheusLarcher/agent-code']);
     assert.ok(lines.some((l) => l.includes('AgentCode-setup.exe (1000 bytes)')));
+    assert.ok(lines.some((l) => l.includes('AgentCode-Suporte.exe (300 bytes)')));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('sem o exe do suporte (ou com ele vazio) falha antes de pedir token', async () => {
+  for (const estrago of ['ausente', 'vazio']) {
+    const { root, ymlBytes } = makeDist('0.1.145');
+    try {
+      const exe = join(root, 'dist', 'AgentCode-Suporte.exe');
+      if (estrago === 'ausente') rmSync(exe);
+      else writeFileSync(exe, Buffer.alloc(0));
+      const gh = fakeGithub({ ymlBytes });
+      const { deps: d } = deps(root, gh);
+      await assert.rejects(run([], d), /AgentCode-Suporte\.exe.*suporte:build/);
+      assert.deepEqual(gh.calls, [], `release sem o exe do suporte quebraria o link do cliente (${estrago})`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('o exe do suporte é anexo extra: fica fora da lista derivada do latest.yml', () => {
+  assert.deepEqual(EXTRA_ASSETS.map((a) => a.name), [SUPORTE_EXE_NAME]);
+  assert.equal(SUPORTE_EXE_NAME, 'AgentCode-Suporte.exe');
+  assert.ok(!expectedAssets(parseLatestYml(FIXTURE_YML)).includes(SUPORTE_EXE_NAME));
 });
 
 test('versão do package.json diferente do latest.yml falha antes de pedir token', async () => {

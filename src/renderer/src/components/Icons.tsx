@@ -460,3 +460,13 @@ export const IconSpinner = ({ size = 14, ...rest }: IconProps): JSX.Element => (
     <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
   </svg>
 )
+
+/** Suporte remoto a clientes (fone com microfone). */
+export const IconHeadset = (p: IconProps): JSX.Element => (
+  <Svg {...p}>
+    <path d="M4.5 13.5V12a7.5 7.5 0 0 1 15 0v1.5" />
+    <rect x="2.5" y="13" width="4.5" height="6.5" rx="1.6" />
+    <rect x="17" y="13" width="4.5" height="6.5" rx="1.6" />
+    <path d="M19.5 19.5v.3a2.2 2.2 0 0 1-2.2 2.2H13" />
+  </Svg>
+)
