@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Exe do cliente do suporte remoto ("Agent Code Suporte"). Não entra no setup do
+    Agent Code: é publicado sozinho por scripts/build-suporte.mjs em
+    dist/AgentCode-Suporte.exe.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>AgentCode.Suporte</AssemblyName>
+    <RootNamespace>AgentCode.Suporte</RootNamespace>
+    <StartupObject>AgentCode.Suporte.Program</StartupObject>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\build\icon.ico</ApplicationIcon>
+    <Product>Agent Code Suporte</Product>
+    <AssemblyTitle>Agent Code Suporte</AssemblyTitle>
+    <Company>LarcherTech</Company>
+    <Version>0.1.0</Version>
+    <!-- Sem InvariantGlobalization: o WPF precisa das culturas para desenhar texto. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- O DPI por monitor vem do app.manifest (a janela é WPF, não Windows Forms). -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- A automação de tela é a do controle local, incluída por referência (nada copiado):
+         corrigir lá corrige aqui. Ficam de fora só a entrada e o autoteste do helper local. -->
+    <Compile Include="..\main\windowsControl\native\*.cs"
+             Exclude="..\main\windowsControl\native\Program.cs;..\main\windowsControl\native\SelfTest.cs"
+             LinkBase="AutomacaoLocal" />
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.4.0" />
+  </ItemGroup>
+</Project>

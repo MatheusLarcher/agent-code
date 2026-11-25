@@ -1,0 +1,24 @@
+<Window x:Class="AgentCode.Suporte.Registro"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="O Que Foi Feito" Width="460" Height="520" MinWidth="340" MinHeight="260"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" UseLayoutRounding="True"
+        Background="{StaticResource Fundo}" Foreground="{StaticResource Texto}"
+        FontFamily="{StaticResource FonteUi}" FontSize="14" TextOptions.TextFormattingMode="Display">
+    <DockPanel Margin="16">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" LastChildFill="False">
+            <Button x:Name="BotaoCopiar" DockPanel.Dock="Right" Style="{StaticResource Botao}" MinHeight="36" Content="Copiar" Click="AoCopiar" />
+            <TextBlock x:Name="Contagem" Style="{StaticResource Situacao}" FontSize="12.5" />
+        </DockPanel>
+        <Border BorderBrush="{StaticResource Linha}" BorderThickness="1" CornerRadius="8" Background="{StaticResource Fundo2}">
+            <Grid>
+                <TextBox x:Name="Lista" IsReadOnly="True" IsReadOnlyCaretVisible="False" TextWrapping="Wrap" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="Transparent"
+                         Foreground="{StaticResource Texto}" FontFamily="{StaticResource FonteMono}" FontSize="12.5" Padding="10"
+                         AutomationProperties.Name="O que foi feito neste suporte" />
+                <TextBlock x:Name="Vazio" Text="Nada foi feito ainda. As ações do técnico aparecem aqui."
+                           Style="{StaticResource Detalhe}" Margin="14" TextAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+    </DockPanel>
+</Window>

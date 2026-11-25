@@ -2,9 +2,12 @@
 import { readFileSync } from 'node:fs'
 import { createBroker } from './src/broker.js'
 import { createFcm, parseServiceAccount } from './src/fcm.js'
+import { createSuporte } from './src/suporte.js'
 
 const PORT = Number(process.env.PORT || 8099)
 const RELAY_KEY = process.env.RELAY_KEY || ''
+// Chave da equipe do suporte remoto. Sem ela, o canal de suporte inteiro recusa.
+const SUPORTE_KEY = process.env.SUPORTE_KEY || ''
 
 // Conta de serviço do Firebase (push no celular): o JSON inteiro em
 // FCM_SERVICE_ACCOUNT, ou o caminho dele em FCM_SERVICE_ACCOUNT_FILE. Só na VPS.
@@ -23,9 +26,11 @@ function loadServiceAccount() {
 const serviceAccount = loadServiceAccount()
 const fcm = serviceAccount ? createFcm({ serviceAccount }) : null
 
-const broker = createBroker({ relayKey: RELAY_KEY, fcm, log: (line) => console.log(line) })
+const log = (line) => console.log(line)
+const suporte = createSuporte({ chave: SUPORTE_KEY, log })
+const broker = createBroker({ relayKey: RELAY_KEY, fcm, log, suporte })
 broker.listen(PORT, () => {
-  const extras = [RELAY_KEY ? 'relayKey ligado' : '', fcm ? 'push FCM ligado' : 'push FCM desligado'].filter(Boolean).join(', ')
+  const extras = [RELAY_KEY ? 'relayKey ligado' : '', fcm ? 'push FCM ligado' : 'push FCM desligado', SUPORTE_KEY ? 'suporte ligado' : 'suporte desligado'].filter(Boolean).join(', ')
   console.log(`[broker] ouvindo em :${PORT} (${extras})`)
 })
 

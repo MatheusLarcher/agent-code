@@ -1,0 +1,46 @@
+<Window x:Class="AgentCode.Suporte.Pilula"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Agent Code Suporte" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" UseLayoutRounding="True"
+        FontFamily="{StaticResource FonteUi}" FontSize="14" TextOptions.TextFormattingMode="Display">
+    <Window.Resources>
+        <Style x:Key="BotaoPilula" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Erro}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocoRedondo}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="16" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Erro}" BorderThickness="1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource ErroFraco}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <!-- 5 · Minimizada: fica à frente das outras janelas -->
+    <Border x:Name="Corpo" Margin="12" CornerRadius="24" Background="{StaticResource Fundo2}" BorderBrush="{StaticResource Linha}" BorderThickness="1"
+            Padding="14,5,5,5" ToolTip="Clique duas vezes para abrir o suporte">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="14" ShadowDepth="4" Direction="270" Opacity="0.45" Color="Black" />
+        </Border.Effect>
+        <StackPanel Orientation="Horizontal">
+            <Ellipse Width="8" Height="8" Fill="{StaticResource Ok}" VerticalAlignment="Center" />
+            <TextBlock Text="Suporte ativo" Foreground="{StaticResource Texto}" Margin="10,0" VerticalAlignment="Center" />
+            <Button Style="{StaticResource BotaoPilula}" Content="Encerrar" Click="AoEncerrar" />
+        </StackPanel>
+    </Border>
+</Window>

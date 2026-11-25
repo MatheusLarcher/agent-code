@@ -88,6 +88,8 @@ function plain(res, status, text) {
  * Cria o broker. `relayKey` (opcional): se definido, só aceita PCs que mandem o
  * mesmo valor no `hello` (porta de entrada anti-abuso; o token do app é a auth
  * real). `now` é injetável para os testes de heartbeat.
+ * `suporte` (opcional): o canal de suporte remoto de `createSuporte`, que
+ * divide este servidor HTTP sem tocar no caminho do celular.
  * Retorna { server, wss, hosts, listen, close, stats, sweep }.
  */
 export function createBroker({
@@ -98,14 +100,24 @@ export function createBroker({
   fcm = null,
   pushPerMinute = PUSH_PER_MINUTE,
   now = Date.now,
-  log = () => {}
+  log = () => {},
+  suporte = null
 } = {}) {
   /** token -> { ws, instanceId, reqs: Map(rid -> {res, timer}), lastSeen } */
   const hosts = new Map()
   let ridSeq = 0
 
   const server = createServer(handleHttp)
-  const wss = new WebSocketServer({ server, path: '/__relay', maxPayload: 64 * 1024 * 1024 })
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 })
+  // Um WebSocketServer com `path` responde 400 a qualquer outro caminho; como o
+  // canal de suporte (/__suporte) divide este servidor, o roteamento é feito aqui.
+  server.on('upgrade', (req, socket, head) => {
+    if (req.url.split('?')[0] === '/__relay') {
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
+    } else if (!suporte?.handleUpgrade(req, socket, head)) {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+    }
+  })
 
   wss.on('connection', (ws) => {
     let token = null
@@ -243,6 +255,8 @@ export function createBroker({
   }
 
   function handleHttp(req, res) {
+    // /suporte e /suporte/* são do canal de suporte remoto (src/suporte.js).
+    if (suporte?.handleHttp(req, res)) return
     const url = new URL(req.url, 'http://x')
     const fromQuery = url.searchParams.get('token')
     const token = fromQuery || readCookie(req, 'relay_token')
@@ -323,7 +337,10 @@ export function createBroker({
   }
 
   // Mantém conexões vivas (Cloudflare/Nginx cortam WS ocioso) e detecta as mortas.
-  const ping = setInterval(() => sweep(), pingIntervalMs)
+  const ping = setInterval(() => {
+    sweep()
+    suporte?.sweep()
+  }, pingIntervalMs)
   if (ping.unref) ping.unref()
 
   return {
@@ -336,8 +353,9 @@ export function createBroker({
       new Promise((resolve) => {
         clearInterval(ping)
         for (const [token, host] of hosts) dropHost(host, token)
+        suporte?.close()
         wss.close(() => server.close(() => resolve()))
       }),
-    stats: () => ({ hosts: hosts.size })
+    stats: () => ({ hosts: hosts.size, ...(suporte ? { suporte: suporte.stats() } : {}) })
   }
 }

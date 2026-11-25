@@ -1,0 +1,114 @@
+<Window x:Class="AgentCode.Suporte.Janela"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Agent Code Suporte" Width="340" SizeToContent="Height" ResizeMode="CanMinimize"
+        WindowStyle="None" WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
+        Background="{StaticResource Fundo}" Foreground="{StaticResource Texto}"
+        FontFamily="{StaticResource FonteUi}" FontSize="15" TextOptions.TextFormattingMode="Display">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="32" ResizeBorderThickness="0" GlassFrameThickness="0,0,0,1" CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Border BorderBrush="{StaticResource Linha}" BorderThickness="1">
+        <DockPanel>
+            <!-- Barra de título -->
+            <Grid DockPanel.Dock="Top" Height="32" Background="{StaticResource Fundo2}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <Border Width="14" Height="14" CornerRadius="4" Background="{StaticResource Acento}" />
+                    <TextBlock Text="Agent Code Suporte" Foreground="{StaticResource Mudo}" FontSize="12.5" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button Style="{StaticResource BotaoBarra}" Click="AoMinimizar" AutomationProperties.Name="Minimizar" ToolTip="Minimizar">
+                        <Path Data="{StaticResource IconeMinimizar}" Style="{StaticResource Icone}" Width="10" Height="10" />
+                    </Button>
+                    <Button Style="{StaticResource BotaoBarra}" Click="AoFechar" AutomationProperties.Name="Fechar" ToolTip="Fechar e encerrar o suporte">
+                        <Path Data="{StaticResource IconeFechar}" Style="{StaticResource Icone}" Width="10" Height="10" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <Grid Margin="20">
+                <!-- 1 · Ao abrir: o código -->
+                <StackPanel x:Name="PainelCodigo">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="PontoCodigo" Width="8" Height="8" Fill="{StaticResource Mudo}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SituacaoCodigo" Style="{StaticResource Situacao}" Text="Conectando…" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource Titulo}" Text="Seu Código" />
+                    <StackPanel x:Name="Codigo" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,22,0,18" Focusable="False">
+                        <TextBlock x:Name="Codigo1" Text="···" FontFamily="{StaticResource FonteMono}" FontSize="38" Foreground="{StaticResource Acento}" />
+                        <TextBlock x:Name="Codigo2" Text="···" FontFamily="{StaticResource FonteMono}" FontSize="38" Foreground="{StaticResource Acento}" Margin="14,0" />
+                        <TextBlock x:Name="Codigo3" Text="···" FontFamily="{StaticResource FonteMono}" FontSize="38" Foreground="{StaticResource Acento}" />
+                    </StackPanel>
+                    <Button x:Name="BotaoCopiar" Style="{StaticResource Botao}" Click="AoCopiar" AutomationProperties.Name="Copiar">
+                        <StackPanel Orientation="Horizontal">
+                            <Viewbox Width="17" Height="17" Margin="0,0,8,0">
+                                <Path Data="{StaticResource IconeCopiar}" Style="{StaticResource Icone}" Stroke="{StaticResource Texto}" />
+                            </Viewbox>
+                            <TextBlock x:Name="TextoCopiar" Text="Copiar" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- 2 · Pedido de acesso -->
+                <StackPanel x:Name="PainelPedido" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource Acento}" VerticalAlignment="Center" />
+                        <TextBlock Style="{StaticResource Situacao}" Text="Pedido de acesso" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="TituloPedido" Style="{StaticResource Titulo}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Viewbox Width="17" Height="17"><Path Data="{StaticResource IconeTela}" Style="{StaticResource Icone}" /></Viewbox>
+                        <TextBlock Text="Tela" Foreground="{StaticResource Mudo}" FontSize="13" Margin="6,0,18,0" VerticalAlignment="Center" />
+                        <Viewbox Width="17" Height="17"><Path Data="{StaticResource IconeComandos}" Style="{StaticResource Icone}" /></Viewbox>
+                        <TextBlock Text="Comandos" Foreground="{StaticResource Mudo}" FontSize="13" Margin="6,0,18,0" VerticalAlignment="Center" />
+                        <Viewbox Width="17" Height="17"><Path Data="{StaticResource IconeArquivos}" Style="{StaticResource Icone}" /></Viewbox>
+                        <TextBlock Text="Arquivos" Foreground="{StaticResource Mudo}" FontSize="13" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <UniformGrid Columns="2" Margin="-5,18,-5,0">
+                        <Button Style="{StaticResource Botao}" Content="Recusar" Margin="5,0" Click="AoRecusar" />
+                        <Button Style="{StaticResource BotaoSim}" Content="Permitir" Margin="5,0" Click="AoPermitir" />
+                    </UniformGrid>
+                </StackPanel>
+
+                <!-- 3 · Suporte ativo -->
+                <StackPanel x:Name="PainelAtivo" Visibility="Collapsed">
+                    <DockPanel>
+                        <TextBlock x:Name="Tempo" DockPanel.Dock="Right" Style="{StaticResource Situacao}" FontFamily="{StaticResource FonteMono}" FontSize="12.5" Margin="8,0,0,0" />
+                        <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Fill="{StaticResource Ok}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SituacaoAtivo" Style="{StaticResource Situacao}" Margin="8,0,0,0" />
+                    </DockPanel>
+                    <Border BorderBrush="{StaticResource Linha}" BorderThickness="1" CornerRadius="8" Background="{StaticResource Fundo2}" Margin="0,16,0,14">
+                        <StackPanel x:Name="Recursos" />
+                    </Border>
+                    <Button Style="{StaticResource BotaoFim}" Content="Encerrar" Click="AoEncerrar" />
+                    <Button Style="{StaticResource BotaoLeve}" Content="Ver o Que Foi Feito" Margin="0,4,0,-8" Click="AoVerRegistro" />
+                </StackPanel>
+
+                <!-- 4 · Pedido extra -->
+                <StackPanel x:Name="PainelRecurso" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource Acento}" VerticalAlignment="Center" />
+                        <TextBlock Style="{StaticResource Situacao}" Text="Novo pedido" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="TituloRecurso" Style="{StaticResource Titulo}" />
+                    <TextBlock x:Name="DetalheRecurso" Style="{StaticResource Detalhe}" />
+                    <UniformGrid Columns="2" Margin="-5,18,-5,0">
+                        <Button Style="{StaticResource Botao}" Content="Não" Margin="5,0" Click="AoRecusar" />
+                        <Button Style="{StaticResource BotaoSim}" Content="Permitir" Margin="5,0" Click="AoPermitir" />
+                    </UniformGrid>
+                </StackPanel>
+
+                <!-- Avisos: código vencido, sem conexão, versão antiga -->
+                <StackPanel x:Name="PainelAviso" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Fill="{StaticResource Mudo}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SituacaoAviso" Style="{StaticResource Situacao}" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="TituloAviso" Style="{StaticResource Titulo}" />
+                    <TextBlock x:Name="DetalheAviso" Style="{StaticResource Detalhe}" />
+                    <Button x:Name="BotaoAviso" Style="{StaticResource Botao}" Margin="0,18,0,0" Click="AoBotaoAviso" />
+                </StackPanel>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>
