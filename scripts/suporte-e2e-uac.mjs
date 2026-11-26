@@ -8,7 +8,7 @@
 // Antes: npm run suporte:build && npm run windows-control:build
 // Rode:  node scripts/suporte-e2e-uac.mjs
 // Com --ensaio ele para antes do aviso do Windows (confere o roteiro sem ninguém na frente).
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -76,6 +76,20 @@ const controle = (method, params = {}) => new Promise((resolver, falhar) => {
   helper.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
 })
 
+// O exe reaberto pelo UAC NÃO herda as variáveis deste processo: o Windows monta o ambiente
+// dele a partir do registro do usuário. Para ele achar o relay local, a variável de teste
+// fica no ambiente do usuário só durante este teste (e só aceita 127.0.0.1/localhost).
+const VARIAVEL = 'AGENT_CODE_SUPORTE_RELAY'
+const reg = (...args) => spawnSync('reg', args, { stdio: 'ignore', windowsHide: true }).status === 0
+let variavelPosta = false
+if (!ENSAIO) {
+  if (reg('query', 'HKCU\\Environment', '/v', VARIAVEL)) {
+    console.error(`A variável ${VARIAVEL} já existe no seu ambiente de usuário; remova antes de rodar este teste.`)
+    process.exit(1)
+  }
+  variavelPosta = reg('add', 'HKCU\\Environment', '/v', VARIAVEL, '/t', 'REG_SZ', '/d', base.replace('http', 'ws'), '/f')
+}
+
 let exe = null
 let elevou = false
 const textoDe = (resultado) => resultado.content.filter((bloco) => bloco.type === 'text').map((bloco) => bloco.text).join('\n')
@@ -116,6 +130,41 @@ try {
   confere(!(await liberar).isError, 'o cliente permitiu e o recurso não liberou')
   ok('sem o Permitir do cliente não eleva; com ele, o recurso libera')
 
+  // --um: um aviso só; confere o caso que a pessoa escolheu (Sim ou Não) e diz qual foi.
+  const umAviso = async () => {
+    peca('O Windows vai perguntar se o Agent Code Suporte pode fazer alterações. Responda Sim ou Não.')
+    // --pede=NÃO|SIM: mostra antes, na tela, qual resposta este teste precisa.
+    const pede = process.argv.find((a) => a.startsWith('--pede='))?.slice(7)
+    if (pede === 'NAO' || pede === 'SIM') {
+      const texto = `Teste do Agent Code Suporte: no PROXIMO aviso do Windows, clique em ${pede === 'NAO' ? 'NAO' : 'SIM'}. Clique em OK aqui para o aviso aparecer.`
+      spawnSync('powershell', ['-NoProfile', '-Command',
+        `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; [void][System.Windows.Forms.MessageBox]::Show($f, '${texto}', 'Teste do suporte remoto')`
+      ], { stdio: 'ignore', windowsHide: true })
+    }
+    const resposta = await chamar('remoto_elevar')
+    if (resposta.isError) {
+      confere(textoDe(resposta).includes('não confirmou'), `elevar falhou por outro motivo: ${textoDe(resposta)}`)
+      confere((await info()).administrador === false, 'o suporte virou administrador mesmo com o Não')
+      confere(!(await chamar('remoto_executar', { comando: 'hostname' })).isError, 'a sessão parou de responder depois do Não')
+      ok('RESULTADO negado: o técnico é avisado e a sessão segue sem administrador')
+      return
+    }
+    elevou = true
+    const elevado = await ate(async () => {
+      try {
+        const dados = await info()
+        return dados.administrador ? dados : null
+      } catch {
+        return null
+      }
+    }, 'a mesma sessão responder como administrador', 60_000)
+    confere(suporte.sessoes.size === 1 && suporte.sessoes.has(sessao), 'a sessão não é mais a mesma')
+    const papel = textoDe(await chamar('remoto_executar', {
+      comando: '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'
+    }))
+    confere(papel.includes('True'), `o comando não rodou como administrador: ${papel}`)
+    ok(`RESULTADO aceito: a mesma sessão continua, agora como administrador (${elevado.pc})`)
+  }
   const comOAvisoDoWindows = async () => {
     // ---- UAC negado: segue sem administrador -----------------------------------------
     peca('1 de 2 — O Windows vai perguntar se o Agent Code Suporte pode fazer alterações. Clique em NÃO.')
@@ -152,6 +201,7 @@ try {
     ok(`UAC aceito: a mesma sessão continua, agora como administrador (${elevado.pc})`)
   }
   if (ENSAIO) console.log('\n(ensaio: parei antes do aviso do Windows; rode sem --ensaio para os dois cliques)')
+  else if (process.argv.includes('--um')) await umAviso()
   else await comOAvisoDoWindows()
 
   await fetch(`${base}/suporte/encerrar/${sessao}`, { method: 'POST', headers: { authorization: `Bearer ${token}` } })
@@ -162,6 +212,9 @@ try {
   console.error(`\nFALHOU  ${erro?.message ?? erro}`)
   process.exitCode = 1
 } finally {
+  if (variavelPosta && !reg('delete', 'HKCU\\Environment', '/v', VARIAVEL, '/f')) {
+    console.error(`ATENÇÃO: não consegui remover ${VARIAVEL} do ambiente do usuário. Remova à mão: reg delete HKCU\\Environment /v ${VARIAVEL} /f`)
+  }
   if (exe && !elevou) exe.kill()
   // O exe elevado não pode ser fechado por este script (roda acima dele): feche a janela.
   if (elevou) peca('Feche a janela do Agent Code Suporte que ficou aberta (ela roda como administrador).')
