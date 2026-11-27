@@ -9,7 +9,7 @@ import {
   HAIKU_MEMORY_CANDIDATES,
   HAIKU_MEMORY_MAX,
   HAIKU_MEMORY_MAX_CHARS,
-  HAIKU_MEMORY_MODEL,
+  MEMORY_SELECTOR_MODEL,
   HAIKU_QUESTION_MAX_CHARS,
   HAIKU_QUESTION_MAX_TOKENS,
   InjectedMemoryLedger,
@@ -82,7 +82,20 @@ describe('selectMemoriesWithHaiku', () => {
     expect(seen[0].prompt).toContain('- deploy.md: Deploy — como publicar o app')
     expect(seen[0].prompt).not.toContain('package:portable')
     expect(seen[0].prompt).not.toContain('5433')
-    expect(seen[0].options).toMatchObject({ model: HAIKU_MEMORY_MODEL, tools: [], maxTurns: 1, persistSession: false })
+    expect(seen[0].options).toMatchObject({ model: MEMORY_SELECTOR_MODEL, tools: [], maxTurns: 1, persistSession: false, settingSources: [] })
+  })
+
+  it('modelo opcional: só vale quando passado; vazio ou ausente fica no padrão', async () => {
+    const dir = await memories(base)
+    const custom = fakeQuery('{"memorias":["deploy.md"]}')
+    await selectMemoriesWithHaiku(dir, 'como publico?', { query: custom.run, model: 'claude-haiku-5-5' })
+    expect(custom.seen[0].options.model).toBe('claude-haiku-5-5')
+    const blank = fakeQuery('{"memorias":["deploy.md"]}')
+    await selectMemoriesWithHaiku(dir, 'como publico?', { query: blank.run, model: '  ' })
+    expect(blank.seen[0].options.model).toBe(MEMORY_SELECTOR_MODEL)
+    const absent = fakeQuery('{"memorias":["deploy.md"]}')
+    await selectMemoriesWithHaiku(dir, 'como publico?', { query: absent.run })
+    expect(absent.seen[0].options.model).toBe(MEMORY_SELECTOR_MODEL)
   })
 
   it('lista vazia é decisão: bloco vazio, não null', async () => {
@@ -131,17 +144,18 @@ describe('selectMemoriesWithHaiku', () => {
     expect(await selectMemoriesWithHaiku(dir, 'café', { query: throwing })).toBeNull()
   })
 
-  it('teto de 75.000 caracteres: a memória que estoura é pulada inteira', async () => {
-    expect(HAIKU_MEMORY_MAX_CHARS).toBe(75_000)
+  it('teto do bloco igual ao de todo seletor; memória longa vai cortada, não inteira', async () => {
+    expect(HAIKU_MEMORY_MAX_CHARS).toBe(6_000)
     const dir = await memories({
       'a.md': `# A\n${'a'.repeat(40_000)}`,
       'b.md': `# B\n${'b'.repeat(40_000)}`,
       'c.md': `# C\n${'c'.repeat(1_000)}`
     })
     const chosen = await selectMemoriesWithHaiku(dir, 'tudo', { query: fakeQuery('{"memorias":["a.md","b.md","c.md"]}').run })
-    expect(chosen?.relPaths).toEqual(['a.md', 'c.md'])
+    expect(chosen?.relPaths).toEqual(['a.md', 'b.md', 'c.md'])
     expect(chosen!.block.length).toBeLessThanOrEqual(HAIKU_MEMORY_MAX_CHARS)
-    expect(chosen?.block).toContain('a'.repeat(40_000))
+    expect(chosen?.block).not.toContain('a'.repeat(2_000))
+    expect(chosen?.block).toContain('memória completa em a.md')
   })
 
   it('no máximo 15, mesmo que o Haiku peça mais', async () => {
@@ -274,5 +288,28 @@ describe('InjectedMemoryLedger / chooseTurnMemories', () => {
       throw new Error('x')
     })
     expect(viaThrow.relPaths).toEqual(['deploy.md'])
+  })
+
+  const pinned = { ...base, 'pt.md': '---\nname: pt\nmetadata:\n  sempre: true\n---\n# Português\nResponder em português.' }
+
+  it('marcada "sempre": entra mesmo com o Haiku escolhendo zero ou outra, uma vez por conversa', async () => {
+    const dir = await memories(pinned)
+    const ledger = new InjectedMemoryLedger()
+    const zero = await chooseTurnMemories(dir, 'deploy', ledger, async () => ({ block: '', relPaths: [], entries: [] }))
+    expect(zero.relPaths).toEqual(['pt.md'])
+    expect(zero.block).toContain('Responder em português.')
+    const select = async (d: string, q: string) => selectMemoriesWithHaiku(d, q, { query: fakeQuery('{"memorias":["cafe.md"]}').run })
+    const next = await chooseTurnMemories(dir, 'café', ledger, select)
+    expect(next.block).not.toContain('pt.md')
+    expect(next.block).toContain('cafe.md')
+    expect(next.relPaths).toEqual(['cafe.md', 'pt.md'])
+  })
+
+  it('marcada "sempre": entra na busca reserva sem termo em comum e conta no teto', async () => {
+    const files: Record<string, string> = { ...pinned }
+    for (let i = 0; i < 12; i++) files[`deploy${i}.md`] = `# Deploy ${i}\ndeploy publicar ${i}`
+    const chosen = await chooseTurnMemories(await memories(files), 'deploy publicar', new InjectedMemoryLedger(), async () => null)
+    expect(chosen.relPaths[0]).toBe('pt.md')
+    expect(chosen.relPaths).toHaveLength(10)
   })
 })

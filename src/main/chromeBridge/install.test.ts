@@ -58,6 +58,19 @@ describe('instalador da extensão', () => {
     expect(buildConfigJs([5], TOKEN)).toBe(`self.AGENT_CODE_CONFIG = {"ports":[5],"token":"${TOKEN}"}\n`)
   })
 
+  it('com identidade (Homol) grava key, nome e título no manifest copiado, não no original', () => {
+    const src = source()
+    const original = { version: '1.2.3', action: { default_title: 'Agent Code' } }
+    writeFileSync(join(src, 'manifest.json'), JSON.stringify(original))
+    const target = tmp()
+    const identity = { key: 'QUJD', name: 'Agent Code Homol — Controle do Chrome', shortName: 'Agent Code Homol' }
+    installExtensionFiles({ sourceDir: src, targetDir: target, ports: [47841], token: TOKEN, identity })
+    const manifest = JSON.parse(readFileSync(join(target, 'manifest.json'), 'utf8'))
+    expect(manifest).toMatchObject({ version: '1.2.3', key: 'QUJD', name: identity.name, short_name: 'Agent Code Homol' })
+    expect(manifest.action.default_title).toBe('Agent Code Homol')
+    expect(JSON.parse(readFileSync(join(src, 'manifest.json'), 'utf8'))).toEqual(original)
+  })
+
   it('acha o chrome.exe nos caminhos padrão', () => {
     const want = join('C:\\PF', 'Google', 'Chrome', 'Application', 'chrome.exe')
     expect(findChromeExe({ PROGRAMFILES: 'C:\\PF' }, (p) => p === want)).toBe(want)

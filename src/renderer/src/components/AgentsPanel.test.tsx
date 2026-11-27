@@ -76,6 +76,16 @@ describe('AgentsPanel', () => {
     expect(document.querySelector('.crew-roster')).toBeNull()
   })
 
+  it('esperando a nova tentativa do limite, o selo "N trabalhando" some; trabalhando de fato, aparece', () => {
+    const { rerender } = render(
+      <AgentsPanel {...base} tracks={{}} crew={crewOf({ busy: true, busySince: Date.now(), retryHold: 'limit' })} />
+    )
+    expect(screen.queryByText(/trabalhando$/)).toBeNull()
+    expect(screen.getByText('esperando o limite de uso liberar')).toBeTruthy()
+    rerender(<AgentsPanel {...base} tracks={{}} crew={crewOf({ busy: true, busySince: Date.now() })} />)
+    expect(screen.getByText('1 trabalhando')).toBeTruthy()
+  })
+
   it('o elenco inteiro está em cena mesmo com ninguém trabalhando', () => {
     render(<AgentsPanel {...base} tracks={{}} />)
     for (const name of ['Principal', 'executor', 'critico', 'navegador-de-codigo', 'memoria', 'PO', 'vigia']) {

@@ -7,7 +7,6 @@ import { app, BrowserWindow, ipcMain, dialog, Notification, powerMonitor, powerS
 import type { MessageBoxOptions } from 'electron'
 import { openUrlExternally } from './openInBrowser'
 import { randomUUID } from 'node:crypto'
-import { getSessionInfo, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk'
 import { spawn } from 'node:child_process'
 import { join, basename, dirname, extname } from 'node:path'
 import {
@@ -83,7 +82,7 @@ import { BUNDLED_VOCABULARY } from './voice/hotwords'
 import { registerAndroidToolchainIpc } from './android/androidToolchainIpc'
 import { claudeAuthProbe, isAuthenticated, logoutClaude } from './auth'
 import { claudeAuthExpiry, claudeConnectedForCard } from './authExpiry'
-import { runClaudeLogin } from './login'
+import { cancelClaudeLogin, runClaudeLogin } from './login'
 import {
   claudeAccounts,
   configureAccountLogin,
@@ -107,16 +106,19 @@ import { registerCentralIpc, type CentralIpcHandle } from './central/centralIpc'
 import { codexStatus, codexLogout, initializeCodexAuthPersistence, runCodexLogin, isCodexConnected } from './codexAuth'
 import { onCodexRateLimit } from './codexProxy'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { checkHookHealth, hookNotice } from './hookHealth'
 import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
 import { LocalPostgres, localPostgresPaths } from './persistence/localPostgres'
 import { machineLocalDir } from './machineLocalDir'
+import { isHomol, variantProfile } from './appVariant'
 import { DatabaseBackups } from './persistence/backup/databaseBackups'
 import { sideOf } from './persistence/backup/switchSupport'
 import { registerDatabaseBackupIpc } from './databaseBackupIpc'
 import { createStorageSwitchWiring } from './storageSwitchWiring'
 import type { RemoteSearchResult } from '../shared/remoteSearch'
 import { devDataDir } from './devDataDir'
+import { markDevWindow } from './devWindowMark'
 import { installDevHooks } from './devHooks'
 import { createConversationWriteQueue, registerConversationQueueIpc } from './persistence/writeQueue/conversationQueueSetup'
 import { parseConversationChanges } from './persistence/writeQueue/conversationChange'
@@ -173,8 +175,8 @@ import {
 import { isLocalPersistedKey } from './persistence/keyRegistry'
 import { LocalKvStore } from './persistence/localKvStore'
 import { StorageError, type ConversationLease, type PersistenceRepository } from './persistence/types'
-import { hashJson, normalizeJson } from './persistence/hashes'
-import { loadOnce, replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
+import { replayLocalTranscript, verifyMirroredSession } from './persistence/mirrorReplay'
+import { prepareSessionResume } from './sessionResume'
 import { replayDedupStore } from './persistence/replayDedup'
 import { activeContextHistory, activeReplayStore, activeResumeMarker, activeSessionStore, activeTelemetry } from './persistence/activeRepository'
 import { TelemetryQueue } from './persistence/writeQueue/telemetryQueue'
@@ -182,7 +184,10 @@ import { ContextHistoryQueue } from './persistence/writeQueue/contextHistoryQueu
 import { OutboxWriteQueue } from './persistence/writeQueue/outboxQueue'
 import { ConversationJournal } from './persistence/writeQueue/conversationJournal'
 import { registerContextIpc } from './contextSnapshot/ipc'
-import { registerMockupScheme, setupOfficeMockup } from './officeMockup/mockupElectron'
+import { setupOfficeMockup } from './officeMockup/mockupElectron'
+import { MOCKUP_SCHEME } from '../shared/officeMockup'
+import { readPreviewFile } from './preview/readPreviewFile'
+import { hardenPreviewWebviews, registerPrivilegedSchemes, setupPreviewProtocol } from './preview/previewProtocol'
 import { OfficeCallCenter, parseCallsState } from './officeCallCenter'
 import { registerMemoryReadIpc } from './memory/memoryReadIpc'
 import { setOfficeCallSink } from './officeCallRuntime'
@@ -194,10 +199,13 @@ import { relocateLocalLeftovers, type LeftoverRelocation } from './localLeftover
 import { sessionLeaseRenewal } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, splitImagesForNote, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
-import { taskLedger } from './tasks/taskRuntime'
+import { iniciarBibliotecario } from './memoria/orquestracao/bibliotecarioApp'
+import { iniciarImportacao } from './importar/importacaoApp'
+import { sanitizeProposal } from './memory/memorySecrets'
+import { configureTaskBoard, taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
 import { startTaskReaper } from './tasks/taskReaper'
-import { configureSecretVault, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink, secretVaultEnabled } from './memory/memoryRuntime'
+import { configureSecretVault, configureVaultPassphrase, deleteSecret, listSecretMetadata, memoryService, readSecretForReveal, restoreVault, secretSink, secretVaultEnabled, setVaultPassphrase, vaultPassphraseStatus } from './memory/memoryRuntime'
 import { startRestartGuardFile } from './restartGuardFile'
 import { startSleepGuard } from './sleepGuard'
 import * as electronUpdater from 'electron-updater'
@@ -272,6 +280,8 @@ routeInteractiveReads(ipcMain)
 
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
+let stopBibliotecario: (() => void) | null = null
+let stopImportacao: (() => void) | null = null
 let stopTaskReaper: (() => void) | null = null
 let stopHandoffSweep: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
@@ -418,33 +428,10 @@ function prepareSessionResumeWithin(
   convId: string,
   cwd: string,
   sessionId: string
-): Promise<void> {
+): Promise<'ready' | 'missing'> {
   return sessionSteps.run(`${convId}:resume`, 'A preparação da retomada da conversa', RESUME_PREPARE_DEADLINE_MS, () =>
     prepareSessionResume(repository, convId, cwd, sessionId)
   )
-}
-
-async function prepareSessionResume(
-  repository: PersistenceRepository,
-  convId: string,
-  cwd: string,
-  sessionId: string
-): Promise<void> {
-  if (await repository.sessionResumeReady(convId, sessionId)) return
-  const store = repository.createSessionStore(convId)
-  await importSessionToStore(sessionId, store, { dir: cwd, includeSubagents: true }).catch(() => undefined)
-  // Depois da importação: as três leituras abaixo dividem UM download da sessão (loadOnce).
-  const reader = loadOnce(store)
-  const [info, entries] = await Promise.all([
-    getSessionInfo(sessionId, { dir: cwd, sessionStore: reader }),
-    reader.load({ projectKey: convId, sessionId })
-  ])
-  if (!info || !entries?.length) {
-    throw new StorageError('SESSION_HANDOFF_INCOMPLETE', 'A sessão não possui transcript íntegro para retomada.')
-  }
-  const verifiedHash = hashJson(normalizeJson(entries))
-  await getSessionMessages(sessionId, { dir: cwd, sessionStore: reader })
-  await repository.markSessionResumeReady(convId, sessionId, true, verifiedHash)
 }
 
 // Um navegador por conversa: uma janela real do Chrome, aberta na primeira
@@ -513,6 +500,10 @@ const board = new BoardService({
   // preguiçosa, como `poSettled`: o vigia é declarado abaixo.
   onProject: (cwd: string): void => poCommitWatch.arm(cwd)
 })
+// Cada tarefa do registro (task_create dos agentes) ganha um cartão no Quadro e
+// o cartão anda junto com ela (tasks/taskBoardSync.ts). Sem isto, o trabalho do
+// time de agentes não aparecia no Quadro do usuário.
+configureTaskBoard(board)
 
 // A autorização do PO para commit/push, por conversa (po/poAuthorization*.ts):
 // nasce do AUTORIZAR da abertura, vira rotina na fila no fechamento, some com
@@ -983,7 +974,10 @@ function appUpdateService(): AppUpdateService {
       const file = state.phase === 'pronta' ? appUpdate?.pendingInstaller() : null
       if (file && state.version) void fastUpdateStager()?.stage(file, state.version)
     },
-    devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath())
+    devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath()),
+    // A Homol é publicada em erickxc/agent-code, privado: o feed do GitHub responde 404 sem
+    // login. Atualização só manual (decisão do Erick, 27/11), sem a mensagem de erro.
+    manual: isHomol() ? 'Atualização manual: baixe a versão nova em github.com/erickxc/agent-code/releases' : null
   })
   return appUpdate
 }
@@ -1094,6 +1088,10 @@ function updateShutdownSteps(): ShutdownStep[] {
         stopAccountSync()
         stopMemoryCurator?.()
         stopMemoryCurator = null
+        stopBibliotecario?.()
+        stopBibliotecario = null
+        stopImportacao?.()
+        stopImportacao = null
         stopTaskReaper?.()
         stopTaskReaper = null
         stopHandoffSweep?.()
@@ -1723,6 +1721,12 @@ function getBrowser(convId: string): BrowserController {
   return b
 }
 
+const DEV_SERVER_GONE_HTML = `<!doctype html><html lang="pt-BR"><body style="background:#1e1e1e;color:#eee;font:16px system-ui;padding:48px;max-width:640px">
+<h2>O app reiniciou sem a tela de desenvolvimento</h2>
+<p>Ele está rodando em modo de desenvolvimento (<code>npm run dev</code>) e reiniciou sozinho, por exemplo depois de trocar de banco. O servidor que entrega a tela fechou junto.</p>
+<p>Seus dados estão salvos. Feche este app (⌘Q) e rode <code>npm run dev</code> de novo.</p>
+</body></html>`
+
 function createWindow(startMinimized = false): void {
   if (closeRequestTimer) clearInterval(closeRequestTimer)
   closeRequestTimer = null
@@ -1755,9 +1759,18 @@ function createWindow(startMinimized = false): void {
       contextIsolation: true,
       // Enable Chromium's built-in PDF viewer so the file preview can render
       // PDFs in an <iframe>/<embed> (off by default).
-      plugins: true
+      plugins: true,
+      // Aba Preview: HTML local/URL num <webview> isolado (travado em
+      // hardenPreviewWebviews logo abaixo: preload do seletor, partição própria).
+      webviewTag: true
     }
   })
+  markDevWindow(mainWindow)
+  hardenPreviewWebviews(
+    mainWindow.webContents,
+    join(import.meta.dirname, '../preload/previewInspector.cjs'),
+    openUrlExternally
+  )
 
   if (startMinimized) {
     const win = mainWindow
@@ -1811,8 +1824,15 @@ function createWindow(startMinimized = false): void {
   sess.setPermissionCheckHandler((_wc, permission) => allowed(permission))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) void mainWindow.loadURL(devUrl)
-  else {
+  if (devUrl) {
+    // Em `npm run dev` a tela vem do servidor do Vite, que fecha junto com o app.
+    // Se o app reiniciou sozinho (ex.: troca de banco), o servidor não existe mais:
+    // em vez de janela vazia, diz o que fazer.
+    const win = mainWindow
+    win.loadURL(devUrl).catch(() => {
+      if (!win.isDestroyed()) void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(DEV_SERVER_GONE_HTML)}`)
+    })
+  } else {
     // Atribuição dos quadros longos no detector de travadas (file:// é origem opaca).
     const rendererIndex = join(import.meta.dirname, '../renderer/index.html')
     installJsProfilingPolicy(sess, rendererIndexMatcher(rendererIndex))
@@ -1917,6 +1937,7 @@ export function registerIpc(): void {
     else pending.resolve()
   })
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
+  ipcMain.handle(Channels.appGetName, () => (isHomol() ? 'Agent Code Homol' : 'Agent Code'))
   // Atualização automática (appUpdate/appUpdateService.ts): o estado e o "Verificar agora".
   ipcMain.handle(Channels.updateStateGet, () => appUpdateService().snapshot())
   ipcMain.handle(Channels.updateCheckNow, () => appUpdateService().checkNow())
@@ -2011,6 +2032,7 @@ export function registerIpc(): void {
   registerAndroidToolchainIpc(ipcMain)
   // Claude Code auth: status + the one-click OAuth login (no typed /login).
   ipcMain.handle(Channels.authStatus, async () => ({ authenticated: await refreshClaudeReady() }))
+  ipcMain.handle(Channels.authLoginCancel, () => ({ ok: cancelClaudeLogin() }))
   ipcMain.handle(Channels.authLogin, async () => {
     authLog('=== auth:login start ===')
     // The FIRST login opens the user's own SYSTEM browser (product decision) — not
@@ -2119,6 +2141,23 @@ export function registerIpc(): void {
     }))
   )
   ipcMain.handle(Channels.secretVaultDelete, (_e, name: string) => deleteSecret(name))
+  ipcMain.handle(Channels.secretVaultPassphraseStatus, () => vaultPassphraseStatus())
+  ipcMain.handle(Channels.secretVaultSetPassphrase, (_e, passphrase: unknown) =>
+    typeof passphrase === 'string' ? setVaultPassphrase(passphrase) : { ok: false, error: 'Frase-senha inválida.' }
+  )
+  // Importar conversas do Agent Code original — manual e automática (só na Homol; a origem
+  // é lida numa cópia). Ver importar/importacaoApp.ts.
+  stopImportacao = iniciarImportacao({
+    handle: (canal, fn) => ipcMain.handle(canal, fn),
+    disponivel: () => isHomol(),
+    binDir: () => postgresPaths().binDir,
+    tmpDir: () => app.getPath('temp'),
+    dadosDir: () => app.getPath('userData'),
+    repositorio: () => storageLifecycle.repository(),
+    memoria: () => memoryService(),
+    sanitize: async (input) => (await sanitizeProposal(input, { vault: secretSink() })).input,
+    log: (line) => console.log(line)
+  })
   ipcMain.handle(Channels.memoryConflicts, async (): Promise<MemoryConflictItem[]> => {
     const service = memoryService()
     if (!service) return []
@@ -2501,6 +2540,10 @@ export function registerIpc(): void {
     }
   })
 
+  // Aba Preview: lê/converte o arquivo (texto, planilha) ou devolve a URL do
+  // agent-preview:// (html/mídia), com a barreira de caminho sensível.
+  ipcMain.handle(Channels.previewReadFile, (_e, path: string) => readPreviewFile(path))
+
   // Read a file as raw bytes (base64) for binary previews (PDF, images, xlsx…).
   // Capped at 50 MB so a huge file can't blow up the IPC payload / renderer memory.
   ipcMain.handle(Channels.fileReadBytes, async (_e, absolutePath: string): Promise<FileBytes> => {
@@ -2765,11 +2808,19 @@ export function registerIpc(): void {
     const activeRepository = (): PersistenceRepository => storageLifecycle.repository()
     const sessionStore = activeSessionStore(activeRepository, convId)
     const resumeMarker = activeResumeMarker(activeRepository)
+    // A sessão anterior não tem transcript em lugar nenhum (nem disco, nem banco):
+    // retomar travaria a conversa para sempre (o renderer reenvia o mesmo id).
+    // Sobe uma sessão nova e avisa; as mensagens na tela ficam. Só esse caso —
+    // prazo, banco e verificação continuam falhando como antes.
+    let lostResume: string | undefined
     try {
       // Prazo total (RESUME_PREPARE_DEADLINE_MS): estourou, falha com erro claro
       // — nunca sobe sem retomar em silêncio — e o lease que esta subida pegou é
       // solto antes de sair do lock.
-      if (opts.resume) await prepareSessionResumeWithin(repository, convId, opts.cwd, opts.resume)
+      if (opts.resume && (await prepareSessionResumeWithin(repository, convId, opts.cwd, opts.resume)) === 'missing') {
+        lostResume = opts.resume
+        opts = { ...opts, resume: undefined }
+      }
     } catch (error) {
       if (!previous) await releaseSessionLease(convId)
       throw error
@@ -2922,6 +2973,14 @@ export function registerIpc(): void {
       ok = await s.start()
       if (ok) {
         logSession('session-start', { convId, model: opts.model, effort: opts.effort, account: claudeAccountId, resume: !!opts.resume })
+        if (lostResume) {
+          console.warn(`[resume] sessão ${lostResume} sem transcript para ${convId}: subiu sessão nova`)
+          emit({
+            kind: 'status',
+            id: randomUUID(),
+            text: 'Não encontrei o histórico desta conversa, então o agente começou do zero. As mensagens continuam aqui, mas ele não lembra do que foi dito antes.'
+          })
+        }
       }
     } catch (error) {
       console.error(`Agent failed to start for conversation ${convId}:`, error)
@@ -3309,10 +3368,14 @@ if (!app.isPackaged && process.env.AGENT_CODE_DEV_PG_DELAY_MS) {
   const ms = configureDevQueryDelay(process.env.AGENT_CODE_DEV_PG_DELAY_MS)
   if (ms) console.warn(`[postgres] AGENT_CODE_DEV_PG_DELAY_MS: ${ms} ms de atraso em toda consulta (só desenvolvimento)`)
 }
-// Esquemas privilegiados só se registram antes do ready.
-registerMockupScheme()
+// Esquemas privilegiados só se registram antes do ready, e numa chamada SÓ (a
+// segunda sobrescreveria os privilégios da primeira nos renderers): o
+// agent-mockup (mesmos privilégios de registerMockupScheme) vai junto com o
+// agent-preview do preview (main/preview/previewProtocol.ts).
+registerPrivilegedSchemes([{ scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 // Notificação do Windows: o AppUserModelID tem de ser o do atalho do instalador (appId do electron-builder).
-if (process.platform === 'win32') app.setAppUserModelId('com.larchertech.agentcode')
+// Na Homol, o appId dela (electron-builder.homol.yml / appVariant.ts).
+if (process.platform === 'win32') app.setAppUserModelId(variantProfile().appUserModelId)
 
 /** Os chamados do agente: a notificação do Windows e os avisos da ponte (officeCallCenter.ts). */
 function setupOfficeCalls(): void {
@@ -3343,6 +3406,18 @@ function setupOfficeCalls(): void {
     const s = parseCallsState(raw)
     if (s) center.state(s)
   })
+}
+
+/** Hook do settings.json do Claude apontando para programa que sumiu (hookHealth.ts):
+ *  um aviso do Windows na abertura; o clique mostra o arquivo na pasta. */
+let hookNoticeShown: Notification | null = null
+function warnBrokenHooks(): void {
+  const { problems, settingsPath } = checkHookHealth()
+  if (!problems.length || !Notification.isSupported()) return
+  authLog(`hooks quebrados em ${settingsPath}: ${problems.map((p) => p.path).join(', ')}`)
+  hookNoticeShown = new Notification(hookNotice(problems, settingsPath))
+  hookNoticeShown.on('click', () => shell.showItemInFolder(settingsPath))
+  hookNoticeShown.show()
 }
 
 /** Traz a janela para a frente (restaura, mostra e foca). */
@@ -3387,6 +3462,24 @@ app.whenReady().then(async () => {
   // unidade que o usuário move e faz backup (banco + memórias). Em userData,
   // migrar a pasta levaria a chave e deixaria as senhas para trás.
   configureSecretVault({ directory: join(cacheInfo.dir, 'vault') })
+  // Frase-senha do cofre (D18): com a nuvem, o espelho só vai embrulhado; a chave
+  // derivada fica neste PC selada pelo sistema (Chaveiro/DPAPI).
+  configureVaultPassphrase({
+    isCloud: async () =>
+      storageLifecycle.status().backend === 'postgres' && sideOf((await storageLifecycle.postgresSettings()).postgresTarget) === 'nuvem',
+    seal: safeStorage.isEncryptionAvailable()
+      ? {
+          seal: (text) => safeStorage.encryptString(text).toString('base64'),
+          open: (text) => {
+            try {
+              return safeStorage.decryptString(Buffer.from(text, 'base64'))
+            } catch {
+              return null
+            }
+          }
+        }
+      : null
+  })
   // Cache/log/backup de versões antigas ainda na pasta sincronizada vão para a
   // raiz local. Em segundo plano (pode ser 1 GB entre volumes); quem usa essas
   // pastas espera por `localLeftoversSettled()`.
@@ -3483,7 +3576,10 @@ app.whenReady().then(async () => {
   projectQueue.start()
   // Fora do registerIpc (que os testes chamam sem Electron): protocolo exige o app pronto.
   officeMockup = setupOfficeMockup({ handle: (channel, handler) => ipcMain.handle(channel, handler) })
+  // Aba Preview: agent-preview:// (partição do <webview> e sessão padrão) + permissões.
+  setupPreviewProtocol()
   setupOfficeCalls()
+  warnBrokenHooks()
   // Tarefas agendadas e avisos (tarefas/appWiring.ts): agendador, aviso no Windows, MCP `avisos`.
   setupTarefasApp({
     repository: () => (storageLifecycle.canMutate() ? storageLifecycle.repository() : null),
@@ -3644,6 +3740,7 @@ app.whenReady().then(async () => {
     const restored = await bootStage('vault', () => restoreVault())
     if (restored === 'restored') console.log('[vault] cofre restaurado do banco')
     if (restored === 'failed') console.error('[vault] falha ao restaurar o cofre do banco')
+    if (restored === 'needs-passphrase') authLog('[vault] o cofre da nuvem está protegido por frase-senha: digite-a em Configurações › Cofre')
   }
   // Contas Claude: conta só na pasta volta à lista; pasta/login que sumiu é
   // recriado da cópia cifrada no banco. Em segundo plano (accounts/accountSync.ts).
@@ -3688,6 +3785,16 @@ app.whenReady().then(async () => {
   // novo = curadoria na hora, sobre as transcrições REAIS de ~/.claude/projects e
   // com a conta Claude logada na máquina.
   if (storageAvailable && !devDataDir()) stopMemoryCurator = await startMemoryCuratorScheduler()
+  // O bibliotecário (organiza as memórias de hora em hora). Diferente do curador, roda
+  // também na cópia de teste: é lá que ele é provado, e nasce em simulação.
+  if (storageAvailable) {
+    const bibliotecario = iniciarBibliotecario({
+      config: () => loadConfig().memorista ?? DEFAULT_CONFIG.memorista,
+      dadosDir: app.getPath('userData'),
+      log: (line) => console.log(line)
+    })
+    stopBibliotecario = bibliotecario.parar
+  }
   // Devolve à fila a tarefa cujo executor morreu. É a primeira regra do time
   // que roda fora do modelo: quem some no meio do trabalho pode ser justamente
   // o supervisor, então não dá para depender de alguém perceber e agir.
@@ -3770,6 +3877,8 @@ app.on('before-quit', (event) => {
   void stopVoice()
   stopMemoryCurator?.()
   stopMemoryCurator = null
+  stopBibliotecario?.()
+  stopBibliotecario = null
   stopTaskReaper?.()
   stopTaskReaper = null
   stopHandoffSweep?.()

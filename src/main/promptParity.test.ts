@@ -9,7 +9,11 @@ const capture = vi.hoisted(() => ({ queries: [] as Array<{ options: Record<strin
 vi.mock('./config', () => ({ loadConfig: () => ({ windowsControlEnabled: false, ollama: { apiKey: 'synthetic', enabled: true }, typesafe: { enabled: false, apiKey: '', minConfidence: 0.2 } }) }))
 vi.mock('./codexAuth', () => ({ isCodexConnected: () => true }))
 vi.mock('./codexProxy', () => ({ ensureCodexProxyRunning: async () => ({ baseUrl: 'http://127.0.0.1:1', secret: 'test' }), FAST_MODE_TOKEN_SUFFIX: '+fast' }))
-vi.mock('./store', () => ({ getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories', localDir: '/cache-local' }) }))
+// localDir é criado de verdade (cli-config-sem-login): precisa ser gravável.
+vi.mock('./store', async () => {
+  const { tmpdir } = await import('node:os')
+  return { getCacheInfo: () => ({ dir: '/cache', skillsDir: '/cache/skills', memoriesDir: '/cache/memories', localDir: `${tmpdir()}/agent-code-parity-local` }) }
+})
 vi.mock('./projectOutline', () => ({ buildProjectOutline: async () => '[PROJECT_DOCS_CONTEXT]\nDOC_SENTINEL\n[/PROJECT_DOCS_CONTEXT]' }))
 vi.mock('./skillManager', () => ({ ensureNativeSkillRoot: () => ({ root: '/native', errors: [] }) }))
 vi.mock('./memoryIndex', async (original) => ({
@@ -85,7 +89,10 @@ describe('provider-neutral prompt contract', () => {
         expect(JSON.stringify(live)).not.toContain('MEMORY_EXCERPT_SENTINEL')
         expect(content).toContain('--- Memória relevante: excerpt.md ---\nMEMORY_EXCERPT_SENTINEL')
         expect(content).not.toContain('DOC_SENTINEL')
-        expect(content).toContain('SKILL_SENTINEL')
+        // Catálogo uma vez só (25/11/2026): todo provedor passa pelo CLI (ANTHROPIC_BASE_URL),
+        // cuja listagem já leva nome e descrição; a mensagem leva só a regra e a contagem.
+        expect(content).toContain('FILESYSTEM SKILLS: 1 skills')
+        expect(content).not.toContain('SKILL_SENTINEL')
         expect(content).toContain('USER_SENTINEL')
         if (model.startsWith('gpt-') || OLLAMA_MODELS.some((m) => m.id === model)) {
           expect(args.options.env).toMatchObject({ CLAUDE_CODE_SUBAGENT_MODEL: model })

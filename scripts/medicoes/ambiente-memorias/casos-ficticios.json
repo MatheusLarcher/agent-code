@@ -1,0 +1,99 @@
+{
+  "casos": [
+    {
+      "id": "padaria-cor-botao",
+      "pedido": "muda a cor do botão do site da padaria para combinar com a fonte",
+      "esperadas": [
+        "projetos/site-padaria-cores.md",
+        "padaria/fonte-titulos.md"
+      ],
+      "aceitaveis": [
+        "padaria-logo.md",
+        "padaria/whatsapp-pedidos.md"
+      ],
+      "nota": "Contradição de fonte: Merriweather (antiga) x Playfair (nova). As duas devem vir."
+    },
+    {
+      "id": "horta-rega",
+      "pedido": "o aviso de rega do Horta Fácil parou de chegar",
+      "esperadas": [
+        "horta-notificacoes-rega.md"
+      ],
+      "aceitaveis": [
+        "horta/observacao-usuarios-idosos.md",
+        "horta-login-google.md"
+      ],
+      "nota": "Memória solta na raiz: só aparece se o tema horta for reconhecido."
+    },
+    {
+      "id": "relatorio-novembro",
+      "pedido": "prepara o relatório mensal de novembro",
+      "esperadas": [
+        "projetos/relatorio-mensal.md",
+        "relatorio-fechamento-dia-5.md",
+        "relatorio/graficos-padrao.md"
+      ],
+      "aceitaveis": [
+        "relatorio/envio-email.md"
+      ]
+    },
+    {
+      "id": "horta-login",
+      "pedido": "o login com Google do app da horta dá erro 10",
+      "esperadas": [
+        "horta-login-google.md"
+      ],
+      "aceitaveis": [
+        "horta/publicar-play-store.md"
+      ]
+    },
+    {
+      "id": "padaria-domingo",
+      "pedido": "que horas a padaria abre no domingo? põe isso no site",
+      "esperadas": [
+        "padaria-horario-funcionamento.md"
+      ],
+      "aceitaveis": [
+        "projetos/site-padaria-cores.md"
+      ]
+    },
+    {
+      "id": "vpn",
+      "pedido": "preciso configurar a VPN do cliente de novo, a senha venceu",
+      "esperadas": [
+        "ambiente/vpn-cliente.md",
+        "vpn-senha-troca.md"
+      ]
+    },
+    {
+      "id": "horta-banco-lento",
+      "pedido": "o banco do Horta Fácil está lento para listar os canteiros",
+      "esperadas": [
+        {
+          "umaDe": [
+            "projetos/horta-facil-banco.md",
+            "horta/banco-postgres.md"
+          ]
+        }
+      ],
+      "aceitaveis": []
+    },
+    {
+      "id": "horta-tela-nova",
+      "pedido": "cria uma tela nova no Horta Fácil para cadastrar canteiro",
+      "esperadas": [
+        "horta/observacao-usuarios-idosos.md"
+      ],
+      "aceitaveis": [
+        "horta/banco-postgres.md",
+        "projetos/horta-facil-banco.md"
+      ],
+      "nota": "Observação do tema deve entrar direto."
+    },
+    {
+      "id": "cumprimento",
+      "pedido": "bom dia!",
+      "esperadas": []
+    }
+  ]
+}

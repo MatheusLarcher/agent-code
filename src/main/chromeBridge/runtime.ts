@@ -3,8 +3,14 @@ import { join } from 'node:path'
 import { app, shell } from 'electron'
 import { loadConfig, updateConfig } from '../config'
 import type { ChromeBridgeStatus } from '../../shared/chromeBridge'
+import { HOMOL_CHROME_EXTENSION_ID, HOMOL_CHROME_EXTENSION_KEY, isHomol } from '../appVariant'
 import { CHROME_EXTENSION_ID } from './extensionId'
-import { installExtensionFiles, openChromeExtensionsPage, readManifestVersion } from './install'
+import {
+  installExtensionFiles,
+  openChromeExtensionsPage,
+  readManifestVersion,
+  type ExtensionIdentity
+} from './install'
 import { CHROME_BRIDGE_PORTS } from './protocol'
 import { ChromeBridge } from './server'
 import { setChromeBridge } from './state'
@@ -35,8 +41,26 @@ async function ensureToken(): Promise<string> {
   return token
 }
 
+/** Na variante Homol a extensão instalada ganha outra key (outro ID) e outro nome,
+ *  para conviver no mesmo Chrome com a do app principal. */
+const HOMOL_IDENTITY: ExtensionIdentity = {
+  key: HOMOL_CHROME_EXTENSION_KEY,
+  name: 'Agent Code Homol — Controle do Chrome',
+  shortName: 'Agent Code Homol'
+}
+
+function extensionId(): string {
+  return isHomol() ? HOMOL_CHROME_EXTENSION_ID : CHROME_EXTENSION_ID
+}
+
 function install(token: string): string {
-  return installExtensionFiles({ sourceDir: sourceDir(), targetDir: targetDir(), ports: CHROME_BRIDGE_PORTS, token })
+  return installExtensionFiles({
+    sourceDir: sourceDir(),
+    targetDir: targetDir(),
+    ports: CHROME_BRIDGE_PORTS,
+    token,
+    identity: isHomol() ? HOMOL_IDENTITY : undefined
+  })
 }
 
 /** Boot: garante o token, atualiza a pasta da extensão e sobe a ponte. Nunca lança. */
@@ -45,7 +69,7 @@ export async function startChromeBridge(onStatus: (status: ChromeBridgeStatus) =
     const token = await ensureToken()
     install(token)
     if (bridge) return
-    bridge = new ChromeBridge({ extensionId: CHROME_EXTENSION_ID, token, version: readManifestVersion(sourceDir()) })
+    bridge = new ChromeBridge({ extensionId: extensionId(), token, version: readManifestVersion(sourceDir()) })
     bridge.on('status', onStatus)
     setChromeBridge(bridge)
     await bridge.start()

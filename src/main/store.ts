@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
+import { variantProfile } from './appVariant'
 import { devDataDir } from './devDataDir'
 import { migrateLegacyStorage, moveSyncData } from './storageMigration'
 
@@ -29,15 +30,16 @@ import { migrateLegacyStorage, moveSyncData } from './storageMigration'
  * holding a handle between operations.
  */
 
-const APP_DIRNAME = 'agent-code'
-const POINTER_DIR = join(homedir(), '.agent-code')
-const POINTER_FILE = join(POINTER_DIR, 'location.json')
+// Na variante Homol: `agent-code-homol` e `~/.agent-code-homol` (appVariant.ts).
+// Lidos na avaliação, depois de devDataDirBoot.ts ter fixado a variante.
+const APP_DIRNAME = variantProfile().dirName
+const POINTER_NAME = variantProfile().homeDirName
 
 /** O ponteiro da pasta de dados; numa instância isolada de desenvolvimento
  *  (`devDataDir`), dentro dela — nunca o `~/.agent-code` real. */
 function pointerPaths(): { dir: string; file: string } {
-  const dev = devDataDir()
-  return dev ? { dir: join(dev, '.agent-code'), file: join(dev, '.agent-code', 'location.json') } : { dir: POINTER_DIR, file: POINTER_FILE }
+  const dir = join(devDataDir() ?? homedir(), POINTER_NAME)
+  return { dir, file: join(dir, 'location.json') }
 }
 /** Name of the (legacy, still-global) db: config/token/usage-limits — and, until
  *  migrated, the old single-blob conversations key. Exported so `projectStore.ts`

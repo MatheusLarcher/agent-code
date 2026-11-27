@@ -1,6 +1,48 @@
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import { build as viteBuild, type Plugin } from 'vite'
+
+/**
+ * Preload do <webview> da aba Preview (o seletor de elementos) em CommonJS:
+ * out/preload/previewInspector.cjs, irmão do index.mjs. Fica fora do input do
+ * preload porque o electron-vite força ESM em todas as entradas (package.json
+ * "type": "module") e um build com dois formatos geraria cada entrada duas vezes.
+ * Aqui é um build à parte, depois de cada escrita do preload (inclusive no dev):
+ * um arquivo só, sem chunks compartilhados com o index.mjs, electron externo.
+ * O main o resolve com join(import.meta.dirname, '../preload/previewInspector.cjs').
+ */
+function previewInspectorCjs(): Plugin {
+  let outDir = resolve('out/preload')
+  return {
+    name: 'agent-code:preview-inspector-cjs',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    async writeBundle() {
+      await viteBuild({
+        configFile: false,
+        root: resolve('.'),
+        publicDir: false,
+        logLevel: 'warn',
+        build: {
+          outDir,
+          emptyOutDir: false,
+          minify: false,
+          sourcemap: false,
+          target: 'chrome120',
+          lib: {
+            entry: resolve('src/preload/previewInspector/index.ts'),
+            formats: ['cjs'],
+            fileName: () => 'previewInspector.cjs'
+          },
+          rollupOptions: { external: ['electron'] }
+        }
+      })
+    }
+  }
+}
 
 export default defineConfig({
   main: {
@@ -40,7 +82,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), previewInspectorCjs()],
     build: {
       rollupOptions: {
         input: { index: resolve('src/preload/index.ts') }

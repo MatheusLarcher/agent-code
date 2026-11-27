@@ -14,6 +14,7 @@ vi.mock('../persistence/kvFacade', () => ({
 import { SecretVault, VAULT_FILENAME } from './secretVault'
 import { createVaultCipher } from './vaultKey'
 import { VAULT_MIRROR_KEY, mirrorVaultToDatabase, restoreVaultFromDatabase } from './vaultMirror'
+import { deriveKey, wrappedSalt } from './vaultPassphrase'
 
 const roots: string[] = []
 beforeEach(() => db.clear())
@@ -138,5 +139,34 @@ describe('espelho do cofre no banco — nenhuma senha se perde na migração', (
   it('sem cofre em disco e sem espelho, não inventa arquivo', async () => {
     const { file } = machine()
     expect(await restoreVaultFromDatabase(file)).toBe('no-mirror')
+  })
+})
+
+describe('frase-senha do cofre com o banco na nuvem (D18)', () => {
+  const k = deriveKey('frase-senha-de-teste-longa')
+
+  it('nuvem sem frase-senha: a chave não vai para o banco, e a cópia antiga em claro some', async () => {
+    const origem = machine()
+    await origem.vault.put('vps', 'senha-da-vps')
+    await mirrorVaultToDatabase(origem.file) // banco local: cópia em claro
+    expect(db.get(VAULT_MIRROR_KEY)).toContain('"key"')
+    await mirrorVaultToDatabase(origem.file, { cloud: true, key: null })
+    expect(db.get(VAULT_MIRROR_KEY)).toBe('')
+  })
+
+  it('com frase-senha vai embrulhado (sem a chave em claro) e outro PC abre com a mesma frase', async () => {
+    const origem = machine()
+    await origem.vault.put('vps', 'senha-da-vps')
+    await mirrorVaultToDatabase(origem.file, { cloud: true, key: k })
+    const noBanco = db.get(VAULT_MIRROR_KEY)!
+    expect(noBanco).not.toContain('"key"')
+    expect(noBanco).not.toContain('senha-da-vps')
+
+    const destino = machine()
+    expect(await restoreVaultFromDatabase(destino.file)).toBe('needs-passphrase')
+    expect(await restoreVaultFromDatabase(destino.file, deriveKey('frase errada qualquer', k.salt).key)).toBe('needs-passphrase')
+    const mesma = deriveKey('frase-senha-de-teste-longa', wrappedSalt(noBanco)!)
+    expect(await restoreVaultFromDatabase(destino.file, mesma.key)).toBe('restored')
+    expect(await reopen(destino.dir).get('vps')).toBe('senha-da-vps')
   })
 })

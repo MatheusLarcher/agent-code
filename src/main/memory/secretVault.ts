@@ -4,6 +4,7 @@ import { constants, lstatSync, mkdirSync, openSync, closeSync, fstatSync, readFi
   unlinkSync } from 'node:fs'
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path'
 import type { SecureStorageAdapter } from '../persistence/bootstrapStore'
+import { isSystemSymlink } from './memoryPaths'
 
 /** Nome do arquivo do cofre. Contrato com quem monta o caminho. */
 export const VAULT_FILENAME = 'secret-vault.json'
@@ -200,6 +201,7 @@ export class SecretVault {
         mkdirSync(current, { mode: 0o700 })
         stat = lstatSync(current)
       }
+      if (stat.isSymbolicLink() && isSystemSymlink(current)) continue
       if (stat.isSymbolicLink() || !stat.isDirectory()) throw new SecretVaultError('UNSAFE_PATH')
     }
     return true

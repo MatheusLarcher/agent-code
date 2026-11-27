@@ -7,8 +7,8 @@
  * - Ollama, DeepSeek e Kimi: cola a API key e grava a config (`<provedor>.enabled` + chave);
  *   a do Kimi passa antes pelo "Testar conexão" (mesmo do Configurações).
  *
- * "Cancelar" não mata o login do navegador (o fluxo existente não tem cancelar):
- * só devolve o card ao início e ignora o resultado que chegar depois.
+ * "Cancelar" encerra o login do Claude em andamento (o processo do CLI) e devolve o
+ * card ao início; o do GPT não tem cancelar, e o resultado que chegar depois é ignorado.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ProvidersStatus } from '@shared/ipc'
@@ -107,6 +107,7 @@ export function ConnectAccountCard({ status, onConnected, compact }: Props): JSX
 
   const cancel = (): void => {
     attempt.current += 1
+    if (phase.kind === 'waiting' && phase.provider === 'claude') void window.api.authLoginCancel?.().catch(() => undefined)
     setPhase({ kind: 'idle' })
     notify('aviso', 'Login cancelado. Se o navegador ainda estiver aberto, pode fechá-lo.')
   }

@@ -1,6 +1,7 @@
 import type { BackgroundTask, ChatEvent, QueuedAfterInterrupt } from '@shared/ipc'
 import type { CentralState } from '@shared/central'
 import type { BubbleMedia, DraftMedia } from './inlineMedia/inlineAttachments'
+import type { BubbleElement } from './components/elementPick/elementToken'
 
 /** A user message, rendered on the right side of the chat. */
 export type UserMessage = {
@@ -14,6 +15,8 @@ export type UserMessage = {
   /** Anexos postos no meio do texto: a posição N-1 diz onde está o `{{midia:N}}`
    *  de `text` (imagem i de `images` ou arquivo i de `files`). Ausente = bolha antiga. */
   media?: BubbleMedia[]
+  /** Elementos de página citados como "[elemento N]" em `text` (o chip e a dica da bolha). */
+  elements?: BubbleElement[]
   /** Set when this message's turn failed (LLM/session error). The message stays
    *  in the chat showing this error and a "Tentar de novo" button, so a typed
    *  message is never lost even when the model errors. */

@@ -51,7 +51,7 @@ export function servidorSuporteDaConversa(convId: string): McpServerConfig {
 }
 
 /** A sessão do agente de uma conversa se liga ao suporte (ver sessaoMcp.ts). */
-export function ligarSessaoDoAgente(deps: Pick<LigacaoDeps, 'convId' | 'base' | 'consulta' | 'aoFalhar'>): LigacaoSuporte {
+export function ligarSessaoDoAgente(deps: Pick<LigacaoDeps, 'convId' | 'base' | 'consulta' | 'aoFalhar' | 'extras'>): LigacaoSuporte {
   return ligarSuporteNaConversa({
     ...deps,
     servico: suporteRemoto(),

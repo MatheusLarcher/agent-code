@@ -82,8 +82,27 @@ async function runSession(opts: { model: string; env: NodeJS.ProcessEnv; cwd: st
 /** Linhas que descrevem o modelo (identidade verdadeira, decisão do usuário). */
 const IDENTITY_LINES = [/^.*You are powered by the model.*$/gm, /^.*Co-Authored-By: .*$/gm]
 
+/**
+ * Linhas que o PRÓPRIO CLI embutido decide por modelo, sem passar pelo app: a
+ * paridade existe para pegar divergência do lado do app (env, roteador,
+ * append), então estas saem dos dois lados. Lista explícita e estreita — uma
+ * linha nova ou diferente fora daqui continua falhando.
+ * - `<total_tokens>N tokens left</total_tokens>`: lembrete interno do CLI
+ *   (`totalTokensReminder`), ligado só para modelos não Claude; vai no system e
+ *   no lembrete de contexto da 1ª mensagem.
+ * - "Do build original games… Don't build a recreation…": política que o CLI só
+ *   põe no prompt de modelos Claude.
+ * Cada linha sai junto com o separador que a precede (linha em branco ou
+ * quebra), para não deixar uma linha vazia sobrando só de um lado.
+ */
+const CLI_OWNED_LINES = [
+  /(?:\n\n|\n|^)<total_tokens>(?:\d+|Infinite) tokens left<\/total_tokens>(?=\n|$)/g,
+  /(?:\n\n|\n|^)Do build original games, [^\n]*Don't build a recreation of a specific existing game[^\n]*(?=\n|$)/g
+]
+
 function normalizeText(text: string): string {
   let t = text
+  for (const re of CLI_OWNED_LINES) t = t.replace(re, '')
   for (const re of IDENTITY_LINES) t = t.replace(re, '<identidade do modelo>')
   return t
 }

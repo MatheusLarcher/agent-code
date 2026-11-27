@@ -50,6 +50,10 @@ export interface AppUpdateServiceDeps {
   onChange: (state: AppUpdateState) => void
   /** Só em desenvolvimento com AGENT_CODE_DEV_UPDATE_FEED=1 (devUpdateFeed.ts). */
   devFeedConfigPath?: string | null
+  /** Atualização só manual: a frase de onde baixar. Com ela, nenhuma verificação é feita
+   *  (nem a automática nem o "Verificar agora") — a Homol sai de um repositório privado,
+   *  e o feed do GitHub responde 404 sem login. */
+  manual?: string | null
   now?: () => Date
   firstCheckDelayMs?: number
   checkIntervalMs?: number
@@ -137,7 +141,8 @@ export class AppUpdateService {
       checkedAt: this.checkedAt,
       error: this.error,
       canInstallNow: this.phase === 'pronta' && !blockedBy,
-      blockedBy
+      blockedBy,
+      ...(this.deps.manual ? { manual: this.deps.manual } : {})
     }
   }
 
@@ -185,6 +190,10 @@ export class AppUpdateService {
   }
 
   private async check(origin: CheckOrigin): Promise<AppUpdateState> {
+    if (this.deps.manual) {
+      this.log(`verificação ${origin} ignorada: atualização manual`)
+      return this.snapshot()
+    }
     if (this.phase === 'verificando' || this.phase === 'baixando' || this.phase === 'agendada' || this.phase === 'instalando') {
       this.log(`verificação ${origin} ignorada: ${this.phase}`)
       return this.snapshot()

@@ -1,7 +1,8 @@
+import { SessionTiming } from './sessionTiming'
 import { query, type FastModeDisabledReason, type FastModeState, type McpServerConfig, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
 import { fastModeNotice } from './fastModeNotice'
 import { AsyncQueue } from './asyncQueue'
-import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT, READ_PDF_DENY_REASON } from './appTools'
+import { createAppMcpServer, APP_CALL_HINT, APP_PRINT_HINT, APP_RESTART_HINT, READ_PDF_DENY_REASON, ENABLE_REA_TOOL, ENABLE_ANDROID_TOOL } from './appTools'
 import { cloudToolDeps, runCloudTool } from './cloudTool'
 import { CallIds, emitOfficeCall } from './officeCallRuntime'
 import { taskListKey } from './board/boardModel'
@@ -28,6 +29,7 @@ import { composeRequestContext, composeUserPrompt } from './promptEnvelope'
 import { presenceRemove, presenceSnapshot, presenceUpdate, recentTopics, renderCrossConversation, renderTopics, renderWorkingNow } from './crossConversation'
 import type { BrowserController } from './browserController'
 import { createBrowserMcpServer } from './browserTools'
+import { withoutUserSettings } from './devHooks'
 import { createAndroidMcpServer } from './android/androidTools'
 import { androidSessionFor } from './android/androidSession'
 import { createWindowsControlMcpServer, WINDOWS_CONTROL_HINT } from './windowsControl/tools'
@@ -36,7 +38,7 @@ import { createChromeMcpServer } from './chromeBridge/tools'
 import { reaMcpConfig } from './reaMcp'
 import { ghidraPreparer } from './ghidra/ghidraEnv'
 import { chromeBridge, chromeTabMemory } from './chromeBridge/state'
-import { CHROME_CONTROL_HINT } from './chromeBridge/hint'
+import { CHROME_CONTROL_HINT, CHROME_ENABLED_NOTE } from './chromeBridge/hint'
 import { CHROME_DISABLED_MESSAGE, chromeGateDecision } from './chromeBridge/gate'
 import { SUPORTE_SERVIDOR_INTERNO } from '../shared/suporteRemoto'
 import { remotoGateDecision, remotoPreToolDecision } from './suporteRemoto/gate'
@@ -57,7 +59,9 @@ import { sessionDeadlineNotice } from './handoffTracking/handoffDeadlineHook'
 import { activeScrumMaster } from './scrum/scrumRuntime'
 import { noteScrumAgentText } from './scrum/scrumFeed'
 import { activeScopesFor, writeScopeDenial, type ScopedTask } from './tasks/writeScopeGuard'
-import { newPlanGateState, notePlanTool, notePlanTurn, planGateDenial } from './board/planGate'
+import { newPlanGateState, notePlanTool, notePlanTurn, planGateReminder } from './board/planGate'
+import { newVisualGateState, noteVisualTurn, visualGateReminder } from './board/visualGate'
+import { runAsAdmin } from './adminRun/adminRun'
 import { buildSpecialistAgents } from './agents/specialists'
 import { TASKS_HINT } from './agents/tasksHint'
 import { AGENT_RULES_HINT } from './agents/agentRules'
@@ -82,10 +86,11 @@ import {
   memoryCatalogFilesystemVersion,
   renderMemoryCatalogUpdate,
   buildDynamicMemoryContext,
+  assembleMemories,
   type MemoryCatalogSnapshot
 } from './memoryIndex'
 import { selectMemoriesWithTypeSafe, type MemorySelection } from './typesafe'
-import { chooseTurnMemories, InjectedMemoryLedger, selectMemoriesWithHaiku } from './memorySelectionHaiku'
+import { chooseTurnMemories, HAIKU_MEMORY_MAX, HAIKU_MEMORY_MAX_CHARS, InjectedMemoryLedger, selectMemoriesWithHaiku } from './memorySelectionHaiku'
 import { memorySelectorUsesTypeSafe, subagentMemoryInput } from './memory/memorySelector'
 import { ConversationDigest } from './memory/conversationDigest'
 import { loadConversationSeed } from './memory/conversationSeed'
@@ -143,74 +148,18 @@ import { imageContentBlocks } from '../shared/inlineMedia'
 import { storageLifecycle } from './persistence/lifecycle'
 import type { AgentInputQueueRepository, ContextHistoryRepository, ProjectConversationCount, TokenUsageRepository } from './persistence/types'
 import { ContextCapture } from './contextSnapshot/capture'
+import { ANDROID_HINT, ANDROID_SHORT_HINT, BROWSER_HINT, DOWNLOAD_HINT } from './browser/hints'
 import { buildSecretsHintWithMask } from './contextSnapshot/secretsHint'
 import type { ContextTurnChanged } from '../shared/contextSnapshot'
 
 export const OPENAI_MAX_TURNS = 64
-const BROWSER_HINT = `You have a web browser available through the "browser" MCP tools
-(browser_navigate, browser_form_fields, browser_run_steps, browser_snapshot, browser_screenshot,
-browser_click, browser_type, browser_get_text, browser_evaluate, browser_back, browser_reload).
-When the user asks you to look something up on the web, open a site, or interact with a page,
-use these tools — the pages open in a real Google Chrome window on the user's PC, which the
-user can watch (and use) while you work.
+const USER_ANSWERED_PREFIX = 'The user answered your question(s):'
 
-To interact with a page (forms, clicks, choices): first browser_form_fields, then ONE
-browser_run_steps with all the steps, targeting by label/text; come back to the model only if
-it stops (continue from the state it returns). Use browser_snapshot/browser_screenshot as the
-fallback: canvas pages, empty form_fields or an ambiguous result.
-
-That window has TABS, and they are real Chrome tabs. There is always exactly one ACTIVE tab,
-and every browser action targets it. Each tab has a name like "web - <site>". Tab tools:
-browser_list_tabs (see all tabs and which is active), browser_new_tab (open another tab),
-browser_select_tab (switch the active tab by id), browser_close_tab. The user may open or
-close tabs in that window too — browser_list_tabs always shows the current ones.
-
-Default to REUSING the current tab: use browser_navigate to go elsewhere in the same tab.
-Only open a new tab when you truly need a second page side-by-side — do not open tabs
-needlessly. If you are unsure which tab you control, call browser_list_tabs or browser_snapshot
-(both report the active tab name).`
-
-const ANDROID_HINT = `You can also build and test ANDROID apps through the "android" MCP tools.
-When the user asks to create an Android app, generate an APK, or test something on Android,
-this is the path — do NOT tell them it's unsupported.
-
-Toolchain: the JDK + Android SDK + emulator are installed on demand by "android_setup"
-(idempotent; only downloads what's missing — it can take a while the first time). Run it once
-before building or previewing if the tools aren't present yet.
-
-Building an APK: scaffold the project (for a WEB app, wrap it with Capacitor and build its
-android/ folder; for a native app, a Kotlin/Gradle project), then call "android_build_apk"
-with the Gradle project root (the folder containing gradlew). Then "android_install_run" with
-the resulting .apk installs and launches it on the device.
-
-Testing on a device: "android_open_preview" boots a device/emulator (a connected phone if any,
-otherwise the default AVD). The emulator opens in its OWN WINDOW on the user's PC, where the
-user watches and can touch it — nothing is drawn inside this app. You see the screen only by
-calling android_screenshot; interact with android_tap / android_swipe / android_type /
-android_key (taps use normalized 0..1 coordinates that match the screenshot).
-
-Screen sizes: the emulator starts at its own resolution. To test the app on different screens,
-use "android_list_device_models" to see the presets, then "android_set_device" with a modelId
-(e.g. "s24", "pixel-8-pro", "tab-s9") or a custom width/height — it resizes the emulator
-screen. Test responsiveness across a few phone and tablet sizes.`
-
-// Lets the model hand the user a downloadable file straight from the chat (works
-// on the desktop AND on the Android remote app). The renderer turns the marker
-// below into a "Baixar" button; without it, a built artifact like an APK has no
-// way to reach the phone.
-const DOWNLOAD_HINT = `When the user asks you to GIVE or SEND them a file they can download — an APK,
-a .zip, a PDF, an exported document, an image, a build artifact, etc. — do not just print the
-path. Emit a download marker on its OWN line so a "Baixar" (download) button appears in the chat
-(it works both on the desktop and on the phone app):
-
-[[download:ABSOLUTE_PATH]]
-
-Example: [[download:C:\\Users\\me\\proj\\android\\app\\build\\outputs\\apk\\debug\\app-debug.apk]]
-
-Rules: use the ABSOLUTE path to the finished file that already exists on disk; emit one marker per
-file; only do this for real deliverable files the user asked for (NOT for source code you edited
-in the project). After building something like an APK, locate the resulting file and emit its
-marker so the user can download it right here.`
+/** Projeto Android (ou Capacitor com android/) na pasta: as ferramentas nascem ligadas. */
+function isAndroidProject(cwd: string | undefined): boolean {
+  if (!cwd) return false
+  return ['android', 'gradlew', 'build.gradle', 'build.gradle.kts', 'AndroidManifest.xml'].some((name) => existsSync(join(cwd, name)))
+}
 
 /** De onde a mensagem do usuário partiu: o próprio PC ou um celular pareado na
  *  ponte LAN (`remote/remoteServer.ts`). */
@@ -716,12 +665,22 @@ export class AgentSession {
   private readonly llmNodeInputPreview = new Map<string, string>()
   /** Calls emitted during the current turn, retained for terminal usage reconciliation. */
   private readonly turnLlmCalls = new Map<string, { nodeId: string; seq: number; model: string; tokens: TokenUsage; persistentId?: string }>()
+  /** message.id já gravados no turno: os blocos seguintes da mesma resposta não somam de novo. */
+  private readonly turnLlmMessageIds = new Set<string>()
   /** Version of the complete persistent-memory catalog already loaded into this session. */
   private memoryCatalogVersion = ''
   /** Content signature checked before materializing a replacement catalog. */
   private memoryFilesystemVersion = ''
   /** Skills desta sessão: kit no cache, catálogo, registro nativo e níveis. */
   private readonly skills: SessionSkillCatalog
+  private timing: SessionTiming | null = null
+  /** Servidores MCP com que a sessão subiu: o setMcpServers do rea os repete (os internos não podem cair). */
+  private mcpServersAtStart: Record<string, McpServerConfig> = {}
+  private reaEnabled = false
+  /** Servidores ligados depois da subida (rea, android): toda troca repete todos. */
+  private lateServers: Record<string, McpServerConfig> = {}
+  /** AskUserQuestion respondidas pelo usuário: o SDK marca o tool_result como erro. */
+  private answeredQuestionIds = new Set<string>()
   /** Signature of the last projects-on-this-machine list delivered to the
    *  model. Recomputed before every user dispatch; unchanged since last turn
    *  means nothing is re-sent (same "only when it changes" rule as memory/skills). */
@@ -863,7 +822,9 @@ export class AgentSession {
     this.llmNodeSeq.clear()
     this.llmNodeInputPreview.clear()
     this.turnLlmCalls.clear()
+    this.turnLlmMessageIds.clear()
     notePlanTurn(this.planGate)
+    noteVisualTurn(this.visualGate)
     this.markActivity()
     this.startStallWatch()
   }
@@ -876,9 +837,24 @@ export class AgentSession {
     return this.currentTurnId
   }
 
-  /** Estado da trava do plano, por sessão. `declared` atravessa turnos de
+  /** Estado do lembrete do plano, por sessão. `declared` atravessa turnos de
    *  propósito — ver `notePlanTurn`. */
   private readonly planGate = newPlanGateState()
+  /** Lembrete de conferir a tela (board/visualGate), por turno. */
+  private readonly visualGate = newVisualGateState()
+
+  /** O lembrete do plano (board/planGate) para anexar ao resultado de uma escrita.
+   *  Desligado no Agent Manager, que planeja e só escreve no _sandbox. */
+  private planReminderFor(toolName: string, agentId: string | null | undefined): string | null {
+    if (!planGateApplies(this.opts)) return null
+    return planGateReminder(this.planGate, toolName, {
+      // Grupo aninhado ausente (config antiga/parcial vinda do banco) cai no padrão.
+      enabled: loadConfig().board?.requirePlan ?? DEFAULT_CONFIG.board.requirePlan,
+      // `Boolean`: o SDK pode devolver `null` para a thread principal.
+      isSubagent: Boolean(agentId),
+      inTurn: this.turnActive
+    })
+  }
 
   /** Conversa de handoff (`opts.handoff`): o primeiro turno já terminou (result
    *  ou erro)? Até lá as skills de replanejamento são recusadas no gate.
@@ -1145,6 +1121,7 @@ export class AgentSession {
 
   async start(): Promise<boolean> {
     if (this.disposed) return false
+    this.timing = new SessionTiming(this.opts.convId)
     this.seedConversationDigest()
     // Handoff com "permitir tudo, exceto destrutivo" (o padrão) nasce com
     // "Permitir tudo", independente do toggle global que o renderer mandou; o
@@ -1153,9 +1130,10 @@ export class AgentSession {
 
     const cfg = loadConfig()
 
+    // Android: só nasce ligado em projeto Android; nos outros, o agente liga com app_ativar_android.
+    const androidAtStart = isAndroidProject(this.opts.cwd)
     const mcpServers: Record<string, McpServerConfig> = {
       browser: createBrowserMcpServer(this.browser),
-      android: createAndroidMcpServer(androidSessionFor(this.opts.convId)),
       // Em TODA sessão (o app_chamar_usuario); o app_restart só com o coordenador e fora do Agent Manager.
       app: createAppMcpServer({
         restart: this.opts.planning ? undefined : this.restartRegistration?.request,
@@ -1177,23 +1155,30 @@ export class AgentSession {
         // Ghidra sob demanda para o rea; o Agent Manager não tem o rea. O rea guarda
         // "Ghidra ausente" enquanto vive: reconectar faz esta conversa já enxergá-lo.
         ghidra: this.opts.planning ? undefined : ghidraPreparer,
-        reconnectRea: this.opts.planning ? undefined : async () => { await this.q?.reconnectMcpServer('rea') },
+        // Sem o rea ligado não há o que reiniciar: quando ligar, ele já sobe vendo o Ghidra.
+        reconnectRea: this.opts.planning ? undefined : async () => { if (this.reaEnabled) await this.q?.reconnectMcpServer('rea') },
+        enableRea: this.opts.planning ? undefined : () => this.enableRea(),
+        enableAndroid: this.opts.planning || androidAtStart ? undefined : () => this.enableAndroid(),
         // DeepSeek e Kimi não aceitam PDF (sonda de 26/10: bloco `document` → 400):
         // o Read de .pdf é negado no PreToolUse e cai aqui.
-        readPdf: isDeepSeekModel(this.opts.model) || isKimiModel(this.opts.model)
+        readPdf: isDeepSeekModel(this.opts.model) || isKimiModel(this.opts.model),
+        // Elevado (UAC): pede confirmação no gate como qualquer ferramenta; fora do Agent Manager.
+        runAsAdmin: this.opts.planning ? undefined : (input) => runAsAdmin(input)
       })
     }
+    if (androidAtStart) mcpServers.android = createAndroidMcpServer(androidSessionFor(this.opts.convId))
     if (process.platform === 'win32') {
       mcpServers.windows = createWindowsControlMcpServer(this.windowsControlScope)
     }
-    mcpServers.chrome = createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId))
+    // Chrome do usuário só com a permissão ligada; ligada no meio da conversa, entra no send().
+    const chromeOn = cfg.chromeControlEnabled === true
+    if (chromeOn) mcpServers.chrome = createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId))
     // Suporte remoto a clientes: conectar/status/desconectar, só com o recurso ativado e fora
     // do Agent Manager. As ferramentas do PC do cliente (`remoto`) entram depois de conectar.
     const suporteNaSessao = !this.opts.planning && suporteAtivado()
     if (suporteNaSessao) mcpServers[SUPORTE_SERVIDOR_INTERNO] = servidorSuporteDaConversa(this.opts.convId)
-    // REA embutido (reaMcp.ts); o planejamento o filtra (planningSession.ts).
-    const rea = reaMcpConfig()
-    if (rea) mcpServers.rea = rea
+    // REA embutido (reaMcp.ts): NÃO nasce ligado — são ~170 nomes de ferramenta em toda
+    // conversa (medido na bateria). O agente liga com app_ativar_engenharia_reversa.
     // Tarefas agendadas e avisos (tarefas/avisosMcp.ts): da conversa normal, com o
     // convId dela — a tarefa pertence à conversa onde foi pedida. O Agent Manager não tem.
     const tarefas = tarefasServico()
@@ -1257,7 +1242,9 @@ export class AgentSession {
     // "lembra disso" saves into the cache folder and recall works across chats.
     const cacheInfo = getCacheInfo()
     // No worker do app (skills/skillSync.ts): o thread principal fica livre enquanto copia.
+    this.timing?.phase('mcpServers')
     await this.skills.syncManaged(cacheInfo.dir, cacheInfo.skillsDir)
+    this.timing?.phase('skillsSync')
     const memoriesDir = cacheInfo.memoriesDir
     const cacheSkillsDir = cacheInfo.skillsDir
     // The CLI (driven via SDK) only discovers skills under <cwd>/.claude/skills and
@@ -1284,7 +1271,7 @@ export class AgentSession {
     if (highSkills.warning) this.emit({ kind: 'status', id: nextId(), text: highSkills.warning })
     if (skillStart.mcpServer) mcpServers[SKILLS_MCP_SERVER] = skillStart.mcpServer
     const skillRoots = skillStart.roots
-    let append = `${BROWSER_HINT}\n\n${ANDROID_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
+    let append = `${BROWSER_HINT}\n\n${isAndroidProject(this.opts.cwd) ? ANDROID_HINT : ANDROID_SHORT_HINT}\n\n${DOWNLOAD_HINT}\n\n${buildMemoryHint(memoriesDir)}`
     if (memorySnapshot) append += `\n\n${memorySnapshot.catalog}`
     append += `\n\n${APP_RESTART_HINT}\n\n${APP_CALL_HINT}\n\n${APP_PRINT_HINT}`
     // Regras do app para todos os usuários (resources/agent.md).
@@ -1293,10 +1280,12 @@ export class AgentSession {
     // Senhas em texto puro no prompt, só com o interruptor ligado. Vai no system
     // prompt, e não anexado a cada mensagem, para a senha aparecer UMA vez por
     // sessão em vez de ser recopiada em todo turno do histórico.
+    this.timing?.phase('memory')
     const secretsHint = await buildSecretsHintWithMask()
+    this.timing?.phase('secrets')
     append += secretsHint.text
     if (process.platform === 'win32') append += `\n\n${WINDOWS_CONTROL_HINT}`
-    append += `\n\n${CHROME_CONTROL_HINT}`
+    if (chromeOn) append += `\n\n${CHROME_CONTROL_HINT}`
     if (suporteNaSessao) append += `\n\n${REMOTO_HINT}`
     if (highSkills.text) append += `\n\n${highSkills.text}`
 
@@ -1487,7 +1476,7 @@ export class AgentSession {
       executable: 'node',
       includePartialMessages: true,
       permissionMode: 'default',
-      settingSources: ['user', 'project', 'local'],
+      settingSources: withoutUserSettings() ? ['project', 'local'] : ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code', append },
       // O time de especialistas. Cada um só entra com o serviço de que depende
       // no ar — anunciar um crítico sem registro de tarefas seria oferecer ao
@@ -1630,7 +1619,9 @@ export class AgentSession {
             if (!input.agent_id) this.stageCompaction?.observeTool(input.tool_name, input.tool_input, input.tool_response)
             // Handoff: o aviso de prazo da etapa (80% e 100%, uma vez por marco).
             // Só texto anexado — nunca interrompe; null no resto (handoffDeadlineHook.ts).
-            const notice = await sessionDeadlineNotice(this.opts, input.agent_id)
+            const notice = [await sessionDeadlineNotice(this.opts, input.agent_id), this.planReminderFor(input.tool_name, input.agent_id),
+              visualGateReminder(this.visualGate, input.tool_name, input.tool_input, { isSubagent: Boolean(input.agent_id), inTurn: this.turnActive })]
+              .filter(Boolean).join('\n\n')
             if (notice) return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: notice } }
           }
           return {}
@@ -1673,6 +1664,8 @@ export class AgentSession {
         if (result.behavior === 'deny' && options?.toolUseID) {
           this.restartOpaqueCalls.delete(options.toolUseID)
           this.toolsInFlight.delete(options.toolUseID)
+          // A resposta do usuário volta como deny: o tool_result dela não é erro.
+          if (toolName === 'AskUserQuestion' && result.message.startsWith(USER_ANSWERED_PREFIX)) this.answeredQuestionIds.add(options.toolUseID)
         }
         if (result.behavior === 'deny') suporteRemoto().registrarDecisao(this.opts.convId, toolName, input, options?.toolUseID, false)
         return result
@@ -1691,7 +1684,7 @@ export class AgentSession {
           memorySnapshot?.catalog ?? '',
           APP_CALL_HINT,
           BROWSER_HINT,
-          CHROME_CONTROL_HINT,
+          chromeOn ? CHROME_CONTROL_HINT : '',
           process.platform === 'win32' ? WINDOWS_CONTROL_HINT : '',
           highSkills.text
         ],
@@ -1703,8 +1696,11 @@ export class AgentSession {
     const sentAppend = typeof options.systemPrompt === 'object' && !Array.isArray(options.systemPrompt) && options.systemPrompt?.type === 'preset'
       ? options.systemPrompt.append ?? '' : ''
     this.contextCapture.configure(sentAppend, secretsHint.secrets, options.agents ?? {})
+    this.timing?.phase('options')
+    this.mcpServersAtStart = { ...(options.mcpServers ?? {}) }
     try {
       this.q = query({ prompt: this.input, options })
+      this.timing?.phase('query')
     } catch (err) {
       this.emit({ kind: 'error', id: nextId(), text: `Agent failed to start: ${String(err)}` })
       return false
@@ -1719,7 +1715,8 @@ export class AgentSession {
           convId: this.opts.convId,
           base: options.mcpServers ?? {},
           consulta: () => this.q,
-          aoFalhar: (text) => this.emit({ kind: 'status', id: nextId(), text })
+          aoFalhar: (text) => this.emit({ kind: 'status', id: nextId(), text }),
+          extras: () => this.lateServers
         })
     void this.suporteLigacao?.aplicar()
     // Processing rows left by a crashed/restarted session is safe: the queue
@@ -1731,6 +1728,60 @@ export class AgentSession {
         .catch((error) => console.warn('[agent-input-queue] recovery failed:', error))
     }
     return true
+  }
+
+  /**
+   * Liga um servidor MCP com a sessão aberta. O setMcpServers SUBSTITUI a lista: repete os da
+   * subida (os internos não podem sair), os já ligados depois e o `suporte`/`remoto` do suporte
+   * remoto, que entram e saem por fora (suporteRemoto/sessaoMcp.ts) — na mesma fila dele.
+   * Devolve o erro do SDK para esse servidor, ou '' se ligou.
+   */
+  private ligarServidorTardio(nome: string, servidor: McpServerConfig): Promise<string> {
+    const troca = async (): Promise<string> => {
+      if (!this.q) return 'A sessão ainda não subiu; tente de novo.'
+      const { [SUPORTE_SERVIDOR_INTERNO]: suporteDaSubida, ...daSubida } = this.mcpServersAtStart
+      const doSuporte = this.suporteLigacao?.servidores() ?? (suporteDaSubida ? { [SUPORTE_SERVIDOR_INTERNO]: suporteDaSubida } : {})
+      const result = await this.q.setMcpServers({ ...daSubida, ...this.lateServers, ...doSuporte, [nome]: servidor })
+      const error = result.errors?.[nome]
+      if (error) return error
+      this.lateServers[nome] = servidor
+      return ''
+    }
+    return this.suporteLigacao ? this.suporteLigacao.naFila(troca) : troca()
+  }
+
+  /** Liga o MCP "rea" nesta sessão (app_ativar_engenharia_reversa). */
+  private async enableRea(): Promise<string> {
+    if (this.reaEnabled) return 'O rea já está ligado nesta conversa: procure as ferramentas com ToolSearch (mcp__rea__...).'
+    const rea = reaMcpConfig()
+    if (!rea) return 'O rea não está instalado nesta cópia do app.'
+    if (!this.q) return 'A sessão ainda não subiu; tente de novo.'
+    const error = await this.ligarServidorTardio('rea', rea)
+    if (error) return `O rea não subiu: ${error}`
+    this.reaEnabled = true
+    return 'Rea ligado nesta conversa. Procure as ferramentas com ToolSearch (mcp__rea__...), por exemplo "binary_session".'
+  }
+
+  /** Liga o MCP "android" nesta sessão (app_ativar_android). */
+  private async enableAndroid(): Promise<string> {
+    if (this.lateServers.android || this.mcpServersAtStart.android) return 'As ferramentas de Android já estão ligadas: procure com ToolSearch (mcp__android__...).'
+    if (!this.q) return 'A sessão ainda não subiu; tente de novo.'
+    const error = await this.ligarServidorTardio('android', createAndroidMcpServer(androidSessionFor(this.opts.convId)))
+    if (error) return `O Android não subiu: ${error}`
+    return `Android ligado nesta conversa. Procure as ferramentas com ToolSearch (mcp__android__...).\n\n${ANDROID_HINT}`
+  }
+
+  /** Permissão do Chrome ligada com a sessão aberta: entra antes da próxima mensagem. Desligada, o gate nega. */
+  private async enableChromeIfTurnedOn(): Promise<string> {
+    if (!this.q || loadConfig().chromeControlEnabled !== true) return ''
+    if (this.lateServers.chrome || this.mcpServersAtStart.chrome) return ''
+    try {
+      const error = await this.ligarServidorTardio('chrome', createChromeMcpServer(chromeBridge, chromeTabMemory(this.opts.convId)))
+      if (error) return ''
+    } catch {
+      return '' // tenta de novo na próxima mensagem
+    }
+    return CHROME_ENABLED_NOTE
   }
 
   private async drainPersistedInputs(): Promise<void> {
@@ -1862,6 +1913,7 @@ export class AgentSession {
     messageKind: AgentMessageKind = 'normal'
   ): Promise<void> {
     appRestart?.assertOpen()
+    this.timing?.turnStart()
     // "/compact [instruções]" é comando do CLI: ele só o reconhece com o texto
     // CRU no início da mensagem — com o carimbo de contexto na frente, chegava
     // ao modelo como texto comum. Vai sozinho, sem carimbo, catálogos nem nota
@@ -1878,13 +1930,38 @@ export class AgentSession {
     // (mirrorRepair.ts). Quem precisa do espelho verificado (troca de provedor,
     // retomada pelo banco) espera por ele lá.
     this.quotaRejected = false
+    // A escolha de memórias pelo Haiku (~3,5 s) só depende do texto: começa já,
+    // em paralelo com os catálogos e o contexto de outras conversas, e é
+    // esperada lá embaixo. UMA decisão por mensagem do usuário — não no hook de
+    // request, que roda outra vez a cada volta do loop de ferramentas.
+    const selectionTurn = ++this.memorySelectionTurn
+    const contextStamp = buildContextStamp(origin)
+    const useTypeSafe = await memorySelectorUsesTypeSafe()
+    const haikuChoice = useTypeSafe
+      ? null
+      : (async () => {
+          await this.awaitConversationSeed()
+          return chooseTurnMemories(getCacheInfo().memoriesDir, text, this.injectedMemories, (dir, query) =>
+            selectMemoriesWithHaiku(dir, query, {
+              env: claudeAccounts.envFor(this.opts.claudeAccountId),
+              conversation: (max) => this.conversationDigest.render(max),
+              context: contextStamp
+            })
+          )
+        })()
+    // Se um passo abaixo lançar antes do await, a rejeição não fica solta.
+    haikuChoice?.catch(() => undefined)
     const memoryCatalogUpdate = await this.refreshMemoriesIfChanged()
+    this.timing?.mark('memoryCatalog')
     const skillCatalogUpdate = await this.skills.refresh()
+    this.timing?.mark('skillCatalog')
     // `/nome` de skill de nível baixo (com a lista já atualizada): o CLI não a carrega.
     if (messageKind === 'normal') text = this.skills.rewriteCommand(text)
     const projectsCatalogUpdate = await this.refreshProjectsIfChanged()
+    this.timing?.mark('catalogs')
     if (messageKind === 'normal' && !this.disposed) presenceUpdate(this, this.opts.convId, this.opts.cwd, { question: text })
-    const othersUpdate = messageKind === 'normal' ? await this.crossConversationContext() : ''
+    const othersUpdate = [messageKind === 'normal' ? await this.crossConversationContext() : '', await this.enableChromeIfTurnedOn()].filter(Boolean).join('\n\n')
+    this.timing?.mark('otherConversations')
     this.providerContinuation = false
     const uuid = messageUuid || randomUUID()
     const receiptText = text.length > 500 ? `${text.slice(0, 500)}…` : text
@@ -1918,26 +1995,16 @@ export class AgentSession {
     // The complete docs outline is generated by live request hooks, not copied
     // into history or passed to vision relay. Relevant memories go in the
     // message (Haiku/lexical) or in the hook (TypeSafe) — see below.
-    const stamp = buildContextStamp(origin)
+    const stamp = contextStamp
     this.lastMessageOrigin = origin
     this.activeMemoryQuery = outText
-    // UMA decisão por mensagem do usuário. Disparada aqui, e não no hook de
-    // request, porque o hook roda outra vez a cada volta do loop de ferramentas.
-    const selectionTurn = ++this.memorySelectionTurn
     let relevantMemory = ''
-    if (!(await memorySelectorUsesTypeSafe())) {
+    if (haikuChoice) {
       // Modo Haiku (padrão): ele escolhe vendo a conversa (busca lexical se não
-      // decidir) e as memórias vão INTEIRAS na mensagem — até 75.000
-      // caracteres, que o hook (cortado em 10.000) não comporta. O hook leva só os docs.
-      await this.awaitConversationSeed()
-      const chosen =await chooseTurnMemories(getCacheInfo().memoriesDir, outText, this.injectedMemories, (dir, query) =>
-        selectMemoriesWithHaiku(dir, query, {
-          env: claudeAccounts.envFor(this.opts.claudeAccountId),
-          conversation: (max) => this.conversationDigest.render(max),
-          context: stamp
-        })
-      )
+      // decidir) e as memórias vão na mensagem; o hook leva só os docs.
+      const chosen = await haikuChoice
       relevantMemory = chosen.block
+      this.timing?.mark('memorySelection')
       this.activeMemorySelection = Promise.resolve({ block: '', relPaths: chosen.relPaths })
       if (selectionTurn === this.memorySelectionTurn) recordUsedMemories(this.opts.convId, chosen.relPaths)
     } else {
@@ -1955,8 +2022,19 @@ export class AgentSession {
           if (selectionTurn === this.memorySelectionTurn) {
             recordUsedMemories(this.opts.convId, selection?.relPaths ?? [])
             await this.warnMemorySelectorDown(selectionTurn, selection)
+            // Sem decisão: busca lexical pelo mesmo controle do "já enviado" da
+            // conversa — o hook fica no histórico, a memória repetida não volta.
+            if (!selection && selectionTurn === this.memorySelectionTurn) return chooseTurnMemories(getCacheInfo().memoriesDir, outText, this.injectedMemories, async () => null)
           }
-          return selection
+          if (!selection) return selection
+          // Com decisão: a mesma escolha, mas pelo controle do "já enviada" (e com
+          // as `sempre`) — o hook fica no histórico, e a memória repetida a cada
+          // mensagem só gastava contexto. Decisão vazia continua vazia.
+          const dir = getCacheInfo().memoriesDir
+          return chooseTurnMemories(dir, outText, this.injectedMemories, async () => ({
+            ...selection,
+            entries: assembleMemories(dir, selection.relPaths, HAIKU_MEMORY_MAX, HAIKU_MEMORY_MAX_CHARS).entries
+          }))
         })
     }
     // Depois da escolha: a mensagem atual vai à parte na pergunta ao Haiku, não
@@ -2014,6 +2092,7 @@ export class AgentSession {
     this.beginTurn()
     this.contextCapture.sent(uuid, text, outText, promptParts, cancelNote, images?.length ?? 0, false, messageKind)
     await this.enqueueInput(msg, uuid)
+    this.timing?.mark('enqueued')
   }
 
   /** `/compact` digitado: a mensagem crua, como turno próprio (ver send()). */
@@ -2249,7 +2328,7 @@ export class AgentSession {
       const lines = res.answers.map((a) => `- ${a.header || a.question}: ${a.selected.join(', ') || '(sem resposta)'}`)
       pending.resolve({
         behavior: 'deny',
-        message: `The user answered your question(s):\n${lines.join('\n')}`
+        message: `${USER_ANSWERED_PREFIX}\n${lines.join('\n')}`
       })
       return
     }
@@ -2274,6 +2353,7 @@ export class AgentSession {
         clearTimeout(pending.timer)
         pending.resolve({ behavior: 'allow', updatedInput: pending.input })
         this.pendingPermissions.delete(id)
+        this.onPermissionExpire(id) // fecha o modal: a tela não limpa mais a fila no fim do turno
       }
     }
   }
@@ -2382,9 +2462,10 @@ export class AgentSession {
     this.suporteLigacao = null
     this.stopTaskWatch?.()
     this.stopTaskWatch = null
-    for (const pending of this.pendingPermissions.values()) {
+    for (const [id, pending] of this.pendingPermissions) {
       clearTimeout(pending.timer)
       pending.resolve({ behavior: 'deny', message: 'Agent session was closed before permission was granted.' })
+      this.onPermissionExpire(id)
     }
     this.pendingPermissions.clear()
     this.q?.close()
@@ -2665,22 +2746,6 @@ ${lines}
     // No Agent Manager soma-se o escopo do _sandbox do planejamento.
     const scopeDenial = writeScopeDenial(sessionWriteScopes(this.opts, this.activeScopedTasks(agentId ?? null)), toolName, input)
     if (scopeDenial) return Promise.resolve({ behavior: 'deny', message: scopeDenial })
-    // A trava do quadro, também ANTES do bypassAll: "Permitir tudo" é o usuário
-    // confiando no modelo para executar, não dispensa de dizer o que vai fazer.
-    // Desligada no Agent Manager, que planeja e só escreve no _sandbox.
-    const planDenial = planGateApplies(this.opts) && planGateDenial(this.planGate, toolName, {
-      // Grupo aninhado ausente (config antiga/parcial vinda do banco) cai no
-      // padrão em vez de derrubar o gate — que roda em TODA chamada de
-      // ferramenta e levaria a conversa junto.
-      enabled: loadConfig().board?.requirePlan ?? DEFAULT_CONFIG.board.requirePlan,
-      // `Boolean`, não `!== undefined`: as linhas vizinhas normalizam com
-      // `agentId ?? null`, ou seja, o SDK pode devolver `null` para a thread
-      // principal — e aí `!== undefined` classificaria o agente principal como
-      // subagente e desligaria a trava inteira, sem sintoma nenhum.
-      isSubagent: Boolean(agentId),
-      inTurn: this.turnActive
-    })
-    if (planDenial) return Promise.resolve({ behavior: 'deny', message: planDenial })
     // O servidor MCP não recebe o agentID; o gate sim, e roda imediatamente
     // antes da ferramenta. É aqui que se sabe a quem o escopo vai pertencer.
     if (toolName === 'mcp__tasks__task_claim') this.claimingAgent = agentId ?? null
@@ -2697,6 +2762,8 @@ ${lines}
     // um modal aqui só ensinaria a clicar sem ler. As entrega_* da conversa de
     // handoff, pelo mesmo motivo: só gravam a estimativa do agente no banco.
     // As aviso_* idem: só gravam a tarefa da própria conversa no banco do app.
+    // Ligar o rea só disponibiliza as ferramentas dele (que seguem pedindo permissão).
+    if (toolName === `mcp__app__${ENABLE_REA_TOOL}` || toolName === `mcp__app__${ENABLE_ANDROID_TOOL}`) return Promise.resolve({ behavior: 'allow', updatedInput: input })
     if (toolName.startsWith('mcp__tasks__') || toolName.startsWith('mcp__avisos__') || entregaToolAutoAllowed(this.opts, toolName)) {
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
@@ -2711,7 +2778,7 @@ ${lines}
     // fazer o que não se desfaz. O detector nunca lança; o que não reconhece passa.
     if (destructiveCommandReason(toolName, input, this.opts.cwd)) {
       const id = nextId()
-      this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS })
+      this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS, ...(agentId ? { agentId } : {}) })
       return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve, true))
     }
     // No Agent Manager, o Bash só é liberado pelo "Permitir tudo": sem ele, vai
@@ -2732,7 +2799,7 @@ ${lines}
       return Promise.resolve({ behavior: 'allow', updatedInput: input })
     }
     const id = nextId()
-    this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS })
+    this.askPermission({ id, toolName, input, deadline: Date.now() + PERMISSION_TIMEOUT_MS, ...(agentId ? { agentId } : {}) })
     return new Promise<PermissionResult>((resolve) => this.registerPending(id, toolName, input, resolve))
   }
 
@@ -2795,6 +2862,7 @@ ${lines}
     switch (message.type) {
       case 'system':
         if (message.subtype === 'init') {
+          this.timing?.mark('cliInit')
           this.restartInitializing = false
           this.sdkInitSeen = true
           if (typeof message.session_id === 'string') this.cliSessionId = message.session_id
@@ -2925,6 +2993,10 @@ ${lines}
       case 'stream_event':
         // A resposta voltou a chegar: a espera da nova tentativa acabou.
         this.setApiRetry(null)
+        if (!message.parent_tool_use_id) {
+          this.timing?.mark('firstEvent')
+          if ((message.event as { type?: string }).type === 'content_block_delta') this.timing?.mark('firstDelta')
+        }
         this.noteTurnFrame(message)
         this.handleStreamEvent(message.event as RawStreamEvent, message.parent_tool_use_id ?? null)
         break
@@ -3012,6 +3084,7 @@ ${lines}
           fast_mode_state?: FastModeState
           fast_mode_disabled_reason?: FastModeDisabledReason
         }
+        this.timing?.turnEnd((message as { duration_api_ms?: number }).duration_api_ms)
         // Modo rápido pedido mas não servido (conta sem "uso extra", cooldown…):
         // diz o motivo em vez de deixar o toggle parecer ligado. Um aviso por motivo.
         if (fastModeTransport(this.opts.model) === 'anthropic-setting') {
@@ -3325,7 +3398,7 @@ ${lines}
           kind: 'tool-result',
           id: nextId(),
           toolUseId: raw.tool_use_id ?? '',
-          isError: Boolean(raw.is_error),
+          isError: Boolean(raw.is_error) && !this.answeredQuestionIds.delete(raw.tool_use_id ?? ''),
           text,
           parentToolUseId
         })
@@ -3348,14 +3421,23 @@ ${lines}
     cacheCreationInputTokens?: number
   }> | undefined): void {
     if (!modelUsage) return
-    for (const [key, call] of this.turnLlmCalls) {
+    // modelUsage é o total ACUMULADO do modelo no turno: cada chamada fica com o
+    // uso da própria resposta. Só uma chamada zerada (única do modelo) recebe o
+    // que falta do total. ponytail: 2+ zeradas do mesmo modelo ficam em zero.
+    const calls = [...this.turnLlmCalls]
+    const isZero = (t: TokenUsage): boolean => !t.input && !t.output && !t.cacheRead && !t.cacheWrite
+    for (const [key, call] of calls) {
       const totals = modelUsage[call.model]
-      if (!totals) continue
+      if (!totals || !isZero(call.tokens)) continue
+      const same = calls.filter(([, c]) => c.model === call.model)
+      if (same.filter(([, c]) => isZero(c.tokens)).length !== 1) continue
+      const rest = (total: number | undefined, pick: (t: TokenUsage) => number): number =>
+        Math.max(0, (total ?? 0) - same.reduce((sum, [, c]) => sum + pick(c.tokens), 0))
       const tokens: TokenUsage = {
-        input: totals.inputTokens ?? 0,
-        output: totals.outputTokens ?? 0,
-        cacheRead: totals.cacheReadInputTokens ?? 0,
-        cacheWrite: totals.cacheCreationInputTokens ?? 0
+        input: rest(totals.inputTokens, (t) => t.input),
+        output: rest(totals.outputTokens, (t) => t.output),
+        cacheRead: rest(totals.cacheReadInputTokens, (t) => t.cacheRead),
+        cacheWrite: rest(totals.cacheCreationInputTokens, (t) => t.cacheWrite)
       }
       this.turnLlmCalls.set(key, { ...call, tokens })
       if (call.persistentId) {
@@ -3397,8 +3479,6 @@ ${lines}
     }
     const usage = m.message?.usage
     const nodeId = track.parentToolUseId ?? this.getTurnId()
-    // Modelos do turno no histórico do contexto (uma chamada por resposta).
-    this.contextCapture.llmCall(model, track.parentToolUseId)
     const parentNodeId = this.llmNodeParents.get(nodeId) ?? null
 
     // A `Task`/`Agent` tool-use spawns a new node whose parent is THIS node —
@@ -3410,6 +3490,17 @@ ${lines}
         this.contextCapture.subagent(block.id, block.input)
       }
     }
+
+    // O SDK manda um `assistant` por bloco, todos com o mesmo message.id e o
+    // mesmo usage: é UMA resposta, contada uma vez (os spawns acima veem todo
+    // bloco). ponytail: fica o usage do 1º bloco; somar o maior se divergirem.
+    const messageId = (m.message as { id?: string } | undefined)?.id
+    if (messageId) {
+      if (this.turnLlmMessageIds.has(messageId)) return
+      this.turnLlmMessageIds.add(messageId)
+    }
+    // Modelos do turno no histórico do contexto (uma chamada por resposta).
+    this.contextCapture.llmCall(model, track.parentToolUseId)
 
     const seq = (this.llmNodeSeq.get(nodeId) ?? 0) + 1
     this.llmNodeSeq.set(nodeId, seq)

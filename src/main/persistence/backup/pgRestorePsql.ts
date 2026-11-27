@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { join } from 'node:path'
+import { pgExe } from '../localPostgres'
 import { Transform } from 'node:stream'
 import type { PostgresConnectionDraft } from '../../../shared/ipc'
 import { POSTGRES_DATABASE } from '../bootstrapStore'
@@ -81,8 +81,8 @@ export async function restoreThroughPsql(
   try {
     await new Promise<void>((resolve, reject) => {
       if (signal?.aborted) return reject(new PgToolAbortedError())
-      const restore = spawn(join(binDir, 'pg_restore.exe'), plainRestoreArgs(archive), { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] })
-      const psql = spawn(join(binDir, 'psql.exe'), psqlArgs(), { windowsHide: true, env, stdio: ['pipe', 'ignore', 'pipe'] })
+      const restore = spawn(pgExe(binDir, 'pg_restore'), plainRestoreArgs(archive), { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] })
+      const psql = spawn(pgExe(binDir, 'psql'), psqlArgs(), { windowsHide: true, env, stdio: ['pipe', 'ignore', 'pipe'] })
       let restoreErr = ''
       let psqlErr = ''
       restore.stderr.setEncoding('utf8').on('data', (chunk: string) => (restoreErr = (restoreErr + chunk).slice(-16_384)))

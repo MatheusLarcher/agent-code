@@ -5,19 +5,14 @@
   display: inline-block;
   max-width: 100%;
   overflow-wrap: anywhere;
-  animation: ca-w-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  animation-delay: calc(var(--i, 0) * 45ms + var(--d, 0ms));
+  /* Só opacidade e curta: blur/translate em cada palavra pesava e cansava a leitura.
+     O atraso para de crescer na 9ª palavra para o texto não "escorrer" devagar. */
+  animation: ca-w-in 150ms ease-out both;
+  animation-delay: calc(min(var(--i, 0), 8) * 20ms + var(--d, 0ms));
 }
 @keyframes ca-w-in {
   from {
     opacity: 0;
-    filter: blur(8px);
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    filter: none;
-    transform: none;
   }
 }
 .ca-pop {

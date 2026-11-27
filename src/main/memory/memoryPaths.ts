@@ -1,5 +1,18 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readlinkSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+
+const MAC_SYSTEM_LINKS = new Set(['/var', '/tmp', '/etc'])
+
+/** macOS: /var, /tmp e /etc são symlinks do próprio sistema para /private/*, não
+ *  plantados por ninguém; as checagens "nenhum ancestral é symlink" os aceitam. */
+export function isSystemSymlink(path: string): boolean {
+  if (process.platform !== 'darwin' || !MAC_SYSTEM_LINKS.has(path)) return false
+  try {
+    return readlinkSync(path) === `private${path}`
+  } catch {
+    return false
+  }
+}
 
 /** Plain path containment, before resolving links. */
 export function pathInside(root: string, candidate: string): boolean {

@@ -12,6 +12,7 @@ import { ModelPicker } from '../components/ModelPicker'
 import type { OfficeFeed } from '../office/adapter/feed'
 import { deriveOfficeModel } from '../office/adapter/model'
 import { UiProvider } from '../ui/UiProvider'
+import { pickModel } from '../components/modelSelect.testing'
 import { Office3DEngine, type EngineOptions, type FeedSource, type RendererLike } from './engine'
 import { layoutOffice } from './layout'
 import { Office3DWorkspace, type Office3DWorkspaceProps } from './Office3DWorkspace'
@@ -139,11 +140,11 @@ describe('Tela do monitor e a Central', () => {
     const box = screen.getByTestId('office-screen-model')
     expect(screen.getByTestId('office-screen').contains(box)).toBe(true)
     expect(screen.queryByRole('textbox', { name: 'Mensagem' })).toBeNull()
-    fireEvent.change(within(box).getByRole('combobox', { name: 'Modelo' }), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(within(box).getByRole('button', { name: /^Modelo:/ }), 'claude-sonnet-5-5')
     expect(s.changeModel).toHaveBeenCalledWith(s.convId, 'claude-sonnet-5-5')
     // Com a conversa do agente ativa: seletor e campo juntos, na tela.
     s.rerender(s.agentConv)
-    expect(within(screen.getByTestId('office-screen-composer')).getByRole('combobox', { name: 'Modelo' })).toBeTruthy()
+    expect(within(screen.getByTestId('office-screen-composer')).getByRole('button', { name: /^Modelo:/ })).toBeTruthy()
     expect(within(screen.getByTestId('office-screen-composer')).getByRole('textbox', { name: 'Mensagem' })).toBeTruthy()
   })
 })

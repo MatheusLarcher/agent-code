@@ -38,7 +38,7 @@ const staleDoc = (cwd: string): ConversationRecord =>
 describe('identidade do projeto na gravação da conversa', () => {
   it('mesma pasta com remote novo grava com a identidade atual', async () => {
     const { db, ctx, prepared } = setup(FOLDER)
-    const outcome = await writeConversationDoc(ctx, staleDoc(FOLDER.toUpperCase()), { revision: 3, contentHash: 'h3', deleted: false })
+    const outcome = await writeConversationDoc(ctx, staleDoc(process.platform === 'win32' ? FOLDER.toUpperCase() : FOLDER), { revision: 3, contentHash: 'h3', deleted: false })
     expect(outcome.kind).toBe('written')
     expect(prepared.at(-1)).toMatchObject({ projectId: NEW.projectId, projectSignature: NEW.signature, projectRemoteGit: NEW.remoteGit })
     expect(db.rows.get('c1')?.revision).toBe(4)

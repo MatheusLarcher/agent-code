@@ -75,7 +75,7 @@ export function useChatMemoryHistory(convId: string | null | undefined, messages
 }
 
 function Brain(): JSX.Element {
-  return <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  return <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M12 5a3 3 0 0 0-5.8-1A3.5 3.5 0 0 0 3 8a4 4 0 0 0-1 6 3.5 3.5 0 0 0 3 5 3.6 3.6 0 0 0 7 1V5Zm0 0a3 3 0 0 1 5.8-1A3.5 3.5 0 0 1 21 8a4 4 0 0 1 1 6 3.5 3.5 0 0 1-3 5 3.6 3.6 0 0 1-7 1" />
     <path d="M6 8c0 2 2 3 3 3m-4 4c1-1 3-1 4 0m9-7c0 2-2 3-3 3m4 4c-1-1-3-1-4 0" />
   </svg>

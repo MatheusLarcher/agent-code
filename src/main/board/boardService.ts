@@ -7,6 +7,7 @@ import {
   toSourceItems
 } from './boardModel'
 import { resolveProjectIdentity } from '../persistence/projectIdentity'
+import { heldBoardItemIds } from '../tasks/taskBoardSync'
 import type { BoardDismissBy, BoardItem, BoardItemEvent, BoardPoCreate, BoardPoWrite, PersistenceRepository } from '../persistence/types'
 import {
   boardItemTurnEndKind,
@@ -305,7 +306,10 @@ export class BoardService {
     this.lastReopened.set(convId, reopened)
     const cards = await this.list(cwd, { conversationId: convId })
     if (!cards) return
-    for (const card of boardItemsToReopenBefore(cards, closedAt)) {
+    // Cartão de tarefa do registro em andamento fica (`cards` não nulo = há
+    // repositório); leitura que falha = conjunto vazio = rebaixar.
+    const held = await heldBoardItemIds(this.deps.repository()!, cwd, await this.projectId(cwd)).catch(() => undefined)
+    for (const card of boardItemsToReopenBefore(cards, closedAt, held)) {
       try {
         // A escrita crua: `applyPo` esperaria por esta mesma reabertura.
         const justification = parseBoardTurnEndReason(card.poReason)?.justification

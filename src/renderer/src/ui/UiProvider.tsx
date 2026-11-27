@@ -62,7 +62,7 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
     if (closing.current) return
     closing.current = true
     setLeaving(true)
-    setTimeout(() => onClose(toast.id), 280)
+    setTimeout(() => onClose(toast.id), 150)
   }, [onClose, toast.id])
 
   useEffect(() => {

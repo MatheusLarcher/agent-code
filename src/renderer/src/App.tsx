@@ -104,7 +104,7 @@ import { ModelPicker, type ModelPickerProps } from './components/ModelPicker'
 import type { VigiaDoubt } from './components/VigiaChip'
 import { CrewChip } from './components/CrewChip'
 import { buildCrew, workingMembers } from './crew'
-import { IconBoard, IconScrum } from './components/Icons'
+import { IconBoard, IconPreview, IconScrum } from './components/Icons'
 import { MainTabs, OfficeErrorBoundary, OfficeTabHost, useMainTab } from './components/MainTabs'
 import { TtsContext } from './components/ttsContext'
 import { ProjectIconsContext, ProjectNameIcon } from './components/projectIcons'
@@ -123,6 +123,10 @@ import { useClaudeAccounts } from './accounts/useClaudeAccounts'
 import { useOfficeAccountsRefresh } from './accounts/useOfficeAccountsRefresh'
 import { useAccountActions } from './accounts/useAccountActions'
 import { RightPaneTabs, type RightPane } from './components/RightPaneTabs'
+import { PreviewProvider, usePreviewController } from './preview/PreviewContext'
+import { PreviewPane } from './preview/PreviewPane'
+import { RightPaneDrop } from './preview/RightPaneDrop'
+import { usePreviewOfficeCalls } from './preview/usePreviewOfficeCalls'
 import { BoardPanel, boardProgress, type BoardProgress } from './components/BoardPanel'
 import type { BoardReplyOutcome } from './components/BoardCardReply'
 import { emptyUsageMap, reduceUsage, type UsageMap } from './tokenUsageTree'
@@ -143,12 +147,12 @@ import { userBubbleAttachments } from './inlineMedia/inlineAttachments'
 import { applyDraft, discardDraftCopies, draftCopyPaths, type DraftMedia } from './inlineMedia/draftMedia'
 import { PermissionModal } from './ui/PermissionModal'
 import { QuestionModal } from './ui/QuestionModal'
-import { formatElements } from './components/elementPick/elementToken'
+import { bubbleElements, formatElements } from './components/elementPick/elementToken'
 import { splitForSpeech, toSpeechText } from '@shared/speechText'
 import { createClipPlayer, type ClipPlayer } from './ui/clipPlayer'
 import { ScrumPaneTab } from './components/ScrumPaneTab'
 import { RemoteModal } from './ui/RemoteModal'
-import { SettingsModal } from './ui/SettingsModal'
+import { SettingsModal, type SettingsTab } from './ui/SettingsModal'
 import { ipcErrorMessage } from './ipcError'
 import { PlanningWorkspace } from './planning/PlanningWorkspace'
 import { usePlanningModel } from './planning/usePlanningModel'
@@ -215,6 +219,7 @@ import { withSuggestion } from './components/promptSuggestion'
 import { searchUserPrompts } from '@shared/remoteSearch'
 import { DeliveryCenterProvider } from './deliveries/deliveryCenterContext'
 import { useDeliveryCenter } from './deliveries/useDeliveryCenter'
+import { clearPermissions, currentPermissions, dropPermission, enqueuePermission, updatePermission, type PermissionQueues } from './permissionQueue'
 
 export type { UserMessage, UIMessage } from './types'
 
@@ -576,7 +581,8 @@ export function App(): JSX.Element {
 
   // Each conversation can have its own live agent session running in parallel.
   // `connectedIds` = conversations with a live session; `busyIds` = those mid-turn;
-  // `permissions` = pending tool-permission request per conversation.
+  // `permissions` = the VISIBLE pending request per conversation: the head of its
+  // queue (permissionQueue.ts) — two requests in a row no longer overwrite each other.
   const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set())
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   // When the current turn started (ms epoch) and how long the last one took,
@@ -585,7 +591,8 @@ export function App(): JSX.Element {
   const [lastDuration, setLastDuration] = useState<Record<string, number>>({})
   const [skipPerms, setSkipPerms] = useState(false)
   const [windowsControlEnabled, setWindowsControlEnabled] = useState(false)
-  const [permissions, setPermissions] = useState<Record<string, PermissionRequest>>({})
+  const [permissionQueues, setPermissionQueues] = useState<PermissionQueues>({})
+  const permissions = useMemo(() => currentPermissions(permissionQueues), [permissionQueues])
   // Clicking outside an AskUserQuestion modal (or Esc) MINIMIZES it instead of
   // canceling — the question stays pending in `permissions`, just hidden; a chip
   // between the message history and the composer (ChatPanel) reopens it. Only the
@@ -661,7 +668,7 @@ export function App(): JSX.Element {
   // Confirmation before stopping a session whose agent is mid-task (so an
   // accidental click never kills a running turn). Holds the conversation id.
   // When opening Settings to nudge a missing key, focus that section.
-  const [settingsFocus, setSettingsFocus] = useState<'typesafe' | 'accounts' | null>(null)
+  const [settingsFocus, setSettingsFocus] = useState<'typesafe' | 'accounts' | SettingsTab | null>(null)
   // Whether TypeSafe is enabled with a usable key — gates the "Automático" model option.
   const [typesafeReady, setTypesafeReady] = useState(false)
   // Whether Ollama Cloud is enabled with a key — adds its models to the selector.
@@ -1303,10 +1310,11 @@ export function App(): JSX.Element {
       if (e.kind === 'result' || e.kind === 'error') {
         // Fim de turno: a próxima entrega desta conversa grava já (sem o ~1/s).
         markConversationsUrgent([cid])
-        // A finished turn has no outstanding permission request — clear any so a
-        // stale modal can't reappear when this conversation becomes active again.
-        setPermissions((p) => withoutKey(p, cid))
-        setMinimizedQuestions((m) => withoutKey(m, cid))
+        // A fila de permissões NÃO é limpa aqui: um subagente em segundo plano
+        // segue pedindo depois do `result` do turno principal (o aviso "Agent X is
+        // waiting for permission" do CLI fecha outro turno e apagava o pedido da
+        // tela, que expirava sem o usuário ver). Quem tira o pedido é o main:
+        // resposta, prazo, Stop, "Permitir tudo" e fim da sessão avisam o renderer.
         // Nothing can still be running once the turn is over: a subagent whose
         // closing result we missed would otherwise spin in the panel forever.
         setTracks((prev) => {
@@ -1500,6 +1508,7 @@ export function App(): JSX.Element {
                 id: nextMsgId,
                 text: next.text,
                 ...userBubbleAttachments(next.thumbs, next.images, next.files, next.fileRefs),
+                ...bubbleElements(next.full),
                 ts: Date.now()
               }
             ],
@@ -1648,7 +1657,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     const offEvent = window.api.onAgentEvent(onEvent)
     const offPerm = window.api.onPermissionRequest(({ convId, req }) => {
-      setPermissions((p) => ({ ...p, [convId]: req }))
+      setPermissionQueues((q) => enqueuePermission(q, convId, req))
       // A fresh request always starts visible, even if a previous one in this
       // conversation had been minimized.
       setMinimizedQuestions((m) => withoutKey(m, convId))
@@ -1666,7 +1675,7 @@ export function App(): JSX.Element {
     // A pending question/permission timed out on the main side and was
     // auto-resolved — close its modal here (only if it's still the same request).
     const offExpired = window.api.onPermissionExpired(({ convId, id }) => {
-      setPermissions((p) => (p[convId]?.id === id ? withoutKey(p, convId) : p))
+      setPermissionQueues((q) => dropPermission(q, convId, id))
       setMinimizedQuestions((m) => withoutKey(m, convId))
     })
     // O vigia avisa o USUÁRIO; nada aqui toca a sessão nem a lista de mensagens.
@@ -2285,23 +2294,41 @@ export function App(): JSX.Element {
     e.preventDefault()
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-    const onMove = (ev: MouseEvent): void => {
+    // <webview>/iframe (Preview, mockups) engolem o mousemove/mouseup quando o
+    // cursor passa por cima: com a classe eles ficam transparentes ao mouse.
+    document.body.classList.add('pane-resizing')
+    let frame = 0
+    let lastX = e.clientX
+    const apply = (): void => {
+      frame = 0
       const ws = workspaceRef.current
       if (!ws) return
       const rect = ws.getBoundingClientRect()
       // Mínimo do chat: 360px. Era 440, o que travava o painel de agentes cedo
       // demais — o mapa de fluxo precisa de largura para mostrar as ações.
-      const w = Math.max(340, Math.min(rect.width - 360, rect.right - ev.clientX))
+      const w = Math.max(340, Math.min(rect.width - 360, rect.right - lastX))
       setRightPaneWidth(w)
     }
+    // Um re-render por quadro, não um por pixel de movimento.
+    const onMove = (ev: MouseEvent): void => {
+      lastX = ev.clientX
+      if (!frame) frame = requestAnimationFrame(apply)
+    }
     const onUp = (): void => {
+      if (frame) {
+        cancelAnimationFrame(frame)
+        apply()
+      }
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      document.body.classList.remove('pane-resizing')
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('blur', onUp)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
+    window.addEventListener('blur', onUp)
   }, [])
 
   // ---- conversation management ----
@@ -2496,7 +2523,7 @@ export function App(): JSX.Element {
       setBusy(id, false)
       setBusySince((m) => withoutKey(m, id))
       setLastDuration((m) => withoutKey(m, id))
-      setPermissions((p) => withoutKey(p, id))
+      setPermissionQueues((q) => clearPermissions(q, id))
       setMinimizedQuestions((m) => withoutKey(m, id))
       setVigiaAlerts((v) => withoutKey(v, id))
       setVigiaAt((v) => withoutKey(v, id))
@@ -2621,7 +2648,7 @@ export function App(): JSX.Element {
           patchConv(conv.id, (c) => ({ ...c, claudeAccountId: account }))
         }
         setConnected(conv.id, true)
-        setPermissions((pp) => withoutKey(pp, conv.id))
+        setPermissionQueues((q) => clearPermissions(q, conv.id))
         setMinimizedQuestions((m) => withoutKey(m, conv.id))
       })()
       connectingRef.current.set(conv.id, p)
@@ -2684,7 +2711,7 @@ export function App(): JSX.Element {
       setConnected(id, false)
       setBusy(id, false)
       setBusySince((m) => withoutKey(m, id))
-      setPermissions((p) => withoutKey(p, id))
+      setPermissionQueues((q) => clearPermissions(q, id))
       setMinimizedQuestions((m) => withoutKey(m, id))
       if (!opts?.silent) notify('sucesso', 'Sessão encerrada — agora você pode trocar o modelo.')
     },
@@ -2789,7 +2816,7 @@ export function App(): JSX.Element {
       setSkipPerms(on)
       void window.api.setConfig({ skipPermissions: on }) // persiste entre reinícios
       for (const id of connectedRef.current) void window.api.setBypass(id, on)
-      if (on) setPermissions({})
+      if (on) setPermissionQueues({})
       notify(
         on ? 'aviso' : 'sucesso',
         on
@@ -2984,6 +3011,7 @@ export function App(): JSX.Element {
             id: msgId,
             text,
             ...userBubbleAttachments(thumbs, images, files, fileRefs),
+            ...bubbleElements(full),
             ts: Date.now()
           }
         ],
@@ -3602,6 +3630,7 @@ export function App(): JSX.Element {
             id: injectedId,
             text: item.text,
             ...userBubbleAttachments(item.thumbs, item.images, item.files, item.fileRefs),
+            ...bubbleElements(item.full),
             injected: true,
             ts: Date.now()
           }
@@ -3635,7 +3664,7 @@ export function App(): JSX.Element {
   const respondToPermission = useCallback(
     async (convId: string, res: PermissionResponse): Promise<void> => {
       await window.api.respondPermission(convId, res)
-      setPermissions((p) => withoutKey(p, convId))
+      setPermissionQueues((q) => dropPermission(q, convId, res.id))
       setMinimizedQuestions((m) => withoutKey(m, convId))
     },
     []
@@ -3700,12 +3729,12 @@ export function App(): JSX.Element {
     if (!req?.questions) return
     window.api.holdQuestion(convId, req.id, paused).then(
       (deadline) =>
-        setPermissions((p) => {
-          const cur = p[convId]
-          if (cur?.id !== req.id) return p
-          const { deadline: _old, ...rest } = cur
-          return { ...p, [convId]: deadline === null ? rest : { ...rest, deadline } }
-        }),
+        setPermissionQueues((q) =>
+          updatePermission(q, convId, req.id, (cur) => {
+            const { deadline: _old, ...rest } = cur
+            return deadline === null ? rest : { ...rest, deadline }
+          })
+        ),
       () => {}
     )
   }, [])
@@ -4048,11 +4077,15 @@ export function App(): JSX.Element {
         vigiaEnabled: observersOn.vigia,
         memorista: activeId ? memoristaDiagnostics[activeId] ?? null : null,
         memoristaEnabled: observersOn.memorista,
-        scrumEnabled: observersOn.scrum
+        scrumEnabled: observersOn.scrum,
+        // Nova tentativa agendada (limite de uso): a conversa segue "busy" para
+        // segurar a fila, mas não está trabalhando — o elenco mostra "esperando".
+        retryHold: active?.recovery && active.recovery.scheduledAt > 0 ? active.recovery.reason : null
       }),
     [
       activeTracks,
       activeId,
+      active,
       busyIds,
       busySince,
       vigiaAlerts,
@@ -4084,7 +4117,7 @@ export function App(): JSX.Element {
       })),
     [permissions, conversations]
   )
-  // The right-hand pane holds ONE of two tabs (board / scrum); `rightPaneMinimized`
+  // The right-hand pane holds ONE of three tabs (board / scrum / preview); `rightPaneMinimized`
   // collapses the whole pane. Ele só existe na aba Conversa: pedir um painel volta a ela.
   const rightPaneRef = useRef({ pane: rightPane, minimized: rightPaneMinimized })
   rightPaneRef.current = { pane: rightPane, minimized: rightPaneMinimized }
@@ -4128,6 +4161,18 @@ export function App(): JSX.Element {
   // and doing it for every conversation switch in the background would be work
   // nobody asked for.
   const activeCwd = active?.cwd ?? ''
+  // Aba Preview do painel da direita (preview/): sites, HTML e arquivos. O
+  // seletor dela manda o elemento para os chips como o onBrowserPicked; um
+  // chamado novo do agente abre ali (vem para a frente só na aba Conversa).
+  const preview = usePreviewController({
+    onReveal: () => selectRightPane('preview'),
+    onPick: (el) => {
+      setChips((c) => [...c, el])
+      composerRef.current?.focus()
+    },
+    cwd: activeCwd
+  })
+  usePreviewOfficeCalls(preview.open, () => mainTab === 'chat')
   // Abrir um cartão no painel do Quadro, pedido de fora (o resumo e o "Fala, PO").
   const cardOpener = useBoardCardOpener(() => selectRightPane('board'))
   // "Desde que você saiu" (planning/useAwayStrip.tsx): faixa no topo do quadro e da conversa, e o PO no escritório.
@@ -4554,6 +4599,10 @@ export function App(): JSX.Element {
     <ChatPanel
       messages={messages}
       hasActive={!!active}
+      onOpenSettings={(tab) => {
+        setSettingsFocus(tab)
+        setSettingsOpen(true)
+      }}
       busy={showBusy}
       // Atrelado ao `busy`: uma entrada que sobrou (sessão morreu sem
       // emitir o "voltou") não pode acusar travamento num chat parado.
@@ -4763,6 +4812,8 @@ export function App(): JSX.Element {
   ) : null
 
   return (
+    // O Preview por contexto: ToolCard e links do Markdown (no chat e no Escritório) abrem nele.
+    <PreviewProvider controller={preview}>
     <div className="app">
       {/* A casca já está montada, mas vazia: as conversas só existem depois que
           a persistência responde, e num banco em pasta sincronizada isso leva
@@ -4918,7 +4969,7 @@ export function App(): JSX.Element {
                 onMouseDown={startPaneDrag}
                 data-tip="Arraste para redimensionar o painel"
               />
-              <div className="right-pane" style={{ flex: `0 0 ${rightPaneWidth}px` }}>
+              <RightPaneDrop className="right-pane" style={{ flex: `0 0 ${rightPaneWidth}px` }}>
                 <RightPaneTabs
                   active={rightPane}
                   onSelect={selectRightPane}
@@ -4958,6 +5009,8 @@ export function App(): JSX.Element {
                       name: projectName
                     }}
                   />
+                ) : rightPane === 'preview' ? (
+                  <PreviewPane />
                 ) : (
                   <ScrumPaneTab
                     onCollapse={() => setRightPaneMinimized(true)}
@@ -4970,7 +5023,7 @@ export function App(): JSX.Element {
                     onSend={sendToConversation}
                   />
                 )}
-              </div>
+              </RightPaneDrop>
             </>
           )}
           {/* Rail: pane collapsed — one button per tab, so either is one click away. */}
@@ -4996,6 +5049,15 @@ export function App(): JSX.Element {
               >
                 <IconScrum size={15} />
                 Scrum Master
+              </button>
+              <button
+                type="button"
+                className="right-rail-btn"
+                onClick={() => selectRightPane('preview')}
+                data-tip="Ver sites, páginas e arquivos sem sair do app"
+              >
+                <IconPreview size={15} />
+                Preview
               </button>
             </div>
           )}
@@ -5111,5 +5173,6 @@ export function App(): JSX.Element {
         />
       )}
     </div>
+    </PreviewProvider>
   )
 }

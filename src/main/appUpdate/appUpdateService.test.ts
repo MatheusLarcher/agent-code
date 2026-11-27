@@ -26,7 +26,7 @@ class FakeUpdater extends EventEmitter implements UpdaterLike {
   }
 }
 
-function setup(options: { blockedBy?: string | null; devFeedConfigPath?: string | null } = {}) {
+function setup(options: { blockedBy?: string | null; devFeedConfigPath?: string | null; manual?: string | null } = {}) {
   const updater = new FakeUpdater()
   const states: AppUpdateState[] = []
   const lines: string[] = []
@@ -37,6 +37,7 @@ function setup(options: { blockedBy?: string | null; devFeedConfigPath?: string 
     blockedBy: () => options.blockedBy ?? null,
     onChange: (state) => states.push(state),
     devFeedConfigPath: options.devFeedConfigPath ?? null,
+    manual: options.manual ?? null,
     now: () => new Date('2026-10-24T03:00:00.000Z')
   })
   const phases = (): string[] => states.map((s) => s.phase)
@@ -66,6 +67,18 @@ describe('AppUpdateService', () => {
     expect(updater.allowDowngrade).toBe(false)
     expect(updater.forceDevUpdateConfig).toBe(false)
     expect(updater.logger).not.toBeNull()
+  })
+
+  it('atualização manual (Homol): não consulta o GitHub e diz de onde baixar, sem erro', async () => {
+    const { updater, service } = setup({ manual: 'Atualização manual: baixe em X' })
+    let consultou = false
+    updater.script = async () => {
+      consultou = true
+      return null
+    }
+    const state = await service.checkNow()
+    expect(consultou).toBe(false)
+    expect(state).toMatchObject({ phase: 'ocioso', error: null, manual: 'Atualização manual: baixe em X' })
   })
 
   it('feed de desenvolvimento liga forceDevUpdateConfig e aponta o yml', () => {

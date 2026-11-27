@@ -1,0 +1,26 @@
+/*
+ * Modo Selecionar nos arquivos do Preview (FilePickHost). O host ocupa o lugar
+ * que era do .pp-file; a camada fica por cima, do mesmo tamanho, recortando
+ * hover e marcas pela área do visualizador.
+ */
+.pv-pick-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pv-pick-host > .pp-file {
+  outline: none;
+}
+.pv-pick-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+/* Mesmo contorno da página web em modo Selecionar: em volta de tudo. */
+.pv-pick-host.picking > .pv-pick-layer {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}

@@ -136,9 +136,9 @@ export function officePower(feed: PowerFeed | null | undefined, now: number, pre
   const battery = sessionBattery(limits, now)
   const l = limits?.five_hour
   if (accountId !== null && (!battery || !l)) {
-    // A conta em destaque sem leitura (ou janela de 5 h ainda sem uso): luz cheia.
-    const unread = !account?.usage
-    return { pct: 100, accountId, bank, unread, level: 'cheia', resetsAt: null, drainPerMin: 0, rejected: false, samples: [] }
+    // A conta em destaque sem leitura da janela de 5 h (nenhuma leitura, five_hour null ou só o horário):
+    // a luz fica cheia (não se apaga o prédio sem dado), mas a pílula e o quadro mostram "—", nunca 100%.
+    return { pct: 100, accountId, bank, unread: true, level: 'cheia', resetsAt: null, drainPerMin: 0, rejected: false, samples: [] }
   }
   if (!battery || !l) return null
   let pct = battery.percent

@@ -220,16 +220,17 @@ export async function commandResolvable(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): Promise<boolean> {
-  if (path.isAbsolute(command)) return exists(command)
+  const p = platform === 'win32' ? path.win32 : path.posix
+  if (p.isAbsolute(command)) return exists(command)
   if (/[\\/]/.test(command)) return false // relativo com pasta: depende do cwd, não aceito
   const exts =
     platform === 'win32'
       ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())]
       : ['']
-  const dirs = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean)
+  const dirs = (env.PATH ?? env.Path ?? '').split(p.delimiter).filter(Boolean)
   for (const dir of dirs) {
     for (const ext of exts) {
-      if (await exists(path.join(dir, command + ext))) return true
+      if (await exists(p.join(dir, command + ext))) return true
     }
   }
   return false

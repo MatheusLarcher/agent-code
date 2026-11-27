@@ -242,3 +242,19 @@ describe('elenco por sala', () => {
     expect(byKey(noPo.characters, 'po:c:/proj/alpha')).toBeUndefined()
   })
 })
+
+describe('limite com nova tentativa agendada', () => {
+  it('o principal mostra "esperando o limite", ampulheta, e nenhuma ferramenta', () => {
+    const recovery = { id: 'r', reason: 'limit' as const, scheduledAt: NOW + HOUR, attempt: 0, maxAttempts: 3, errorText: 'limit', messageId: null }
+    const m = deriveOfficeModel(
+      feed({
+        conversations: [conv('a', { recovery, messages: [user('u1'), toolUse('t1', 'Bash', { command: 'ls' })] })],
+        busyIds: new Set(['a'])
+      }),
+      NOW
+    )
+    const p = m.characters.find((c) => c.role === 'principal' && c.convId === 'a')!
+    expect(p.label).toMatch(/esperando o limite/)
+    expect(p.bubble).toBe('ampulheta')
+  })
+})

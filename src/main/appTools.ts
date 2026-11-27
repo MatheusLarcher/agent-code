@@ -8,12 +8,13 @@ import { PRINT_CAPTION_MAX } from './board/boardPrints'
 import { CLOUD_TOOL_DESCRIPTION, CLOUD_TOOL_NAME, cloudToolSchema, type CloudToolReply } from './cloudTool'
 import { GHIDRA_VERSION, type GhidraDetect, type GhidraPreparer } from './ghidra/ghidraEnv'
 import { PDF_MAX_PAGES_PER_CALL, readPdfText } from './pdfText'
+import { ADMIN_RUN_DESCRIPTION, ADMIN_RUN_TOOL, adminRunSchema, type AdminRunInput, type AdminRunReply } from './adminRun/adminRun'
 
-export const APP_RESTART_HINT = 'When Agent Code itself genuinely needs a restart, use app_restart (checkOnly for a read-only guard query). You may request it without asking again, but only this protected tool authorizes restart. A refusal NEVER authorizes kill, Bash, or direct relaunch scripts to bypass the guard. Finish your turn after preparation. History is preserved; automatic continuation of unfinished reasoning is not promised.'
+export const APP_RESTART_HINT = 'If Agent Code itself genuinely needs a restart, call app_restart (checkOnly: read-only guard check) without asking again. Only that tool authorizes a restart: a refusal NEVER authorizes kill, Bash or relaunch scripts. End your turn after preparing it; history is kept, unfinished reasoning may not resume.'
 
-export const APP_CALL_HINT = 'When you want the user to look at an HTML page or mockup you created, call app_chamar_usuario with the .html/.htm file (inside this conversation\'s folder) and an optional short message. It does not wait for an answer: keep working; the user replies in the chat.'
+export const APP_CALL_HINT = 'To show the user an HTML page/mockup you made, call app_chamar_usuario with the .html/.htm file (inside this conversation\'s folder) and an optional short message. It does not wait for an answer: keep working; the user replies in the chat.'
 
-export const APP_PRINT_HINT = 'When you finish a task that changed something VISIBLE (screen, page, component, 3D scene) and you tested it, attach 1-2 screenshots of the result to its board card with app_anexar_print. Only the window or page under test, never the whole computer screen; skip any print that shows a password, token or other sensitive data. Tasks without visuals (backend, tests, refactor, config): do not attach.'
+export const APP_PRINT_HINT = 'After testing a task that changed something VISIBLE (screen, page, component, 3D scene), attach 1-2 screenshots to its board card with app_anexar_print: only the window/page under test, never the whole screen, nothing showing a password, token or other sensitive data. Non-visual tasks (backend, tests, refactor, config): no print.'
 
 /** O que o handler do `app_anexar_print` devolve (o main valida, comprime e grava). */
 export interface AppPrintReply {
@@ -46,8 +47,15 @@ export interface AppMcpOptions {
   ghidra?: GhidraPreparer
   /** Reinicia o MCP "rea" desta sessão com o Ghidra pronto; sem ele, vale na próxima conversa. */
   reconnectRea?: () => Promise<void>
+  /** Liga o MCP "rea" nesta sessão (ele não nasce ligado: são 170 ferramentas). Devolve o texto da resposta. */
+  enableRea?: () => Promise<string>
+  /** Liga as ferramentas de Android nesta conversa (sob demanda). */
+  enableAndroid?: () => Promise<string>
   /** `ler_pdf` (pdfText.ts): só para o modelo que não lê PDF direto (DeepSeek). */
   readPdf?: boolean
+  /** `app_rodar_como_admin` (adminRun/adminRun.ts → runAsAdmin): só onde a permissão é a normal
+   *  da conversa — não no chat do PO, que libera toda mcp__app__ sem perguntar. */
+  runAsAdmin?: (input: AdminRunInput) => Promise<AdminRunReply>
 }
 
 export const READ_PDF_TOOL = 'ler_pdf'
@@ -55,7 +63,12 @@ export const READ_PDF_DENY_REASON = 'Este modelo não lê PDF direto: use mcp__a
 
 const text = (t: string, isError = false) => ({ isError, content: [{ type: 'text' as const, text: t }] })
 
-const GHIDRA_TOOL_DESCRIPTION = `Download the Ghidra ${GHIDRA_VERSION} native-analysis engine (plus a JDK 21 when missing; about 800 MB in total) into Agent Code's local cache, for the rea MCP. Call it when rea reports the Ghidra engine missing (missing_analysis_engine, executable_missing, or "Point GHIDRA_INSTALL_DIR..."). It returns immediately and the download runs in the background: call it again for progress, ready or error. Set retry=true only to try again after an error.`
+export const ENABLE_REA_TOOL = 'app_ativar_engenharia_reversa'
+export const ENABLE_ANDROID_TOOL = 'app_ativar_android'
+const ENABLE_ANDROID_DESCRIPTION = 'Turn on the Android toolkit (android MCP: JDK/SDK/emulator setup, build an APK, install/run it, screenshot/tap/swipe a device). Call it first whenever the user wants an Android app, an APK or an Android test — it is supported, do NOT say otherwise. Then find its tools with ToolSearch (mcp__android__...).'
+const ENABLE_REA_DESCRIPTION = 'Turn on the reverse-engineering toolkit (rea MCP, ~170 tools: binaries, executables, compiled apps, APK/IPA, firmware, decompiling, version diffs). Off by default. Call it once before using rea or the reverse-engineer-anything skill; then find its tools with ToolSearch (mcp__rea__...).'
+
+const GHIDRA_TOOL_DESCRIPTION = `Download the Ghidra ${GHIDRA_VERSION} engine (plus JDK 21 if missing; ~800 MB) into Agent Code's local cache, for the rea MCP. Call it when rea reports the engine missing (missing_analysis_engine, executable_missing, "Point GHIDRA_INSTALL_DIR..."). Returns immediately; the download runs in the background: call again for progress, ready or error. retry=true only after an error.`
 
 /** A resposta da ferramenta do Ghidra para o estado atual (sem esperar o download). */
 async function prepareGhidra(g: GhidraPreparer, retry: boolean, reconnect?: () => Promise<void>): Promise<ReturnType<typeof text>> {
@@ -91,7 +104,7 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
       })] : []),
       ...(attach ? [tool(
         'app_anexar_print',
-        'Attach a screenshot of what you just tested to its board card, so the user sees the result. Only for a task with a VISIBLE result (screen, page, component, 3D scene) that you tested: 1-2 prints of the window or page under test. NEVER the whole computer screen (refused), and never a print showing a password, token or other sensitive data. PNG, JPEG or WebP up to 10 MB; the app compresses it and keeps the 4 newest per card.',
+        'Attach 1-2 screenshots of a tested VISIBLE result (screen, page, component, 3D scene) to its board card: only the window/page under test; the whole computer screen is refused; never a print showing a password, token or other sensitive data. PNG/JPEG/WebP up to 10 MB; compressed, 4 newest kept per card.',
         {
           arquivo: z.string().trim().min(1).max(4096).describe('Image file you generated while testing (absolute, or relative to this conversation\'s folder).'),
           tarefa: z.string().trim().max(500).optional().describe('Which card: the TodoWrite task id, its exact title or its "[step-id]" prefix. Omit only when exactly one task is in progress.'),
@@ -104,7 +117,7 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
       )] : []),
       ...(restart ? [tool(
         'app_restart',
-        'Prepare a guarded restart of Agent Code after this turn finishes. Refuses other busy/unknown sessions, pending permissions, background work and provider failover. No force option. checkOnly has no effects. Never bypass a refusal.',
+        'Guarded restart of Agent Code after this turn. Refused with other busy/unknown sessions, pending permissions, background work or provider failover; no force option. checkOnly has no effects. Never bypass a refusal.',
         { reason: z.string().trim().min(1).max(500), checkOnly: z.boolean().optional() },
         async ({ reason, checkOnly }) => {
           const reply = restart(reason, checkOnly)
@@ -113,7 +126,7 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
       )] : []),
       tool(
         'app_chamar_usuario',
-        'Call the user to look at an HTML page/mockup you created: your character walks to the office TV and waves, and the user gets a notification. Returns "ok" immediately — it does not wait for an answer; keep working. The user replies in the chat.',
+        'Call the user to look at an HTML page/mockup you made (they get a notification; your character waves at the office TV). Returns "ok" at once, without waiting: keep working; the user replies in the chat.',
         {
           arquivo: z.string().trim().min(1).max(4096).refine((p) => /\.html?$/i.test(p), 'arquivo must be a .html/.htm file')
             .describe('Path of the .html/.htm file, inside this conversation\'s folder (absolute or relative to it).'),
@@ -132,6 +145,18 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
           return text('ok')
         }
       ),
+      ...(opts.enableAndroid ? [tool(
+        ENABLE_ANDROID_TOOL,
+        ENABLE_ANDROID_DESCRIPTION,
+        {},
+        async () => text(await opts.enableAndroid!().catch((err: unknown) => `Falhou ao ligar o Android: ${String(err)}`))
+      )] : []),
+      ...(opts.enableRea ? [tool(
+        ENABLE_REA_TOOL,
+        ENABLE_REA_DESCRIPTION,
+        {},
+        async () => text(await opts.enableRea!().catch((err: unknown) => `Falhou ao ligar o rea: ${String(err)}`))
+      )] : []),
       ...(ghidra ? [tool(
         'app_preparar_ghidra',
         GHIDRA_TOOL_DESCRIPTION,
@@ -140,7 +165,7 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
       )] : []),
       ...(opts.readPdf ? [tool(
         READ_PDF_TOOL,
-        `Extract the text layer of a PDF file (use this instead of Read for .pdf). Returns the text page by page, up to ${PDF_MAX_PAGES_PER_CALL} pages per call; ask for the rest with pages. A scanned PDF has no text layer and says so.`,
+        `Extract a PDF's text layer (use instead of Read for .pdf), page by page, up to ${PDF_MAX_PAGES_PER_CALL} pages per call; get the rest with pages. A scanned PDF has no text layer and says so.`,
         {
           arquivo: z.string().trim().min(1).max(4096).describe('Path of the .pdf (absolute, or relative to this conversation\'s folder).'),
           pages: z.string().trim().max(20).optional().describe('Page or range, e.g. "3" or "1-5". Omit for the first pages.')
@@ -150,7 +175,11 @@ export function createAppMcpServer(opts: AppMcpOptions): ReturnType<typeof creat
             .catch((err: unknown) => ({ ok: false, text: `Falhou: ${String(err)}` }))
           return text(reply.text, !reply.ok)
         }
-      )] : [])
+      )] : []),
+      ...(opts.runAsAdmin ? [tool(ADMIN_RUN_TOOL, ADMIN_RUN_DESCRIPTION, adminRunSchema, async (input) => {
+        const reply = await opts.runAsAdmin!(input).catch((err: unknown): AdminRunReply => ({ ok: false, text: `Falhou: ${String(err)}` }))
+        return text(reply.text, !reply.ok)
+      })] : [])
     ]
   })
 }

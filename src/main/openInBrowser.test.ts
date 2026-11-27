@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ shell: { openExternal: vi.fn() } }))
 
-import { buildCommand, isLocalWebFile, parseRegValue } from './openInBrowser'
+import { buildCommand, isLocalWebFile, parseMacHttpsHandler, parseRegValue } from './openInBrowser'
 
 describe('openInBrowser', () => {
   it('reconhece só arquivo web local', () => {
@@ -26,5 +26,23 @@ describe('openInBrowser', () => {
     })
     expect(buildCommand('"C:\\Edge\\msedge.exe" --single-argument "%1"', url)?.args).toEqual(['--single-argument', url])
     expect(buildCommand('C:\\ff\\firefox.exe -osint -url', url)?.args).toEqual(['-osint', '-url', url])
+  })
+})
+
+describe('parseMacHttpsHandler', () => {
+  it('acha o navegador do https e ignora o "-" e os outros esquemas', () => {
+    const out = `(
+        {
+            LSHandlerContentType = "public.html";
+            LSHandlerRoleAll = "com.microsoft.vscode";
+        },
+        {
+            LSHandlerPreferredVersions = { LSHandlerRoleAll = "-"; };
+            LSHandlerRoleAll = "com.google.chrome";
+            LSHandlerURLScheme = https;
+        }
+    )`
+    expect(parseMacHttpsHandler(out)).toBe('com.google.chrome')
+    expect(parseMacHttpsHandler('()')).toBeNull()
   })
 })

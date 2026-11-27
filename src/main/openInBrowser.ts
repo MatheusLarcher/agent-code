@@ -47,11 +47,31 @@ async function defaultBrowserCommand(url: string): Promise<{ exe: string; args: 
   return template ? buildCommand(template, url) : null
 }
 
-/** Abre `url`; arquivo web local no Windows vai para o navegador padrão. */
+/** macOS: o bundle do app que abre https, na saída de
+ *  `defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers`. */
+export function parseMacHttpsHandler(stdout: string): string | null {
+  for (const block of stdout.split('}')) {
+    if (!/LSHandlerURLScheme\s*=\s*"?https"?\s*;/.test(block)) continue
+    const m = /LSHandlerRoleAll\s*=\s*"?([\w.-]+)"?\s*;/.exec(block)
+    if (m && m[1] !== '-') return m[1]
+  }
+  return null
+}
+
+async function macBrowserCommand(url: string): Promise<{ exe: string; args: string[] } | null> {
+  const { stdout } = await run('defaults', ['read', 'com.apple.LaunchServices/com.apple.launchservices.secure', 'LSHandlers'])
+  const bundle = parseMacHttpsHandler(stdout)
+  // Sem escolha gravada o padrão do sistema é o Safari.
+  return { exe: 'open', args: ['-b', bundle ?? 'com.apple.Safari', url] }
+}
+
+/** Abre `url`; arquivo web local vai para o navegador padrão (Windows e macOS), não
+ *  para o app associado à extensão .html (costuma ser um editor). */
 export async function openUrlExternally(url: string): Promise<void> {
-  if (process.platform === 'win32' && isLocalWebFile(url)) {
+  const plat = process.platform
+  if ((plat === 'win32' || plat === 'darwin') && isLocalWebFile(url)) {
     try {
-      const cmd = await defaultBrowserCommand(url)
+      const cmd = plat === 'win32' ? await defaultBrowserCommand(url) : await macBrowserCommand(url)
       if (cmd) {
         const child = spawn(cmd.exe, cmd.args, { detached: true, stdio: 'ignore', windowsHide: false })
         child.on('error', (err) => {

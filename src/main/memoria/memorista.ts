@@ -1,6 +1,9 @@
+import { basename } from 'node:path'
 import { prepareGptRuntime } from '../agentSession'
+import { memoriasParecidas, temasDoAcervo } from './parecidas'
 import {
   askObserver,
+  capInheritedObserverModel,
   runObserverAttempt,
   type ObserverAttempt,
   type SafeProviderReason
@@ -450,11 +453,15 @@ export class Memorista {
       message: userText,
       history: answerText ? [{ who: 'agent', text: answerText }] : []
     }
-    if (this.deps.autoModel) return this.deps.autoModel(prompt)
     // Sobre a lista DELE, não sobre a da conversa: o memorista é um leitor
     // barato, e escolher sobre CLAUDE_MODELS o deixaria cair num modelo acima
-    // do teto que o seletor dele oferece ao usuário.
-    return (await chooseAutoExecution(prompt, { models: MEMORISTA_AUTO_MODELS })).model
+    // do teto que o seletor dele oferece ao usuário. E mesmo nela, o Automático
+    // segue a decisão da conversa — turno difícil daria Opus/Fable ao leitor:
+    // o teto de herança desce para o Sonnet.
+    const chosen = this.deps.autoModel
+      ? await this.deps.autoModel(prompt)
+      : (await chooseAutoExecution(prompt, { models: MEMORISTA_AUTO_MODELS })).model
+    return capInheritedObserverModel(chosen)
   }
 
   private async runClaude(request: MemoristaObserverRequest): Promise<ObserverAttempt> {
@@ -519,8 +526,10 @@ export class Memorista {
   private buildProposal(
     op: MemoristaOp,
     entries: Awaited<ReturnType<MemoristaMemoryPort['listEntries']>>,
-    convId: string
+    convId: string,
+    cwd = ''
   ): MemoryProposeInput | null {
+    const ctx = { now: this.deps.now?.() ?? Date.now(), project: basename(cwd.replace(/[\\/]+$/, '')) || undefined }
     const base = {
       proposedBy: `${MEMORISTA_AGENT}:${convId}`,
       originConversationId: convId,
@@ -535,7 +544,7 @@ export class Memorista {
         relPath: op.relPath,
         title: op.title,
         hook: op.hook,
-        body: buildMemoryBody(op),
+        body: buildMemoryBody(op, ctx),
         // Escopo "user", como o curador: o acervo é do usuário, e um escopo de
         // projeto mal atribuído esconde a memória de onde ela seria útil.
         scope: 'user',
@@ -544,7 +553,7 @@ export class Memorista {
     }
     const entry = entries.find((item) => item.relPath.toLowerCase() === op.relPath.toLowerCase())
     if (!entry || entry.status !== 'active') return null
-    const body = appendFact(entry.body, op.fact)
+    const body = appendFact(entry.body, op.fact, { ...ctx, gatilhos: op.gatilhos, termos: op.termos, contradiz: op.contradiz })
     if (body === null) return null
     return {
       op: 'update',
@@ -604,7 +613,9 @@ export class Memorista {
       // cooldown protege.
       conv.lastRunAt = now
 
-      const memories: MemoristaMemory[] = entries.map((entry) => ({
+      // As ~10 mais parecidas com o turno (D26), não as 40 primeiras do índice: é com
+      // elas que o modelo decide COMPLEMENTA × NOVA, e a parecida precisa estar na lista.
+      const memories: MemoristaMemory[] = memoriasParecidas(entries, `${merged.userText}\n${turn.answerText}`).map((entry) => ({
         relPath: entry.relPath,
         title: entry.title,
         hook: entry.hook
@@ -614,6 +625,7 @@ export class Memorista {
           userText: merged.userText,
           calls: [...merged.calls],
           memories,
+          temas: temasDoAcervo(entries),
           answerText: turn.answerText,
           usedMemories: this.deps.usedMemories?.(convId) ?? [],
           // Aprovado, o memorista recebe o docs COMPLETO: ele roda num Claude de
@@ -654,7 +666,9 @@ export class Memorista {
         }
         if (attempt.state !== 'completed') return
 
-        const ops = parseMemoristaVerdict(attempt.text, entries.map((entry) => entry.relPath))
+        // COMPLEMENTA e ligações só sobre o que o modelo VIU (as parecidas); NOVA não pode
+        // cair sobre nenhum caminho do acervo — essa barreira fica no `buildProposal`.
+        const ops = parseMemoristaVerdict(attempt.text, memories.map((memory) => memory.relPath))
         if (ops.length === 0) {
           // O turno foi lido e não ensinou nada: não volta para a fila.
           analyzed = true
@@ -667,7 +681,7 @@ export class Memorista {
         const vault = this.deps.vault?.() ?? null
         const sanitize = this.deps.sanitize ?? sanitizeProposal
         for (const op of ops) {
-          const input = this.buildProposal(op, fresh, convId)
+          const input = this.buildProposal(op, fresh, convId, turn.cwd)
           if (!input) continue
           try {
             // A varredura de segredos é obrigatória e vem antes da fila: uma

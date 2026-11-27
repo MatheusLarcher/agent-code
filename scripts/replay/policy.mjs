@@ -4,6 +4,7 @@
 // (o repositório é público no GitHub: daria para baixar a solução) ou o PC dele.
 // Função pura — testada em replay.test.mjs. Read/Glob/Grep/WebFetch/WebSearch/navegador
 // não passam por aqui (o app aprova sozinho): esses vão na cerca do CLI (fence.mjs).
+import { homedir } from 'node:os'
 
 /** Ferramentas que nunca rodam no replay. */
 const DENY_TOOLS = /^(mcp__windows__|mcp__chrome__|mcp__android__|mcp__browser__|mcp__app__app_restart$|mcp__app__app_postgres_nuvem$|EnterWorktree$|ExitWorktree$|WebFetch$|WebSearch$)/
@@ -29,7 +30,7 @@ const SHELL_DENY = [
 ]
 
 /** Verbos que escrevem/apagam: com eles, um caminho fora da rodada é recusado. */
-const SHELL_WRITE_VERBS = /\b(rm|rmdir|del|erase|mv|move|cp|copy|Remove-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Out-File|New-Item|Rename-Item|Clear-Content|mkdir|md|touch|tee)\b|>{1,2}\s*["']?[a-z]:/i
+const SHELL_WRITE_VERBS = /\b(rm|rmdir|del|erase|mv|move|cp|copy|Remove-Item|Move-Item|Copy-Item|Set-Content|Add-Content|Out-File|New-Item|Rename-Item|Clear-Content|mkdir|md|touch|tee)\b|>{1,2}\s*["']?([a-z]:|[/~])/i
 
 const norm = (p) => String(p ?? '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
 
@@ -42,10 +43,15 @@ export function insideAny(child, roots) {
   })
 }
 
-/** Caminhos absolutos do Windows citados num comando (C:\..., C:/..., /c/...). */
-export function absolutePaths(command) {
+/** Caminhos absolutos citados num comando: Windows (C:\..., C:/..., /c/...) ou, no Mac, /..., ~ e $HOME. */
+export function absolutePaths(command, { platform = 'win32', home = homedir() } = {}) {
   const out = []
   const text = String(command ?? '')
+  if (platform !== 'win32') {
+    for (const m of text.matchAll(/(?:^|[\s"'=(:])(~|\$HOME|\$\{HOME\})(?=[\/\s"';&|)]|$)([^\s"'|;&<>`)]*)/g)) out.push(`${home}${m[2]}`)
+    for (const m of text.matchAll(/(?:^|[\s"'=(:>])(\/[^\s"'|;&<>`)]*)/g)) out.push(m[1])
+    return out.filter((p) => p !== '/dev/null')
+  }
   for (const m of text.matchAll(/(?<![\w-])([a-zA-Z]):[\\/][^\s"'|;&<>`]*/g)) out.push(`${m[1]}:\\${m[0].replace(/^[a-zA-Z]:[\\/]/, '')}`)
   for (const m of text.matchAll(/(?<![\w-])([a-zA-Z]):(?=["'\s]|$)/g)) out.push(`${m[1]}:\\`)
   for (const m of text.matchAll(/(?:^|[\s"'=])\/([a-zA-Z])\/([^\s"'|;&<>`]*)/g)) out.push(`${m[1]}:\\${m[2]}`)
@@ -60,7 +66,8 @@ const climbsTwice = (command) => (String(command).match(/(^|[\s;&|"'\\/=])\.\.(?
  *  - worktree: pasta da rodada (onde o agente trabalha);
  *  - writable: outras pastas em que pode escrever (dados da instância isolada);
  *  - forbidden: pastas que nem para ler (fence.mjs);
- *  - protectedPaths: o que nunca pode ser alvo de escrita (checkout e dados reais do usuário).
+ *  - protectedPaths: o que nunca pode ser alvo de escrita (checkout e dados reais do usuário);
+ *  - platform: 'darwin' para ler caminhos do Mac nos comandos (padrão: Windows, o do replay).
  * Devolve `{ behavior: 'allow' | 'deny', reason }`.
  */
 export function decidePermission(req, ctx) {
@@ -90,7 +97,7 @@ export function decidePermission(req, ctx) {
     const command = String(input.command ?? '')
     for (const [re, why] of SHELL_DENY) if (re.test(command)) return deny(why)
     if (climbsTwice(command)) return deny('subir dois níveis sai da pasta do projeto desta rodada')
-    const paths = absolutePaths(command)
+    const paths = absolutePaths(command, { platform: ctx.platform })
     const off = paths.find(forbidden)
     if (off) return deny(`fora do projeto desta rodada: ${off}`)
     const outside = paths.filter((p) => !insideAny(p, writable))

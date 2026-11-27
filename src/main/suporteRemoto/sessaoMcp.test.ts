@@ -108,6 +108,80 @@ describe('suporte remoto: servidor MCP na sessão do agente', () => {
     expect(nova.chamadas).toHaveLength(2)
   })
 
+  it('conectar no cliente repete o que a sessão ligou depois (rea, Android, Chrome sob demanda)', async () => {
+    const relay = relayFalso()
+    const servico = new SuporteRemotoServico({ ajustes: () => ({ ativado: true, tecnico: 'Ana', chave: CHAVE_DE_TESTE }), base: () => 'http://127.0.0.1:1', fetchImpl: relay.fetchImpl })
+    const chamadas: Array<Record<string, McpServerConfig>> = []
+    const tardios: Record<string, McpServerConfig> = {}
+    const ligacao = ligarSuporteNaConversa({
+      convId: 'conv-a',
+      servico,
+      base: { app: interno('app'), suporte: interno('suporte') },
+      consulta: () => ({ setMcpServers: async (servidores) => { chamadas.push(servidores); return { added: [], removed: [], errors: {} } } }),
+      ativado: () => true,
+      servidorSuporte: () => interno('suporte'),
+      extras: () => tardios
+    })
+    // Antes de conectar: quem troca os servidores por fora só precisa repetir o `suporte`.
+    expect(Object.keys(ligacao.servidores())).toEqual(['suporte'])
+    tardios.rea = stdio
+    tardios.android = interno('android')
+    await servico.conectar('conv-a', '482917305')
+    expect(Object.keys(chamadas[0]).sort()).toEqual(['android', 'app', 'rea', 'remoto', 'suporte'])
+    // Com o cliente conectado, o `remoto` também tem de ser repetido por quem ligar outro servidor.
+    expect(Object.keys(ligacao.servidores()).sort()).toEqual(['remoto', 'suporte'])
+    await servico.desconectar()
+    expect(Object.keys(chamadas[1]).sort()).toEqual(['android', 'app', 'rea', 'suporte'])
+    expect(Object.keys(ligacao.servidores())).toEqual(['suporte'])
+  })
+
+  it('o `remoto` que o SDK recusou não entra na lista a repetir', async () => {
+    const relay = relayFalso()
+    const servico = new SuporteRemotoServico({ ajustes: () => ({ ativado: true, tecnico: 'Ana', chave: CHAVE_DE_TESTE }), base: () => 'http://127.0.0.1:1', fetchImpl: relay.fetchImpl })
+    const ligacao = ligarSuporteNaConversa({
+      convId: 'conv-a',
+      servico,
+      base: { suporte: interno('suporte') },
+      consulta: () => ({ setMcpServers: async () => ({ added: [], removed: [], errors: { remoto: 'recusado' } }) }),
+      ativado: () => true,
+      servidorSuporte: () => interno('suporte')
+    })
+    await servico.conectar('conv-a', '482917305')
+    expect(Object.keys(ligacao.servidores())).toEqual(['suporte'])
+    await servico.desconectar()
+  })
+
+  it('troca feita por fora entra na mesma fila: espera a do suporte e não a atropela', async () => {
+    const ordem: string[] = []
+    const relay = relayFalso()
+    const lento = new SuporteRemotoServico({ ajustes: () => ({ ativado: true, tecnico: 'Ana', chave: CHAVE_DE_TESTE }), base: () => 'http://127.0.0.1:1', fetchImpl: relay.fetchImpl })
+    const ligacao = ligarSuporteNaConversa({
+      convId: 'conv-a',
+      servico: lento,
+      base: { suporte: interno('suporte') },
+      consulta: () => ({
+        setMcpServers: async () => {
+          ordem.push('suporte:inicio')
+          await new Promise((r) => setTimeout(r, 20))
+          ordem.push('suporte:fim')
+          return { added: [], removed: [], errors: {} }
+        }
+      }),
+      ativado: () => true,
+      servidorSuporte: () => interno('suporte')
+    })
+    const conectando = lento.conectar('conv-a', '482917305')
+    await ate(() => ordem.includes('suporte:inicio'))
+    const porFora = ligacao.naFila(async () => { ordem.push('fora'); return 'ok' })
+    expect(await porFora).toBe('ok')
+    await conectando
+    expect(ordem).toEqual(['suporte:inicio', 'suporte:fim', 'fora'])
+    // Uma troca que falha não trava a fila para as seguintes.
+    await expect(ligacao.naFila(async () => { throw new Error('falhou') })).rejects.toThrow('falhou')
+    expect(await ligacao.naFila(async () => 'segue')).toBe('segue')
+    await lento.desconectar()
+  })
+
   it('o SDK não conseguiu ligar o servidor: avisa no chat sem endereço nem token', async () => {
     const relay = relayFalso()
     const servico = new SuporteRemotoServico({ ajustes: () => ({ ativado: true, tecnico: 'Ana', chave: CHAVE_DE_TESTE }), base: () => 'http://127.0.0.1:1', fetchImpl: relay.fetchImpl })

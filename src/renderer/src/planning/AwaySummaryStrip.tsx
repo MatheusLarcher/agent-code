@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { IconChevronRight } from '../components/Icons'
 import { awayHeadline, type AwayEntry, type AwayKind, type AwaySummary } from './awaySummary'
 import './awaySummary.css'
 
@@ -30,9 +31,7 @@ export function AwaySummaryStrip(props: {
       <div className="away-strip-head">
         <button type="button" className="away-strip-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
           <span className="away-strip-text">{awayHeadline(summary)}</span>
-          <span className="away-strip-chevron" aria-hidden="true">
-            {open ? '▾' : '▸'}
-          </span>
+          <IconChevronRight size={12} className={`away-strip-chevron${open ? ' open' : ''}`} aria-hidden="true" />
         </button>
         <button type="button" className="next-btn away-strip-ok" onClick={() => props.onDismiss(summary.projectKey)}>
           ok

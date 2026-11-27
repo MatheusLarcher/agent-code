@@ -6,6 +6,8 @@ import {
   VIGIA_MODELS,
   PO_MODELS,
   MEMORISTA_MODELS,
+  BIBLIOTECARIO_MODOS,
+  type BibliotecarioModo,
   type AppConfig,
   type CacheInfo,
   type CodexStatus
@@ -51,7 +53,8 @@ interface Props {
   onClose: () => void
   /** When 'typesafe', highlight the TypeSafe section (already on the Geral tab);
    *  'accounts' opens the Modelos e contas tab. */
-  focus?: 'typesafe' | 'accounts' | null
+  /** Abre já numa seção: o TypeSafe, as contas ou uma aba (ex.: a apresentação inicial). */
+  focus?: 'typesafe' | 'accounts' | SettingsTab | null
   /** Global "allow all tools" switch — applies live (not gated by Save). */
   skipPerms: boolean
   onToggleSkipPerms: (on: boolean) => void
@@ -59,7 +62,8 @@ interface Props {
   onToggleWindowsControl: (on: boolean) => void
 }
 
-type Tab = 'geral' | 'modelos' | 'skills' | 'voz' | 'android' | 'dados'
+export type SettingsTab = 'geral' | 'modelos' | 'skills' | 'voz' | 'android' | 'dados'
+type Tab = SettingsTab
 
 type DeepPartial<T> = {
   [K in keyof T]?: NonNullable<T[K]> extends readonly unknown[]
@@ -93,7 +97,7 @@ export function SettingsModal({
   onToggleWindowsControl
 }: Props): JSX.Element {
   const { notify } = useUI()
-  const [tab, setTab] = useState<Tab>(focus === 'accounts' ? 'modelos' : 'geral')
+  const [tab, setTab] = useState<Tab>(focus === 'accounts' ? 'modelos' : !focus || focus === 'typesafe' ? 'geral' : focus)
   const [cfg, setCfg] = useState<AppConfig>(DEFAULT_CONFIG)
   const [showOllamaKey, setShowOllamaKey] = useState(false)
   const [showTypeSafeKey, setShowTypeSafeKey] = useState(false)
@@ -525,6 +529,33 @@ export function SettingsModal({
                         }}
                       >
                         {MEMORISTA_MODELS.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {cfg.memorista.enabled && (
+                    <div className="settings-row">
+                      <span>
+                        <strong>Bibliotecário — organizar as memórias</strong>
+                        <span className="settings-desc">
+                          De hora em hora, separa as memórias por assunto, junta as repetidas e anota como
+                          você costuma pedir cada coisa, para achar mais rápido. Nunca apaga nada. Comece
+                          só vendo o que ele faria e ligue quando gostar.
+                        </span>
+                      </span>
+                      <select
+                        className="settings-input"
+                        value={cfg.memorista.bibliotecario ?? 'simulacao'}
+                        onChange={(event) => {
+                          const bibliotecario = event.target.value as BibliotecarioModo
+                          setCfg((c) => ({ ...c, memorista: { ...c.memorista, bibliotecario } }))
+                          void patchConfig({ memorista: { bibliotecario } })
+                        }}
+                      >
+                        {BIBLIOTECARIO_MODOS.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.label}
                           </option>

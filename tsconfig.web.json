@@ -16,5 +16,10 @@
       "@shared/*": ["src/shared/*"]
     }
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*"]
+  "include": [
+    "src/renderer/**/*",
+    "src/shared/**/*",
+    "src/preload/previewInspector/overlay.ts",
+    "src/preload/previewInspector/selector.ts"
+  ]
 }

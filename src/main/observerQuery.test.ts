@@ -5,10 +5,12 @@ const sdk = vi.hoisted(() => ({
   frames: [] as unknown[],
   /** Por conta (env CLAUDE_CONFIG_DIR): os frames daquela conta; vence `frames`. */
   byAccount: null as Record<string, unknown[]> | null,
-  envs: [] as Array<string | undefined>
+  envs: [] as Array<string | undefined>,
+  lastOptions: null as Record<string, unknown> | null
 }))
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: ({ options }: { options: { env?: NodeJS.ProcessEnv } }) => {
+    sdk.lastOptions = options as Record<string, unknown>
     const account = options.env?.CLAUDE_CONFIG_DIR
     sdk.envs.push(account)
     const frames = sdk.byAccount && account ? sdk.byAccount[account] ?? [] : sdk.frames
@@ -18,7 +20,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   }
 }))
 
-import { classifyClaudeObserverFailure, runObserverAttempt, setClaudeObserverAccounts } from './observerQuery'
+import {
+  capInheritedObserverModel,
+  classifyClaudeObserverFailure,
+  runObserverAttempt,
+  setClaudeObserverAccounts
+} from './observerQuery'
 
 const answer = (text: string, error?: string) => ({ type: 'assistant', ...(error ? { error } : {}), message: { content: [{ type: 'text', text }] } })
 const attempt = (frames: unknown[]) => {
@@ -38,6 +45,12 @@ describe('runObserverAttempt', () => {
 
   it('erro sem motivo de failover (sobrecarga) também não vira resposta', async () => {
     expect(await attempt([answer('API Error: 529 overloaded', 'overloaded')])).toEqual({ provider: 'claude', state: 'failed' })
+  })
+
+  it('roda isolado do ambiente do Claude Code (sem skills, plugins, MCP, CLAUDE.md nem prompt padrão)', async () => {
+    await attempt([answer('ok')])
+    expect(sdk.lastOptions).toMatchObject({ tools: [], maxTurns: 1, settingSources: [], strictMcpConfig: true, mcpServers: {} })
+    expect(typeof sdk.lastOptions?.systemPrompt).toBe('string')
   })
 
   it('a resposta cortada em max_output_tokens continua sendo resposta', async () => {
@@ -130,5 +143,18 @@ describe('classifyClaudeObserverFailure', () => {
     undefined
   ])('does not infer a failover reason from ambiguous failure %#', (failure) => {
     expect(classifyClaudeObserverFailure(failure)).toBeUndefined()
+  })
+})
+
+describe('capInheritedObserverModel', () => {
+  it.each(['claude-opus-5-5', 'claude-opus-4-8', 'opus', 'opus[1m]', 'claude-fable-5-2'])(
+    'modelo herdado acima do Sonnet desce para o Sonnet: %s',
+    (model) => {
+      expect(capInheritedObserverModel(model)).toBe('claude-sonnet-5-5')
+    }
+  )
+
+  it.each(['claude-sonnet-5-5', 'claude-haiku-5-5', 'sonnet', 'gpt-6-luna'])('modelo mais leve fica como está: %s', (model) => {
+    expect(capInheritedObserverModel(model)).toBe(model)
   })
 })

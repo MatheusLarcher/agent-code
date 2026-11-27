@@ -10,7 +10,9 @@
   flex: none;
   box-sizing: border-box;
   object-fit: cover;
-  border: 1px solid var(--line);
+  /* contorno claro e fino por dentro da imagem (não ocupa espaço como a borda) */
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
   border-radius: 6px;
   background: var(--bg-3);
 }

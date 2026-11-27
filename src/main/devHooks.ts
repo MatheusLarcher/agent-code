@@ -20,6 +20,12 @@ export interface DevHookDeps {
   startPhoneBridge?: () => Promise<unknown>
 }
 
+/** Instância isolada da bateria: sem a config pessoal do `~/.claude` (hooks, CLAUDE.md,
+ *  plugins), para a medição não depender de quem roda. O login não muda. */
+export function withoutUserSettings(): boolean {
+  return !!devDataDir() && process.env['AGENT_CODE_SEM_CONFIG_DO_USUARIO'] === '1'
+}
+
 export function installDevHooks(deps: DevHookDeps = {}): boolean {
   if (!devDataDir() || process.env['AGENT_CODE_DEV_HOOKS'] !== '1') return false
   const busy = new Map<string, () => void>()

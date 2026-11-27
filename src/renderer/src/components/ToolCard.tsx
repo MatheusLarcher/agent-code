@@ -15,8 +15,10 @@ import { isTextPreviewable } from '@shared/ipc'
 import { fileUrl } from '../fileUrl'
 import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
+import { usePreview } from '../preview/PreviewContext'
 import { CountUp, useFreshOnce } from '../chatAnim'
 import { CodeBlock } from './CodeBlock'
+import { IconChevronRight } from './Icons'
 import { resultCount } from './stepPills'
 import { describeTool, TOOL_CODE_MAX, TOOL_RESULT_MAX, toolBadge, toolErrored, toolInputView, writtenPath } from './toolDescribe'
 import { toolFilePath, useToolFileOpen } from './toolFileOpen'
@@ -46,6 +48,7 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
   const [open, setOpen] = useState(false)
   const { notify } = useUI()
   const opener = useToolFileOpen()
+  const pv = usePreview()
   const openable = !!opener && toolFilePath(m) !== ''
   // No grupo aberto do chat: UMA linha mono — rótulo pt + alvo + "✓ N", sem caixa (a pergunta segue cartão).
   const line = check && m.name !== 'AskUserQuestion'
@@ -73,9 +76,16 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
   const preview = (e: MouseEvent): void => {
     e.stopPropagation()
     if (!rawFilePath) return
+    // Com a aba Preview (App): abre nela, sem sair do app.
+    if (pv?.openInPreview(rawFilePath)) return
     // Fora do app: o window.open cai no setWindowOpenHandler do main (openUrlExternally).
     window.open(fileUrl(rawFilePath), '_blank')
   }
+  const previewTip = pv
+    ? 'Abrir na aba Preview'
+    : /\.html?$/i.test(rawFilePath)
+      ? 'Abrir no seu navegador'
+      : 'Abrir no programa padrão do PC'
 
   const head = (
     <>
@@ -92,7 +102,7 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
         </span>
       )}
       {rawFilePath && isTextPreviewable(rawFilePath) && m.result && !m.result.isError && (
-        <span className="tool-download" onClick={preview} data-tip={/\.html?$/i.test(rawFilePath) ? 'Abrir no seu navegador' : 'Abrir no programa padrão do PC'}>
+        <span className="tool-download" onClick={preview} data-tip={previewTip}>
           Preview
         </span>
       )}
@@ -118,18 +128,18 @@ export function ToolCard({ m, check = false }: { m: ToolUseMessage; check?: bool
       {openable && opener ? (
         <div className="tool-head tool-head-split">
           <button type="button" className="tool-caret-btn" aria-expanded={open} aria-label="Mostrar a entrada e o resultado" title="Mostrar a entrada e o resultado" onClick={() => setOpen((o) => !o)}>
-            <span className="tool-caret">{open ? '▾' : '▸'}</span>
+            <IconChevronRight size={12} className={`tool-caret${open ? ' open' : ''}`} aria-hidden="true" />
           </button>
           <button type="button" className="tool-open" title="Abrir no editor" data-path={toolFilePath(m)} onClick={() => opener.open(m)}>
             {head}
-            <svg className="tool-go" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg className="tool-go" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M7 17 17 7M9 7h8v8" />
             </svg>
           </button>
         </div>
       ) : (
-        <button className="tool-head" onClick={() => setOpen((o) => !o)}>
-          <span className="tool-caret">{open ? '▾' : '▸'}</span>
+        <button type="button" className="tool-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <IconChevronRight size={12} className={`tool-caret${open ? ' open' : ''}`} aria-hidden="true" />
           {head}
         </button>
       )}

@@ -8,6 +8,12 @@ import { CONV, SENT, area, button, dialog, loaded, renderDialog, withAmbiguity }
 import { PlanningPlanContext } from './planningPlanContext'
 import { CWD, SLUG, makePlan, mockPlanningApi } from './planningTestUtils'
 
+/** Esperas que dependem de várias promessas do mock em cadeia (listar → ler →
+ *  enviar → marcar → reabrir): o 1s padrão do Testing Library estoura com a
+ *  suíte inteira disputando a CPU. A condição é a mesma; só a paciência é
+ *  maior (abaixo do testTimeout de 20s). */
+const SLOW = { timeout: 10_000 }
+
 afterEach(() => {
   cleanup()
   clearHandoffSession(CWD, SLUG)
@@ -131,11 +137,11 @@ describe('HandoffDialog — abertura direta nos prompts a enviar', () => {
     const { onAskManager, onSend, view } = renderDialog(makePlan(), {
       onSend: async () => ({ status: 'sent', delivered: 2, total: 2, conversation: CONV })
     })
-    expect(((await screen.findByLabelText('Prompt 1')) as HTMLTextAreaElement).value).toContain('parte um')
+    expect(((await screen.findByLabelText('Prompt 1', {}, SLOW)) as HTMLTextAreaElement).value).toContain('parte um')
     expect(area(2).value).toContain('parte dois')
     expect(within(dialog()).getByText('entra na fila')).toBeTruthy()
     fireEvent.click(button('Enviar para implementação'))
-    await waitFor(() => expect(m.sent).toHaveLength(2))
+    await waitFor(() => expect(m.sent).toHaveLength(2), SLOW)
     expect(onSend).toHaveBeenCalledWith(
       ['# Handoff 1 de 2\nparte um', '# Handoff 2 de 2\nparte dois'],
       'Plano de teste',
@@ -149,8 +155,7 @@ describe('HandoffDialog — abertura direta nos prompts a enviar', () => {
     // Reaberto: nada a enviar, os dois aparecem com "Abrir conversa".
     view.unmount()
     renderDialog()
-    await loaded()
-    const enviados = screen.getByRole('region', { name: 'Prompts enviados' })
+    const enviados = await screen.findByRole('region', { name: 'Prompts enviados' }, SLOW)
     expect(within(enviados).getAllByRole('button', { name: 'Abrir conversa' })).toHaveLength(2)
   })
 

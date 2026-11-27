@@ -9,6 +9,26 @@ export interface InstallOptions {
   targetDir: string
   ports: readonly number[]
   token: string
+  /** Outra identidade para a cópia instalada (variante Homol): outra `key` dá outro
+   *  ID, e o Chrome mantém as duas extensões lado a lado. A origem não muda. */
+  identity?: ExtensionIdentity
+}
+
+export interface ExtensionIdentity {
+  key: string
+  name: string
+  shortName: string
+}
+
+/** Troca key, nome e título do manifest.json já copiado para a pasta instalada. */
+export function applyExtensionIdentity(manifestPath: string, identity: ExtensionIdentity): void {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+  manifest.key = identity.key
+  manifest.name = identity.name
+  manifest.short_name = identity.shortName
+  const action = manifest.action
+  if (action && typeof action === 'object') (action as Record<string, unknown>).default_title = identity.shortName
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
 /** Conteúdo do config.js gerado — script clássico carregado por importScripts. */
@@ -37,6 +57,7 @@ export function installExtensionFiles(opts: InstallOptions): string {
     filter: (src) => basename(src) !== 'config.js'
   })
   writeFileSync(join(opts.targetDir, 'config.js'), buildConfigJs(opts.ports, opts.token), 'utf8')
+  if (opts.identity) applyExtensionIdentity(join(opts.targetDir, 'manifest.json'), opts.identity)
   return opts.targetDir
 }
 

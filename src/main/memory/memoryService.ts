@@ -5,6 +5,7 @@ import { memorySummary } from '../memoryIndex'
 import { hashText } from '../persistence/hashes'
 import { StorageError, type MemoryEntry, type MemoryEntryStatus, type MemoryEntryWrite, type MemoryProposal, type MemoryProposalQuery, type MemoryRepository } from '../persistence/types'
 import { MEMORY_INDEX_FILENAME, MEMORY_PROPOSAL_MAX_ATTEMPTS, MEMORY_RETIRED_DIRNAME, normalizeMemoryProposal, normalizeMemoryRelPath, parseMemoryIndexBullets, parseMemoryIndexSections, renderMemoryIndexFile, type MemoryProposeInput } from './memoryModel'
+import { isSystemSymlink } from './memoryPaths'
 
 export type { MemoryProposeInput } from './memoryModel'
 export interface MemoryServiceOptions { log?: (line: string) => void }
@@ -181,6 +182,7 @@ export class MemoryService {
       cursor = join(cursor, segments[i])
       try {
         const stat = await lstat(cursor)
+        if (stat.isSymbolicLink() && isSystemSymlink(cursor)) continue
         if (stat.isSymbolicLink() || (i < segments.length - 1 && !stat.isDirectory())) {
           throw new Error(`Unsafe memory path (symlink/non-directory): ${cursor}`)
         }

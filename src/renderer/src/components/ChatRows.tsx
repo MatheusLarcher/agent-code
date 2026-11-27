@@ -11,7 +11,7 @@
  * "Comentar" e "Continuar nessa conta" — o resto (anexos, Baixar, Preview do
  * ToolCard, hora) sai igual.
  */
-import { Fragment, memo, useEffect, useState } from 'react'
+import { Fragment, memo, useEffect, useState, type ReactNode } from 'react'
 import { parseDownloads } from '@shared/ipc'
 import { modelDisplayName } from '@shared/modelLabel'
 import { useFreshOnce } from '../chatAnim'
@@ -21,8 +21,9 @@ import { createdPlanFile, PlanFileLink } from '../planning/PlanFileLink'
 import type { UIMessage } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { AccountSwitchNote } from './AccountSwitchNote'
+import { ElementRefText } from './elementPick/ElementRefText'
 import { TarefaAvisoNote } from './TarefaAvisoNote'
-import { IconBrain, IconCheck, IconCopy, IconSpeaker, IconStopSmall } from './Icons'
+import { IconBrain, IconCheck, IconChevronRight, IconCopy, IconSpeaker, IconStopSmall } from './Icons'
 import { CardRefText, type CardRefResolver } from './Markdown'
 import { LazyMarkdown } from './lazyMarkdown'
 import { QuotableMessage, type QuoteListApi } from './quoteComment/quoteBlocks'
@@ -163,6 +164,10 @@ type AssistantMsg = Extract<UIMessage, { kind: 'assistant-text' }>
 
 function UserRow({ m, ctx }: { m: UserMsg; ctx: ChatRowContext }): JSX.Element {
   const { resolveRef, onRetry, busy = false } = ctx
+  const plain = (t: string): ReactNode => (resolveRef ? <CardRefText text={t} resolveRef={resolveRef} /> : t)
+  // "[elemento N]" vira chip com dica; o resto segue o caminho de sempre ([[Card]] incluso).
+  const renderText = (t: string): ReactNode =>
+    m.elements?.length ? <ElementRefText text={t} elements={m.elements} renderText={plain} /> : plain(t)
   return (
     <div className="msg user" data-mid={m.id}>
       <div className={`bubble ${m.error ? 'has-error' : ''}`}>
@@ -196,12 +201,10 @@ function UserRow({ m, ctx }: { m: UserMsg; ctx: ChatRowContext }): JSX.Element {
             media={m.media}
             images={m.images}
             files={m.files}
-            renderText={(t) => (resolveRef ? <CardRefText text={t} resolveRef={resolveRef} /> : t)}
+            renderText={renderText}
           />
-        ) : resolveRef ? (
-          <CardRefText text={m.text} resolveRef={resolveRef} />
         ) : (
-          m.text
+          renderText(m.text)
         )}
       </div>
       {m.canceled && <div className="msg-canceled">⊘ Mensagem cancelada</div>}
@@ -323,7 +326,7 @@ export function ThinkingCard({ text, streaming = false }: { text: string; stream
   return (
     <div className="tool-card tool-thinking">
       <button type="button" className="tool-head" aria-expanded={open} title={open ? 'Esconder o pensamento' : 'Ver o que o agente pensou'} onClick={() => setOpen((o) => !o)}>
-        <span className="tool-caret">{open ? '▾' : '▸'}</span>
+        <IconChevronRight size={12} className={`tool-caret${open ? ' open' : ''}`} aria-hidden="true" />
         <span className="thinking-icon" aria-hidden="true">
           <IconBrain size={14} />
         </span>

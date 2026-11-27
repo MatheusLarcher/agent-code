@@ -1006,6 +1006,7 @@ export function BoardPanel({
           onClose={() => setSelected(null)}
           onOpenConversation={onOpenConversation}
           onDismiss={dismiss}
+          onReply={onCardReply}
           findItem={(id) => items.find((entry) => entry.id === id)}
           onOpenItem={setSelected}
         />

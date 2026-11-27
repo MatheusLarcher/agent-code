@@ -24,11 +24,20 @@ export interface LigacaoDeps {
   servidorSuporte: () => McpServerConfig
   /** Falha ao ligar o servidor: vai ao chat, sem endereço nem token. */
   aoFalhar?: (texto: string) => void
+  /** O que a sessão ligou depois de subir (rea, Android, Chrome sob demanda): toda troca os
+   *  repete, senão conectar no cliente os derrubaria. */
+  extras?: () => Record<string, McpServerConfig>
 }
 
 export interface LigacaoSuporte {
   /** Reaplica os servidores se o estado (interruptor, sessão) mudou. */
   aplicar(): Promise<void>
+  /** O `suporte` e o `remoto` ligados agora nesta conversa: quem troca os servidores por fora
+   *  (rea, Android, Chrome sob demanda) os repete, senão derrubaria o PC do cliente. */
+  servidores(): Record<string, McpServerConfig>
+  /** Roda uma troca de servidores feita por fora na mesma fila: duas trocas ao mesmo tempo
+   *  montariam listas diferentes e a última desfaria a outra. */
+  naFila<T>(troca: () => Promise<T>): Promise<T>
   desligar(): void
 }
 
@@ -38,6 +47,7 @@ export function ligarSuporteNaConversa(deps: LigacaoDeps): LigacaoSuporte {
   let suporte: McpServerConfig | null = deps.base[SUPORTE_SERVIDOR_INTERNO] ?? null
   // O que o processo do CLI tem agora: nasceu com a base, sem o `remoto`.
   let aplicado = `${suporte ? 1 : 0}|`
+  let ligados: Record<string, McpServerConfig> = suporte ? { [SUPORTE_SERVIDOR_INTERNO]: suporte } : {}
   let fila: Promise<void> = Promise.resolve()
   let ativa = true
 
@@ -54,26 +64,34 @@ export function ligarSuporteNaConversa(deps: LigacaoDeps): LigacaoSuporte {
     for (const [nome, config] of Object.entries(deps.base)) {
       if (nome !== SUPORTE_SERVIDOR_INTERNO && nome !== SUPORTE_SERVIDOR_REMOTO && ehInterno(config)) servidores[nome] = config
     }
-    if (ativado) servidores[SUPORTE_SERVIDOR_INTERNO] = suporte ??= deps.servidorSuporte()
-    if (remoto) servidores[SUPORTE_SERVIDOR_REMOTO] = remoto
+    Object.assign(servidores, deps.extras?.())
+    const nossos: Record<string, McpServerConfig> = {}
+    if (ativado) nossos[SUPORTE_SERVIDOR_INTERNO] = suporte ??= deps.servidorSuporte()
+    if (remoto) nossos[SUPORTE_SERVIDOR_REMOTO] = remoto
     try {
-      const resultado = await consulta.setMcpServers(servidores)
+      const resultado = await consulta.setMcpServers({ ...servidores, ...nossos })
       aplicado = alvo
       if (remoto && resultado.errors?.[SUPORTE_SERVIDOR_REMOTO]) {
+        delete nossos[SUPORTE_SERVIDOR_REMOTO]
         deps.aoFalhar?.('Não foi possível ligar as ferramentas do computador do cliente nesta conversa. Encerre a sessão de suporte e conecte de novo.')
       }
+      ligados = nossos
     } catch {
       // A consulta morreu no meio: a próxima sessão do agente reaplica ao subir.
     }
   }
 
-  const aplicar = (): Promise<void> => {
-    fila = fila.then(aplicarAgora, aplicarAgora)
-    return fila
+  const naFila = <T>(troca: () => Promise<T>): Promise<T> => {
+    const feita = fila.then(troca, troca)
+    fila = feita.then(() => undefined, () => undefined)
+    return feita
   }
+  const aplicar = (): Promise<void> => naFila(aplicarAgora)
   const sair = deps.servico.registrarConversa(deps.convId, aplicar)
   return {
     aplicar,
+    servidores: () => ({ ...ligados }),
+    naFila,
     desligar: () => {
       ativa = false
       sair()

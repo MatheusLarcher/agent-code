@@ -2,6 +2,7 @@
 // têm a mesma regra de segurança ("o alvo da ação, nunca o conteúdo"), e três
 // listas de chaves que ninguém garante iguais é como uma delas passa a vazar.
 export { summarizeCall } from '../vigia/vigiaPrompt'
+import { comCampos, dataCabecalho, lerCampos } from './cabecalho'
 
 /**
  * As regras puras do memorista — o observador que grava memória sozinho.
@@ -52,7 +53,8 @@ export const MEMORISTA_MAX_HOOK_CHARS = 160
  *  quase certamente está transcrevendo a conversa, não guardando um fato. */
 export const MEMORISTA_MAX_OPS = 3
 export const MEMORISTA_MAX_TITLE_CHARS = 80
-export const MEMORISTA_MAX_FACT_CHARS = 600
+/** Folgado de propósito (D49): o fato é a memória completa, não um resumo. */
+export const MEMORISTA_MAX_FACT_CHARS = 1500
 /** Profundidade máxima do caminho: `pasta/arquivo.md`. A pasta é o agrupamento
  *  que o acervo já usa; mais níveis é um acervo que ninguém acha nada. */
 export const MEMORISTA_MAX_PATH_DEPTH = 2
@@ -85,11 +87,31 @@ export const MEMORISTA_KINDS = [
 ] as const
 export type MemoristaKind = (typeof MEMORISTA_KINDS)[number]
 
+/**
+ * Campos do layout novo (D43, D48). Opcionais: a resposta no formato antigo (linhas com
+ * `|`) continua valendo e grava só o que tem. Ligações só para caminhos que existem.
+ */
+export interface MemoristaExtras {
+  tema?: string
+  /** 1–5 (D38): correção e decisão valem mais que detalhe. */
+  importancia?: number
+  gatilhos?: string[]
+  termos?: string[]
+  /** O que se estava fazendo quando a memória nasceu (D34). O projeto o app põe. */
+  contexto?: string
+  contradiz?: string[]
+  relacionadas?: string[]
+}
+
 export type MemoristaOp =
-  | { kind: 'create'; relPath: string; type: MemoristaKind; title: string; hook: string; fact: string }
+  | ({ kind: 'create'; relPath: string; type: MemoristaKind; title: string; hook: string; fact: string } & MemoristaExtras)
   /** COMPLEMENTA: o assunto já tem memória. Acrescenta ao corpo existente — a
    *  escrita nunca apaga o que já estava lá. */
-  | { kind: 'update'; relPath: string; fact: string }
+  | ({ kind: 'update'; relPath: string; fact: string } & Pick<MemoristaExtras, 'gatilhos' | 'termos' | 'contradiz'>)
+
+export const MEMORISTA_MAX_GATILHOS = 6
+export const MEMORISTA_MAX_TERMOS = 10
+const MEMORISTA_MAX_LIST_ITEM_CHARS = 80
 
 export const MEMORISTA_SYSTEM_PROMPT = `Você é o memorista: um observador que acompanha, em paralelo, um agente de programação trabalhando para um usuário. Você NÃO conversa com o agente, NÃO executa nada e NÃO interrompe o trabalho. Seu único trabalho é decidir o que deste turno merece virar MEMÓRIA de longo prazo do usuário.
 
@@ -112,22 +134,30 @@ NÃO SALVE:
 
 Antes de salvar, aplique o corte: se este fato aparecer na conversa de daqui a um mês, ele muda o que o agente vai fazer? Se não muda, cale.
 
-Responda com uma operação por linha, no formato exato:
+Antes de decidir, compare com MEMÓRIAS JÁ SALVAS (as mais parecidas com este turno):
+- MESMO assunto → COMPLEMENTA no caminho dela. Duas memórias sobre o mesmo assunto é pior do que nenhuma: na próxima conversa ninguém sabe qual vale.
+- O usuário CORRIGIU algo já salvo → COMPLEMENTA a mesma memória com o fato certo (o texto antigo fica no histórico).
+- Conflito sem vencedor claro → NOVA, com o caminho da outra em "contradiz", para as duas serem lidas juntas.
+- Assunto novo → NOVA, na pasta (tema) das parecidas mais próximas; pasta nova só se nenhuma servir.
 
-NOVA | <categoria> | <caminho.md> | <título> | <gancho> | <o fato>
-COMPLEMENTA | <caminho.md> | <o fato novo>
+Responda SOMENTE com JSON, neste formato (ou exatamente OK se não houver nada a guardar; na dúvida, OK):
 
-Se não houver nada a guardar, responda exatamente OK. Na dúvida, responda OK.
+{"operacoes": [
+  {"op": "NOVA", "categoria": "<categoria>", "caminho": "<tema>/<slug>.md", "tema": "<tema>", "titulo": "<título>", "gancho": "<quando importa>", "fato": "<o fato completo>", "importancia": 1-5, "gatilhos": ["..."], "termos": ["..."], "contexto": "<o que se estava fazendo>", "contradiz": [], "relacionadas": []},
+  {"op": "COMPLEMENTA", "caminho": "<caminho listado>", "fato": "<o fato novo>", "gatilhos": ["..."]}
+]}
 
 Regras inegociáveis:
-- <categoria> é uma destas, exatamente: ${MEMORISTA_KINDS.join(', ')}.
-- Se a lista MEMÓRIAS JÁ SALVAS tiver uma memória do MESMO assunto, use COMPLEMENTA no caminho dela. Duas memórias sobre o mesmo assunto é pior do que nenhuma: na próxima conversa ninguém sabe qual vale.
-- O <caminho.md> de COMPLEMENTA tem que ser um dos caminhos listados. Não invente caminho.
-- Em NOVA o caminho é um slug kebab-case terminando em .md (ex.: regra-de-nota-fiscal.md ou fiscal/nota-de-servico.md), e não pode ser um caminho que já existe na lista.
-- Um fato por memória. Se o turno ensinou duas coisas diferentes, são duas linhas.
-- O <gancho> é uma linha dizendo QUANDO esta memória importa — é o que o agente lê no índice para decidir se abre o arquivo.
-- O <fato> é escrito para quem não viu esta conversa: sem "isso", "aquilo" ou "como combinamos".
-- No máximo ${MEMORISTA_MAX_OPS} operações. Sem texto fora das linhas de operação.`
+- "categoria" é uma destas, exatamente: ${MEMORISTA_KINDS.join(', ')}.
+- O "caminho" de COMPLEMENTA, "contradiz" e "relacionadas" só aceitam caminhos listados. Não invente caminho.
+- Em NOVA o caminho é kebab-case terminando em .md, com no máximo uma pasta (ex.: fiscal/nota-de-servico.md), e não pode já existir.
+- "tema" é o projeto ou assunto, genérico e curto (ex.: apura, plataforma, opti). Reuse um de TEMAS EXISTENTES quando servir; "geral" só para o que vale em qualquer projeto (idioma, jeito de responder).
+- "gatilhos": 3 a ${MEMORISTA_MAX_GATILHOS} frases curtas de como ESTE usuário pediria algo em que a memória importa, com as palavras dele (informal, curto). "termos": até ${MEMORISTA_MAX_TERMOS} nomes próprios, siglas, números e sinônimos.
+- "importancia": 5 = correção ou regra que, esquecida, causa erro; 3 = útil; 1 = detalhe.
+- Um fato por memória. Se o turno ensinou duas coisas diferentes, são duas operações.
+- O "gancho" é uma linha dizendo QUANDO esta memória importa.
+- O "fato" é a memória COMPLETA, escrita para quem não viu esta conversa: sem "isso", "aquilo" ou "como combinamos". Não resuma demais: o cabeçalho serve para achar, o fato é o que será lido.
+- No máximo ${MEMORISTA_MAX_OPS} operações. Sem texto fora do JSON.`
 
 function clamp(text: string, max: number): string {
   const clean = (text ?? '').replace(/\s+/g, ' ').trim()
@@ -177,6 +207,8 @@ export interface MemoristaTurn {
   usedMemories?: readonly string[]
   /** A documentação do projeto, completa (ver `buildProjectOutline`). */
   docs?: string
+  /** Temas que o acervo já usa, com quantas memórias cada (para reusar em vez de inventar). */
+  temas?: ReadonlyArray<{ tema: string; memorias: number }>
 }
 
 /**
@@ -201,6 +233,9 @@ export function buildMemoristaDigest(turn: MemoristaTurn): string {
       ? ['(nenhuma)']
       : memories.map((memory) => `${memory.relPath} — ${clamp(memory.title, MEMORISTA_MAX_TITLE_CHARS)}: ${clamp(memory.hook, MEMORISTA_MAX_HOOK_CHARS)}`)),
     ...(omitted > 0 ? [`(+${omitted} memórias omitidas)`] : []),
+    ...(turn.temas?.length
+      ? ['', 'TEMAS EXISTENTES:', turn.temas.slice(0, 40).map((t) => `${t.tema} (${t.memorias})`).join(', ')]
+      : []),
     '',
     'MEMÓRIAS QUE O AGENTE JÁ TINHA NESTE TURNO:',
     ...(used.length === 0 ? ['(nenhuma)'] : used.map((relPath) => `- ${relPath}`)),
@@ -241,6 +276,8 @@ function asKind(raw: string): MemoristaKind | null {
 export function parseMemoristaVerdict(raw: string, knownPaths: Iterable<string>): MemoristaOp[] {
   const known = new Map<string, string>()
   for (const path of knownPaths) known.set(path.toLowerCase(), path)
+  const fromJson = parseJsonVerdict(raw, known)
+  if (fromJson) return fromJson
   const ops: MemoristaOp[] = []
   const seen = new Set<string>()
 
@@ -281,6 +318,97 @@ export function parseMemoristaVerdict(raw: string, knownPaths: Iterable<string>)
   return ops
 }
 
+function textList(raw: unknown, max: number): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out = [...new Set(raw.filter((x): x is string => typeof x === 'string').map((x) => clamp(x, MEMORISTA_MAX_LIST_ITEM_CHARS)).filter(Boolean))]
+  return out.length ? out.slice(0, max) : undefined
+}
+
+/** Só caminhos que estavam no digest (não se liga ao que não se viu). */
+function knownList(raw: unknown, known: ReadonlyMap<string, string>, self?: string): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out = raw
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => known.get(x.trim().replace(/\\/g, '/').toLowerCase()))
+    .filter((x): x is string => !!x && x.toLowerCase() !== self?.toLowerCase())
+  return out.length ? [...new Set(out)] : undefined
+}
+
+const TEMA_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/**
+ * A resposta em JSON (layout novo). `null` quando não há JSON — aí vale o formato antigo
+ * em linhas. Mesma régua do formato antigo: falha FECHADA por operação, caminho validado,
+ * COMPLEMENTA só sobre caminho conhecido, NOVA nunca sobre caminho existente.
+ */
+function parseJsonVerdict(raw: string, known: ReadonlyMap<string, string>): MemoristaOp[] | null {
+  const json = /\{[\s\S]*\}/.exec(raw ?? '')?.[0]
+  if (!json) return null
+  let data: unknown
+  try {
+    data = JSON.parse(json)
+  } catch {
+    return null
+  }
+  const list = (data as { operacoes?: unknown })?.operacoes
+  if (!Array.isArray(list)) return null
+  const ops: MemoristaOp[] = []
+  const seen = new Set<string>()
+  for (const item of list) {
+    if (ops.length >= MEMORISTA_MAX_OPS) break
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const str = (k: string): string => (typeof o[k] === 'string' ? (o[k] as string) : '')
+    const op = normalize(str('op'))
+    if (op === 'nova') {
+      const type = asKind(str('categoria'))
+      const relPath = str('caminho').trim().replace(/\\/g, '/').replace(/^\.\//, '')
+      if (!type || !isSafeMemoryPath(relPath)) continue
+      if (known.has(relPath.toLowerCase()) || seen.has(relPath.toLowerCase())) continue
+      const title = clamp(str('titulo'), MEMORISTA_MAX_TITLE_CHARS)
+      const hook = clamp(str('gancho'), MEMORISTA_MAX_HOOK_CHARS)
+      const fact = clamp(str('fato'), MEMORISTA_MAX_FACT_CHARS)
+      if (!title || !hook || !fact) continue
+      const tema = normalize(str('tema')).replace(/\s+/g, '-')
+      const imp = Number(o.importancia)
+      seen.add(relPath.toLowerCase())
+      ops.push({
+        kind: 'create', relPath, type, title, hook, fact,
+        ...(TEMA_SLUG.test(tema) ? { tema } : {}),
+        ...(Number.isInteger(imp) && imp >= 1 && imp <= 5 ? { importancia: imp } : {}),
+        ...(textList(o.gatilhos, MEMORISTA_MAX_GATILHOS) ? { gatilhos: textList(o.gatilhos, MEMORISTA_MAX_GATILHOS) } : {}),
+        ...(textList(o.termos, MEMORISTA_MAX_TERMOS) ? { termos: textList(o.termos, MEMORISTA_MAX_TERMOS) } : {}),
+        ...(clamp(str('contexto'), MEMORISTA_MAX_HOOK_CHARS) ? { contexto: clamp(str('contexto'), MEMORISTA_MAX_HOOK_CHARS) } : {}),
+        ...(knownList(o.contradiz, known) ? { contradiz: knownList(o.contradiz, known) } : {}),
+        ...(knownList(o.relacionadas, known) ? { relacionadas: knownList(o.relacionadas, known) } : {})
+      })
+      continue
+    }
+    if (op === 'complementa') {
+      const relPath = known.get(str('caminho').trim().replace(/\\/g, '/').toLowerCase())
+      if (!relPath || seen.has(relPath.toLowerCase())) continue
+      const fact = clamp(str('fato'), MEMORISTA_MAX_FACT_CHARS)
+      if (!fact) continue
+      seen.add(relPath.toLowerCase())
+      ops.push({
+        kind: 'update', relPath, fact,
+        ...(textList(o.gatilhos, MEMORISTA_MAX_GATILHOS) ? { gatilhos: textList(o.gatilhos, MEMORISTA_MAX_GATILHOS) } : {}),
+        ...(textList(o.termos, MEMORISTA_MAX_TERMOS) ? { termos: textList(o.termos, MEMORISTA_MAX_TERMOS) } : {}),
+        ...(knownList(o.contradiz, known, relPath) ? { contradiz: knownList(o.contradiz, known, relPath) } : {})
+      })
+    }
+  }
+  return ops
+}
+
+/** O que o app sabe na hora de gravar e o modelo não precisa dizer. */
+export interface MemoryWriteContext {
+  /** Agora (ms). Vira `criada`/`modificada` no cabeçalho (D43). */
+  now: number
+  /** Nome do projeto da conversa (pasta do cwd), para o `contexto` (D34). */
+  project?: string
+}
+
 /**
  * O corpo do arquivo novo.
  *
@@ -288,9 +416,9 @@ export function parseMemoristaVerdict(raw: string, knownPaths: Iterable<string>)
  * que o acervo já tem e que o índice sabe ler. `type` guarda a categoria da
  * régua: é o que permite, depois, olhar só as instruções ou só as preferências.
  */
-export function buildMemoryBody(op: Extract<MemoristaOp, { kind: 'create' }>): string {
+export function buildMemoryBody(op: Extract<MemoristaOp, { kind: 'create' }>, ctx?: MemoryWriteContext): string {
   const slug = op.relPath.split('/').at(-1)!.replace(/\.md$/i, '')
-  return [
+  const base = [
     '---',
     `name: ${slug}`,
     `description: ${op.hook}`,
@@ -301,6 +429,22 @@ export function buildMemoryBody(op: Extract<MemoristaOp, { kind: 'create' }>): s
     op.fact,
     ''
   ].join('\n')
+  if (!ctx) return base
+  // Layout novo (D43, D48): o cabeçalho para ACHAR; o corpo acima segue completo (D49).
+  // Sem `tema` declarado, vale a pasta do caminho — a mesma regra das fichas da busca.
+  const day = dataCabecalho(ctx.now)
+  const contexto = [ctx.project, op.contexto].filter(Boolean).join(' — ')
+  return comCampos(base, {
+    tema: op.tema ?? (op.relPath.includes('/') ? op.relPath.split('/')[0] : undefined),
+    criada: day,
+    modificada: day,
+    importancia: op.importancia ? String(op.importancia) : undefined,
+    contexto: contexto || undefined,
+    gatilhos: op.gatilhos,
+    termos: op.termos,
+    contradiz: op.contradiz,
+    relacionadas: op.relacionadas
+  })
 }
 
 /**
@@ -312,8 +456,29 @@ export function buildMemoryBody(op: Extract<MemoristaOp, { kind: 'create' }>): s
  * sem isso, o mesmo assunto voltando em dois turnos viraria duas revisões com o
  * mesmo texto.
  */
-export function appendFact(body: string, fact: string): string | null {
+export function appendFact(
+  body: string,
+  fact: string,
+  ctx?: MemoryWriteContext & Pick<MemoristaExtras, 'gatilhos' | 'termos' | 'contradiz'>
+): string | null {
   const current = body ?? ''
   if (normalize(current).includes(normalize(fact))) return null
-  return `${current.trimEnd()}\n${fact.trim()}\n`
+  const appended = `${current.trimEnd()}\n${fact.trim()}\n`
+  if (!ctx) return appended
+  // Versão nova da mesma memória: marca a modificação e soma os gatilhos/termos novos aos
+  // que já existiam (sem repetir), dentro dos tetos. Nada do que estava lá some.
+  const old = lerCampos(current)
+  const merge = (a: string[] | undefined, b: string[] | undefined, max: number): string[] | undefined => {
+    if (!b?.length) return undefined
+    const seen = new Set<string>()
+    return [...(a ?? []), ...b].filter((x) => !seen.has(normalize(x)) && seen.add(normalize(x))).slice(0, max)
+  }
+  return comCampos(appended, {
+    // `criada` não: a memória é antiga e a data certa está no banco — o bibliotecário a
+    // completa de lá (D42). Escrever "hoje" aqui seria inventar a idade dela.
+    modificada: dataCabecalho(ctx.now),
+    gatilhos: merge(old.gatilhos, ctx.gatilhos, MEMORISTA_MAX_GATILHOS + 2),
+    termos: merge(old.termos, ctx.termos, MEMORISTA_MAX_TERMOS),
+    contradiz: merge(old.contradiz, ctx.contradiz, 20)
+  })
 }

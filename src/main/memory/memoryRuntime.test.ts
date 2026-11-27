@@ -98,9 +98,9 @@ describe('configureMemoryRuntime — adoção do acervo em disco', () => {
 
     // Abrir o app é o que não pode falhar: importar memória se recupera na próxima passada.
     expect(() => configureMemoryRuntime(repository, directory)).not.toThrow()
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Espera o log da falha (até 5 s), não 50 ms fixos: com a suíte inteira rodando, a adoção demora mais (item 3.23).
+    await vi.waitFor(() => expect(logged.length).toBeGreaterThan(0), { timeout: 5_000 })
     expect(memoryService()).not.toBeNull()
-    expect(logged.length).toBeGreaterThan(0)
     spy.mockRestore()
   })
 })

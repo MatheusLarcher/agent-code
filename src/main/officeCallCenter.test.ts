@@ -6,7 +6,8 @@ import { createAppMcpServer } from './appTools'
 import { htmlTitle, OfficeCallCenter, parseCallsState } from './officeCallCenter'
 import { emitOfficeCall, setOfficeCallSink } from './officeCallRuntime'
 
-const notice = { id: 'toolu_1', convId: 'c1', cwd: 'C:\\proj\\loja', path: 'C:\\proj\\loja\\mockups\\vitrine.html', mensagem: 'olha', at: 5 }
+const proj = path.resolve('/proj/loja')
+const notice = { id: 'toolu_1', convId: 'c1', cwd: proj, path: path.join(proj, 'mockups', 'vitrine.html'), mensagem: 'olha', at: 5 }
 
 function setup(head = '<html><head><title>Vitrine &amp; Ofertas</title></head></html>') {
   const bridge = { call: vi.fn(), resolved: vi.fn() }

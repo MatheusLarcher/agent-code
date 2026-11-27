@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import type { Conversation } from '../types'
 import { useUI } from '../ui/UiProvider'
 import { IconSandbox, IconSpinner, ProjectGlyph } from './Icons'
@@ -272,6 +272,15 @@ export const SANDBOX_PAGE = 5
 export function Sidebar(props: Props): JSX.Element {
   const { collapsed, projects, recents, activeId } = props
   const ui = useUI()
+  // "Agent Code Homol" na variante Homol (barra lateral e título da janela).
+  const [appName, setAppName] = useState('Agent Code')
+  useEffect(() => {
+    void window.api?.getAppName?.().then((nome) => {
+      if (!nome) return
+      setAppName(nome)
+      document.title = nome
+    }).catch(() => undefined)
+  }, [])
   const tarefas = useResumosDeTarefas()
   // Project paths the user has manually collapsed (default: everything expanded).
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
@@ -430,7 +439,7 @@ export function Sidebar(props: Props): JSX.Element {
       <div className="sidebar-head">
         <div className="brand">
           <span className="logo">✦</span>
-          <span className="brand-text">Agent Code</span>
+          <span className="brand-text">{appName}</span>
         </div>
         <button className="sidebar-collapse" title="Minimizar barra" onClick={props.onToggleCollapse}>
           <IconPanel />

@@ -89,6 +89,24 @@ describe('servidor MCP app: app_postgres_nuvem', () => {
   })
 })
 
+describe('servidor MCP app: app_rodar_como_admin', () => {
+  it('só existe com o runner; schema valida na fronteira; recusa e erro viram isError', async () => {
+    expect(Object.keys(toolsOf(createAppMcpServer({ cwd })))).not.toContain('app_rodar_como_admin')
+    const runner = vi.fn(async () => ({ ok: false, text: 'O usuário recusou a confirmação' }))
+    const t = toolsOf(createAppMcpServer({ cwd, runAsAdmin: runner })).app_rodar_como_admin
+    const schema = t.inputSchema!
+    expect(schema.safeParse({ script: 'Get-Service', motivo: 'ver serviços' }).success).toBe(true)
+    expect(schema.safeParse({ script: 'x', motivo: 'm', timeout_s: 600 }).success).toBe(true)
+    expect(schema.safeParse({ script: '   ', motivo: 'm' }).success).toBe(false)
+    expect(schema.safeParse({ script: 'x', motivo: '' }).success).toBe(false)
+    expect(schema.safeParse({ script: 'x'.repeat(20_001), motivo: 'm' }).success).toBe(false)
+    expect(schema.safeParse({ script: 'x', motivo: 'm', timeout_s: 601 }).success).toBe(false)
+    expect(await run(t, { script: 'x', motivo: 'm' })).toMatchObject({ isError: true, content: [{ text: 'O usuário recusou a confirmação' }] })
+    const boom = toolsOf(createAppMcpServer({ cwd, runAsAdmin: async () => { throw new Error('quebrou') } })).app_rodar_como_admin
+    expect((await run(boom, { script: 'x', motivo: 'm' })).content[0].text).toMatch(/^Falhou: .*quebrou/)
+  })
+})
+
 describe('servidor MCP app: app_preparar_ghidra', () => {
   const pronto: GhidraDetect = { installDir: 'C:\\local\\ghidra', ghidraReady: true, version: '12.1.4', javaReady: true, javaHome: 'C:\\jdk', javaMajor: 21, envGhidraDir: null }
   const faltando: GhidraDetect = { ...pronto, ghidraReady: false, version: null }

@@ -18,8 +18,9 @@ interface Props {
 const OPTIONS: { id: MemorySelector; label: string; desc: string }[] = [
   {
     id: 'haiku',
-    label: 'Haiku',
-    desc: 'O Haiku lê os cabeçalhos de todas as memórias e a conversa e escolhe até 15 para o agente e os subagentes.'
+    // O id continua 'haiku' (config gravada); o modelo agora é o Sonnet 5.5 (memorySelectionHaiku.ts).
+    label: 'Sonnet',
+    desc: 'O Sonnet lê os cabeçalhos de todas as memórias e a conversa e escolhe até 15 para o agente e os subagentes.'
   },
   {
     id: 'typesafe',

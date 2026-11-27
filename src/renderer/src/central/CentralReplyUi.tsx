@@ -12,7 +12,7 @@ import { CentralWho } from './CentralGlyph'
 /** A seta de "responder" (traço, como os ícones do app). */
 function ReplyIcon(): JSX.Element {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="9 14 4 9 9 4" />
       <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
     </svg>

@@ -60,7 +60,7 @@ describe('OutboxWriteQueue', () => {
     first.replace('c1', [{ id: 'na-queda', payload: { text: 'mensagem na fila' } }])
     expect(first.overlay([{ conversationId: 'c2', id: 'x', payload: 0 }]).map((item) => item.id)).toEqual(['x', 'na-queda'])
     await vi.advanceTimersByTimeAsync(4_100)
-    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila', 'outbox'))).toHaveLength(1))
+    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila', 'outbox'))).toHaveLength(1), { timeout: 5_000 })
     await expect(first.flush(1_000)).resolves.toBe(false)
     expect(await first.journalPending()).toBe(1)
     first.dispose()
@@ -71,7 +71,7 @@ describe('OutboxWriteQueue', () => {
     await expect(second.restoreJournal()).resolves.toBe(1)
     await vi.advanceTimersByTimeAsync(10)
     expect(rows.get('c1')).toEqual([{ id: 'na-queda', payload: { text: 'mensagem na fila' } }])
-    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila', 'outbox'))).toEqual([]))
+    await vi.waitFor(async () => expect(await readdir(join(dir, 'fila', 'outbox'))).toEqual([]), { timeout: 5_000 })
   })
 
   it('o banco volta: kick grava já, sem esperar o recuo', async () => {

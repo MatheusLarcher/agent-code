@@ -117,6 +117,18 @@ describe('syncCacheSkills', () => {
     expect(existsSync(globalSkill)).toBe(false)
   })
 
+  it('variante Homol (exposeGlobally=false) lista as skills sem tocar no ~/.claude/skills', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'skill-manager-homol-'))
+    const skills = join(root, 'cache', 'skills')
+    const home = join(root, 'home')
+    await seedSkill(skills, 'dynamic', 'ativa')
+
+    const result = exposeCacheSkills(skills, home, 'PC-TESTE', false)
+    expect(result.errors).toEqual([])
+    expect(result.available).toEqual(['dynamic'])
+    expect(existsSync(join(home, '.claude', 'skills'))).toBe(false)
+  })
+
   it('não remove caminho externo citado por manifesto empacotado corrompido', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skill-manager-hostile-manifest-'))
     const app = join(root, 'app')

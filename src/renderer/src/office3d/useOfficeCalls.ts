@@ -29,6 +29,20 @@ interface CallsApi {
 }
 const api = (): CallsApi => (globalThis as { window?: { api?: CallsApi } }).window?.api ?? {}
 
+/**
+ * Avisa quem quiser (a aba Preview do App) de cada chamado NOVO que apareceu
+ * depois de o app abrir — os que já estavam abertos na largada não contam.
+ * Devolve a função que desliga o aviso.
+ */
+type NewCallListener = (call: OfficeCall) => void
+const newCallListeners = new Set<NewCallListener>()
+export function onNewOfficeCall(fn: NewCallListener): () => void {
+  newCallListeners.add(fn)
+  return () => {
+    newCallListeners.delete(fn)
+  }
+}
+
 /** Por que um chamado saiu da lista aberta. */
 export function endReason(call: OfficeCall, open: readonly OfficeCall[], feed: OfficeFeed | null, now: number): OfficeCallEnd {
   const mark = callMarks.reason(call.id)
@@ -47,6 +61,22 @@ export function useOfficeCalls(feed: OfficeFeed | null, officeActive: boolean): 
   const prev = useRef<readonly OfficeCall[]>([])
   const sent = useRef('')
   const [watchTick, setWatchTick] = useState(0)
+  // Chamados já vistos (para avisar só dos novos). null = ainda sem o primeiro feed.
+  const seen = useRef<Set<string> | null>(null)
+
+  useEffect(() => {
+    if (!feed) return
+    if (!seen.current) {
+      // Primeiro feed: o que já estava aberto é ponto de partida, não novidade.
+      seen.current = new Set(calls.map((c) => c.id))
+      return
+    }
+    for (const c of calls) {
+      if (seen.current.has(c.id)) continue
+      seen.current.add(c.id)
+      for (const fn of newCallListeners) fn(c)
+    }
+  }, [calls, feed])
 
   // "Olhando a sala" muda sem feed (a câmera anda): relê a cada WATCH_MS com a aba aberta.
   useEffect(() => {

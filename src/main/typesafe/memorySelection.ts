@@ -1,9 +1,9 @@
 import { choice } from '@typesafe-ai/sdk'
 import {
+  assembleMemories,
   listMemoryFiles,
-  memoryContextBlock,
+  pinnedMemoryPaths,
   rankMemoriesByQuery,
-  readMemoryBody,
   redactMemorySecrets,
   type MemoryFile
 } from '../memoryIndex'
@@ -15,9 +15,10 @@ import { askTypeSafe, typeSafeApiKey, typeSafeEnabled, type AskTypeSafeOptions }
  * Antes o app mandava o índice inteiro (MEMORY.md, ~227 cabeçalhos) em toda
  * conversa e mais três trechos cortados em 1600 caracteres, escolhidos por
  * casamento de palavra. Aqui a decisão é do TypeSafe: uma pergunta `choice` com
- * os CABEÇALHOS de todas as candidatas, e de 0 a 3 memórias voltam INTEIRAS,
- * relidas do disco na hora. Cabeçalho de memória não escolhida não entra no
- * prompt por caminho nenhum.
+ * os CABEÇALHOS de todas as candidatas, e de 0 a 3 memórias voltam relidas do
+ * disco na hora, com os mesmos tetos de trecho e de bloco dos outros seletores
+ * (`assembleMemories`). Cabeçalho de memória não escolhida não entra no prompt
+ * por caminho nenhum.
  */
 
 /** Teto de opções que uma pergunta `choice` aceita. Acima disso, pré-filtro lexical. */
@@ -235,22 +236,19 @@ export async function selectMemoriesWithTypeSafe(
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, MEMORY_SELECTION_MAX)
 
-    const blocks: string[] = []
-    const relPaths: string[] = []
-    const seen = new Set<string>()
-    for (const [relPath] of picked) {
-      if (seen.has(relPath)) continue
-      seen.add(relPath)
-      // Relida AGORA: o conteúdo do disco é o que vale, não o que foi lido para
-      // ranquear ou para montar o catálogo no início da conversa.
-      const body = readMemoryBody(dir, relPath)
-      if (!body) continue
-      blocks.push(memoryContextBlock(relPath, body))
-      // Só o que virou bloco entra na lista: o gate tem de ver o que o agente
-      // recebeu, não o que o serviço apontou.
-      relPaths.push(relPath)
-    }
-    return { block: blocks.join('\n\n'), relPaths }
+    // Mesma montagem dos outros seletores: cada memória é relida AGORA do disco
+    // (o conteúdo atual é o que vale), cortada em MAX_MEMORY_EXCERPT_CHARS com a
+    // marca, e o bloco inteiro fica dentro de MAX_TOTAL_EXCERPT_CHARS. `relPaths`
+    // traz só o que virou bloco: o gate tem de ver o que o agente recebeu.
+    // As marcadas `sempre` vão na frente, mesmo não escolhidas, e contam no teto.
+    // ponytail: aqui não há o "já enviado" da conversa (o bloco vai no hook a cada
+    // request); a marcada repete por turno até o agentSession passar pelo ledger.
+    const { block, relPaths } = assembleMemories(
+      dir,
+      [...pinnedMemoryPaths(dir), ...picked.map(([relPath]) => relPath)],
+      MEMORY_SELECTION_MAX
+    )
+    return { block, relPaths }
   } catch (error) {
     console.error(`[typesafe] seleção de memória descartada: ${(error as Error)?.message ?? error}`)
     return null

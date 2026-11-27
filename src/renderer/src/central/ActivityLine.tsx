@@ -1,10 +1,11 @@
 /**
  * A linha-resumo (o botão que abre os cartões de uma resposta), no desenho da
- * Central: terminada, ▸/▾ + resumo + "N ações"; rodando, o spinner (na cor
+ * Central: terminada, chevron (gira ao abrir) + resumo + "N ações"; rodando, o spinner (na cor
  * `--c` de quem monta), o resumo até ali e "agora: …". Usada pelos blocos da
  * Central e pelas respostas do chat (ChatStep).
  */
 import type { CentralActivity, CentralActivitySegment } from '@shared/central'
+import { IconChevronRight } from '../components/Icons'
 import { actionsLabel } from './centralView'
 
 const TONE_CLASS: Record<NonNullable<CentralActivitySegment['tone']>, string> = {
@@ -54,7 +55,7 @@ export function ActivityLine({ activity: a, running, open, onToggle, fallback = 
       aria-expanded={open}
       onClick={onToggle}
     >
-      {running ? <span className="central-spin" aria-hidden="true" /> : <span className="central-chev" aria-hidden="true">{open ? '▾' : '▸'}</span>}
+      {running ? <span className="central-spin" aria-hidden="true" /> : <IconChevronRight size={12} className={`central-chev${open ? ' open' : ''}`} aria-hidden="true" />}
       <span className="central-sum">
         {idle && !fallback ? (
           'trabalhando…'

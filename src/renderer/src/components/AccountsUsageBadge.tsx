@@ -1,9 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RateLimitStatus } from '@shared/ipc'
 import type { AccountUsageReading, ClaudeAccountView } from '@shared/claudeAccounts'
-import { accountDisplayName, readingToLimits, updatedAgo } from '../accounts/accountUsageView'
+import { accountDisplayName, barLimits, FIVE_HOUR_UNREAD, updatedAgo } from '../accounts/accountUsageView'
 import { IconChevronDown } from './Icons'
 import { UsagePill, UsageRing } from './UsageBadge'
+
+/** A pílula da janela de 5 h sem número: "—", nunca 0% usado nem 100% livre. */
+function FiveHourUnreadPill(): JSX.Element {
+  return (
+    <div className="usage-item">
+      <div className="ctx-bar usage-pill ok" title={`Sessão 5h: ${FIVE_HOUR_UNREAD}.`} aria-label={`Sessão 5h: ${FIVE_HOUR_UNREAD}`}>
+        <span className="ctx-bar-cap">Sessão 5h</span>
+        <span className="ctx-bar-track" />
+        <span className="ctx-bar-val">—</span>
+      </div>
+    </div>
+  )
+}
 
 /** Estado de uma seção enquanto o painel está aberto. */
 interface Live {
@@ -90,16 +103,21 @@ export function AccountsUsageBadge(props: Props): JSX.Element {
   const toggle = (key: string): void => props.onShownInBarChange({ ...shownInBar, [key]: !shown(key) })
   const activeIndex = accounts.findIndex((a) => a.id === activeAccountId)
   const active = activeIndex >= 0 ? accounts[activeIndex] : undefined
-  const activeLimits = active && shown(active.id) ? readingToLimits(active.usage) : []
+  const activeBar = active && shown(active.id) ? barLimits(active.usage) : { limits: [], fiveHourUnread: false }
+  const activeOnBar = activeBar.limits.length > 0 || activeBar.fiveHourUnread
   const gptOnBar = shown('gpt') ? props.gptLimits : []
 
   return (
     <div className={`usage-badge${open ? ' open' : ''}`} ref={rootRef}>
-      {active && activeLimits.length > 0 && (
-        <UsageRing name={`Claude · ${accountDisplayName(active, activeIndex)}`} initial="C" limits={activeLimits} />
+      {active && activeOnBar && (
+        <UsageRing
+          name={`Claude · ${accountDisplayName(active, activeIndex)}${activeBar.fiveHourUnread ? ` · ${FIVE_HOUR_UNREAD}` : ''}`}
+          initial="C"
+          limits={activeBar.limits}
+        />
       )}
       {gptOnBar.length > 0 && <UsageRing name="GPT" initial="G" limits={gptOnBar} />}
-      {activeLimits.length === 0 && gptOnBar.length === 0 && <span className="usage-provider muted">Uso</span>}
+      {!activeOnBar && gptOnBar.length === 0 && <span className="usage-provider muted">Uso</span>}
       <button
         type="button"
         className="usage-expand"
@@ -114,7 +132,7 @@ export function AccountsUsageBadge(props: Props): JSX.Element {
         <div className="usage-popover" role="dialog" aria-label="Consumo das contas">
           {accounts.map((account, index) => {
             const state = live[account.id]
-            const limits = readingToLimits(state?.reading ?? account.usage)
+            const { limits, fiveHourUnread } = barLimits(state?.reading ?? account.usage)
             const isActive = account.id === activeAccountId
             return (
               <section className={`usage-popover-section${isActive ? ' usage-account-active' : ''}`} key={account.id}>
@@ -124,8 +142,9 @@ export function AccountsUsageBadge(props: Props): JSX.Element {
                   {isActive && <span className="usage-account-tag">nesta conversa</span>}
                   <span className="usage-popover-hint">mostrar na barra</span>
                 </label>
-                {limits.length > 0 ? (
+                {limits.length > 0 || fiveHourUnread ? (
                   <div className="usage-popover-items">
+                    {fiveHourUnread && <FiveHourUnreadPill />}
                     {limits.map((l) => (
                       <UsagePill key={l.rateLimitType} limit={l} />
                     ))}

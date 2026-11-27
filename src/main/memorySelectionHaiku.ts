@@ -3,7 +3,10 @@ import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-a
 import {
   assembleMemories,
   listMemoryFiles,
+  MAX_SELECTED_MEMORIES,
+  MAX_TOTAL_EXCERPT_CHARS,
   memoryContextBlock,
+  pinnedMemoryPaths,
   rankMemoriesByQuery,
   redactMemorySecrets,
   selectMemoriesLexically,
@@ -26,7 +29,9 @@ import {
  * um subagente, vai no prompt dele (memory/memorySelector.ts).
  */
 
-export const HAIKU_MEMORY_MODEL = 'claude-haiku-5-5'
+// Sonnet 5.5 (decisão do usuário, 25/11; antes Haiku). Alguns segundos a mais que o Haiku,
+// que correm em paralelo com a preparação do envio (agentSession.send).
+export const MEMORY_SELECTOR_MODEL = 'claude-sonnet-5-5'
 /** Estourou, aborta e devolve null: o turno segue pela busca lexical.
  *  Medido com ~670 memórias e só os cabeçalhos: 6–9,5 s por pergunta. Com a
  *  conversa junto a pergunta chega a ~120 mil tokens, daí a folga maior. */
@@ -38,9 +43,10 @@ export const HAIKU_MEMORY_CANDIDATES = 1_000
 /** Quantas memórias, no máximo, entram num turno (ou num subagente). Próprio
  *  do Haiku: a busca lexical e o TypeSafe seguem com MAX_SELECTED_MEMORIES. */
 export const HAIKU_MEMORY_MAX = 15
-/** Teto do bloco do turno inteiro, em caracteres: os 50.000 de 10 memórias
- *  (MAX_TOTAL_EXCERPT_CHARS) na mesma proporção para 15. */
-export const HAIKU_MEMORY_MAX_CHARS = 75_000
+/** Teto do bloco do turno inteiro, em caracteres: o mesmo de todo seletor
+ *  (MAX_TOTAL_EXCERPT_CHARS, 6.000 desde 25/11/2026; antes 75.000). Cada
+ *  memória ainda é cortada em MAX_MEMORY_EXCERPT_CHARS com a marca de corte. */
+export const HAIKU_MEMORY_MAX_CHARS = MAX_TOTAL_EXCERPT_CHARS
 /**
  * Estimativa de tamanho da pergunta: ~3,5 caracteres por token, o meio-termo
  * entre texto em português (~4) e caminhos/JSON (~3). Não há tokenizador no
@@ -97,6 +103,9 @@ export interface HaikuMemoryDeps {
   /** Carimbo do envio (buildContextStamp): máquina, data, hora e fuso de
    *  AGORA — "hoje", "esta máquina" e afins só se resolvem com ele. */
   context?: string
+  /** Modelo que escolhe; ausente = MEMORY_SELECTOR_MODEL. O app não passa:
+   *  serve à medição comparativa (scripts/medicoes/avaliar-escolha-memorias.ts). */
+  model?: string
 }
 
 /** Cabeçalho de uma candidata: o que o Haiku vê, e nada além disso. */
@@ -211,9 +220,15 @@ async function* singlePrompt(text: string): AsyncIterable<SDKUserMessage> {
   } as SDKUserMessage
 }
 
-async function askHaiku(text: string, run: MemoryQuery, abortController: AbortController, env: NodeJS.ProcessEnv | undefined): Promise<string | null> {
+async function askHaiku(
+  text: string,
+  run: MemoryQuery,
+  abortController: AbortController,
+  env: NodeJS.ProcessEnv | undefined,
+  model: string = MEMORY_SELECTOR_MODEL
+): Promise<string | null> {
   const options: Options = {
-    model: HAIKU_MEMORY_MODEL,
+    model,
     systemPrompt: HAIKU_MEMORY_SYSTEM_PROMPT,
     // Sem `effort` (padrão `medium`, que aceita thinking desligado) e sem thinking.
     thinking: { type: 'disabled' },
@@ -225,6 +240,10 @@ async function askHaiku(text: string, run: MemoryQuery, abortController: AbortCo
     persistSession: false,
     // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
     settings: { autoMemoryEnabled: false },
+    // Sem hooks, MCP e CLAUDE.md do usuário/projeto: só escolhe memórias, e
+    // carregá-los dobrava a escolha (7,6 s → 3,5 s de mediana por mensagem,
+    // medido em docs/MEDICAO-INICIO-RESPOSTA.md).
+    settingSources: [],
     abortController,
     ...(env ? { env } : {})
   }
@@ -270,7 +289,7 @@ export async function selectMemoriesWithHaiku(dir: string, queryText: string, de
     })
     const run = deps.query ?? (query as MemoryQuery)
     const question = buildHaikuQuestion(input, candidates, deps.conversation, deps.subject, HAIKU_QUESTION_MAX_CHARS, deps.context)
-    const raw = await Promise.race([askHaiku(question, run, abortController, deps.env), timeout])
+    const raw = await Promise.race([askHaiku(question, run, abortController, deps.env, deps.model?.trim() || MEMORY_SELECTOR_MODEL), timeout])
     if (raw === null) return null
     const picked = parseHaikuMemoryChoice(raw)
     if (!picked) return null
@@ -294,13 +313,17 @@ export async function selectMemoriesWithHaiku(dir: string, queryText: string, de
 export class InjectedMemoryLedger {
   private readonly sent = new Map<string, string>()
 
+  /** Esta memória, com este texto, já foi injetada nesta conversa. */
+  has(entry: MemoryEntry): boolean {
+    return this.sent.get(entry.relPath) === createHash('sha256').update(entry.body).digest('hex')
+  }
+
   /** O bloco só com o que ainda não foi injetado igual; registra o que passou. */
   admit(entries: readonly MemoryEntry[]): string {
     const blocks: string[] = []
     for (const entry of entries) {
-      const hash = createHash('sha256').update(entry.body).digest('hex')
-      if (this.sent.get(entry.relPath) === hash) continue
-      this.sent.set(entry.relPath, hash)
+      if (this.has(entry)) continue
+      this.sent.set(entry.relPath, createHash('sha256').update(entry.body).digest('hex'))
       blocks.push(memoryContextBlock(entry.relPath, entry.body))
     }
     return blocks.join('\n\n')
@@ -324,11 +347,22 @@ export async function chooseTurnMemories(
   select: (dir: string, queryText: string) => Promise<HaikuMemorySelection | null> = selectMemoriesWithHaiku
 ): Promise<MemorySelection> {
   let entries: readonly MemoryEntry[] = []
+  let pinnedSent: string[] = []
   try {
-    const chosen = (await select(dir, queryText).catch(() => null)) ?? selectMemoriesLexically(dir, queryText)
+    const decided = await select(dir, queryText).catch(() => null)
+    const chosen = decided ?? selectMemoriesLexically(dir, queryText)
     entries = chosen.entries
+    // As marcadas `sempre` (frontmatter) entram mesmo sem ser escolhidas: na
+    // frente, uma vez por conversa, e contando no teto de memórias e caracteres.
+    const pinned = assembleMemories(dir, pinnedMemoryPaths(dir)).entries
+    const pending = pinned.filter((entry) => !ledger.has(entry))
+    pinnedSent = pinned.filter((entry) => ledger.has(entry)).map((entry) => entry.relPath)
+    if (pending.length > 0) {
+      const paths = [...pending.map((entry) => entry.relPath), ...chosen.relPaths]
+      entries = assembleMemories(dir, paths, decided ? HAIKU_MEMORY_MAX : MAX_SELECTED_MEMORIES, HAIKU_MEMORY_MAX_CHARS).entries
+    }
   } catch {
     entries = []
   }
-  return { block: ledger.admit(entries), relPaths: entries.map((entry) => entry.relPath) }
+  return { block: ledger.admit(entries), relPaths: [...new Set([...entries.map((entry) => entry.relPath), ...pinnedSent])] }
 }

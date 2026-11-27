@@ -71,6 +71,11 @@ export class SessionSkillCatalog {
   private managedSourceVersion = ''
   /** A content-level managed skill change still awaiting SDK confirmation. */
   private managedReloadPending = false
+  /** O que o modelo já viu das skills (fora dos níveis): a lista do SDK na subida,
+   *  depois o último anúncio. A próxima atualização leva só a diferença. */
+  private seen: DiscoveredSkill[] | null = null
+  /** A regra de uso das skills já foi enviada nesta conversa. */
+  private ruleSent = false
 
   constructor(
     private readonly cwd: string,
@@ -94,6 +99,9 @@ export class SessionSkillCatalog {
     // registry is never marked as loaded before that for this SDK process.
     this.catalogVersion = ''
     this.nativeRegistryVersion = ''
+    // A lista do SDK desta subida já leva nome e descrição destas skills.
+    this.seen = this.policy.tiered ? null : snapshot.skills
+    this.ruleSent = false
     return {
       roots: [...new Set(snapshot.skills.map((skill) => skill.root))],
       sdkSkills: this.policy.sdkSkills(snapshot.skills),
@@ -179,7 +187,13 @@ export class SessionSkillCatalog {
     if (confirmed.version === this.catalogVersion) return ''
 
     this.catalogVersion = confirmed.version
-    return renderSkillCatalogUpdate(confirmed)
+    // Em níveis o catálogo já é curto (nomes do nível baixo): vai inteiro.
+    const since = this.seen && { skills: this.seen, announced: this.ruleSent }
+    if (since) {
+      this.seen = confirmed.skills
+      this.ruleSent = true
+    }
+    return renderSkillCatalogUpdate(confirmed, since)
   }
 
   /** `/nome` de skill de nível baixo vira "leia e siga o SKILL.md". Desligado, nada muda. */

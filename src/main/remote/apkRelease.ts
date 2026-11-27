@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { variantProfile } from '../appVariant'
 
 /**
  * `android/` é gitignorada e recriada pelo `cap add android` (template antigo ou
@@ -102,20 +103,20 @@ async function ensureNoBackup(androidDir: string, onLine: (line: string) => void
 
 /**
  * @param rootDir projeto smartfone-remote (o package.json da versão fica no pai).
- * @param keysDir onde mora o keystore.properties de backup (padrão ~/.agent-code/keys).
+ * @param keysDir onde mora o keystore.properties de backup (padrão ~/.agent-code/keys; na Homol, ~/.agent-code-homol/keys).
  */
 export async function ensureReleaseConfig(
   rootDir: string,
   androidDir: string,
   onLine: (line: string) => void,
-  keysDir = join(homedir(), '.agent-code', 'keys')
+  keysDir = join(homedir(), variantProfile().homeDirName, 'keys')
 ): Promise<void> {
   const props = join(androidDir, 'keystore.properties')
   const hasProps = await readFile(props).then(() => true, () => false)
   if (!hasProps) {
     try {
       await copyFile(join(keysDir, 'keystore.properties'), props)
-      onLine('Assinatura release: keystore.properties restaurado de ~/.agent-code/keys.')
+      onLine(`Assinatura release: keystore.properties restaurado de ${keysDir}.`)
     } catch {
       onLine('Aviso: sem keystore.properties — o build release sai sem assinatura.')
     }

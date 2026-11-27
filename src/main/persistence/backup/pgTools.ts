@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PostgresConnectionDraft } from '../../../shared/ipc'
 import { POSTGRES_DATABASE } from '../bootstrapStore'
-import { childEnv } from '../localPostgres'
+import { childEnv, pgExe } from '../localPostgres'
 import { StorageError } from '../types'
 
 /**
@@ -153,7 +153,7 @@ export async function runPgToolChecked(
 ): Promise<void> {
   const { env, dispose } = await pgToolEnv(draft)
   try {
-    const result = await run(join(binDir, `${tool}.exe`), args, env, signal)
+    const result = await run(pgExe(binDir, tool), args, env, signal)
     if (result.code !== 0) throw pgToolFailure(tool, result)
   } finally {
     await dispose()

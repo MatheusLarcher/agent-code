@@ -7,6 +7,7 @@ import { ChatPanel } from './ChatPanel'
 import { ChatDisplayContext } from './chatDisplay'
 import { ManagerChatFloat } from '../planning/ManagerChatFloat'
 import { UiProvider } from '../ui/UiProvider'
+import { pickModel } from './modelSelect.testing'
 
 afterEach(() => {
   cleanup()
@@ -150,10 +151,10 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
       'chat-header',
       'windows-control-banner',
       'message-list-wrap',
-      'last-usage-float',
       'composer-bar',
       'composer'
     ])
+    expect(container.querySelector('.composer-bar > .last-usage-float')).toBeTruthy()
   })
 
   it('no painel flutuante do planejamento: consumo só maximizado, sem "Última resposta" e sem aviso do Windows', () => {
@@ -173,7 +174,7 @@ describe('ChatPanel — modo compacto (ChatDisplayContext)', () => {
 describe('ChatPanel — barra de controles da sessão', () => {
   it('modelo e esforço estão na barra; Econômico e Loop não existem mais', () => {
     const { container } = renderPanel()
-    expect(container.querySelector('select.model-select')).toBeTruthy()
+    expect(container.querySelector('button.model-select')).toBeTruthy()
     expect(container.querySelector('.effort-picker')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
@@ -183,8 +184,8 @@ describe('ChatPanel — barra de controles da sessão', () => {
     const onModelChange = vi.fn()
     const { container } = renderPanel({ onModelChange })
     expect(container.querySelector('.effort-picker')).toBeTruthy()
-    const select = container.querySelector('select.model-select') as HTMLSelectElement
-    fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })
+    const select = container.querySelector('button.model-select') as HTMLButtonElement
+    pickModel(select, 'claude-sonnet-5-5')
     expect(onModelChange).toHaveBeenCalledWith('claude-sonnet-5-5')
     expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
   })
@@ -201,10 +202,11 @@ describe('ChatPanel — coluna estreita sem mexer no chat em largura normal', ()
     expect(classesOf(container.querySelector('.chat-panel'))).toEqual([
       'chat-header',
       'message-list-wrap',
-      'last-usage-float',
       'composer-bar',
       'composer'
     ])
+    // A "Última resposta" mora na barra do modelo, logo depois do Rápido.
+    expect(classesOf(container.querySelector('.composer-bar')).at(-1)).toBe('last-usage-float')
     expect(classesOf(container.querySelector('.composer-row'))).toEqual([
       'ref-wrap',
       'ref-btn',
@@ -258,6 +260,14 @@ describe('ChatPanel — botão "agora" na fila', () => {
 })
 
 describe('ChatPanel — faixa de trabalho', () => {
+  it('limite com nova tentativa agendada: só o cartão da espera, sem "trabalhando" nem "Pensando"', () => {
+    const recovery = { id: 'r', reason: 'limit' as const, scheduledAt: Date.now() + 60_000, attempt: 0, maxAttempts: 3, errorText: 'limit', messageId: null }
+    renderPanel({ busy: true, recovery })
+    expect(document.querySelector('.working-banner')).toBeNull()
+    expect(screen.queryByText(/Pensando/)).toBeNull()
+    expect(screen.getByText('Limite do Claude atingido')).toBeTruthy()
+  })
+
   it('ocupado, a faixa diz "Agent está trabalhando" — o turno pode ser de outro modelo além do Claude', () => {
     renderPanel({ busy: true })
     expect(document.querySelector('.working-banner')?.textContent).toBe('Agent está trabalhando')

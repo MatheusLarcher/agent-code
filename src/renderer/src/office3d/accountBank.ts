@@ -107,7 +107,11 @@ export function accountBank(feed: AccountFeed | null | undefined, now: number): 
     const five = limits.five_hour
     const week = limits.seven_day
     const rejected = five?.status === 'rejected'
-    const pct = five ? (rejected ? 0 : Math.round((1 - Math.min(1, Math.max(0, five.utilization ?? 0))) * 100)) : a.usage ? 100 : null
+    // Sem leitura de 5 h: a API não mandou a janela (five_hour: null) ou mandou só o horário, sem o número.
+    // Ausência de dado não é 100% cheia. Janela vencida é janela nova (100%).
+    const raw = a.usage?.windows.five_hour
+    const read = raw?.utilization != null || (raw?.resetsAt != null && raw.resetsAt <= now)
+    const pct = !five || !read ? null : rejected ? 0 : Math.round((1 - Math.min(1, Math.max(0, five.utilization ?? 0))) * 100)
     return {
       id: a.id,
       name: accountDisplayName(a, i),

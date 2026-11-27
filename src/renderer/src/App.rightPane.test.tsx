@@ -1,6 +1,6 @@
 /**
- * No App inteiro: o painel da direita tem exatamente duas abas — Quadro (padrão)
- * e Scrum Master —, o trilho recolhido oferece as duas, a aba Scrum Master mostra
+ * No App inteiro: o painel da direita tem três abas — Quadro (padrão), Scrum
+ * Master e Preview —, o trilho recolhido oferece as três, a aba Scrum Master mostra
  * o Diário e abre a conversa do cartão, e a largura salva antes da troca de nome
  * (browserWidth) continua valendo.
  */
@@ -62,7 +62,7 @@ afterEach(() => {
 describe('App — painel da direita: Quadro e Scrum Master', () => {
   it('duas abas, Quadro por padrão, na largura salva com o nome antigo; o Diário só é lido ao abrir a aba dele', async () => {
     const { scrumPanel } = boot({ browserMinimized: false, browserWidth: 512 })
-    await waitFor(() => expect(paneTabs()).toEqual(['Quadro', 'Scrum Master']))
+    await waitFor(() => expect(paneTabs()).toEqual(['Quadro', 'Scrum Master', 'Preview']))
     expect(document.querySelector('.pane-tab.on')?.textContent).toBe('Quadro')
     expect((document.querySelector('.right-pane') as HTMLElement).style.flex).toBe('0 0 512px')
     expect(document.querySelector('.browser-panel')).toBeNull()
@@ -84,7 +84,7 @@ describe('App — painel da direita: Quadro e Scrum Master', () => {
       expect(el).toBeTruthy()
       return el as HTMLElement
     })
-    expect([...rail.querySelectorAll('.right-rail-btn')].map((b) => b.textContent)).toEqual(['Quadro', 'Scrum Master'])
+    expect([...rail.querySelectorAll('.right-rail-btn')].map((b) => b.textContent)).toEqual(['Quadro', 'Scrum Master', 'Preview'])
     expect(screen.queryByRole('button', { name: /Navegador/ })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Scrum Master' }))

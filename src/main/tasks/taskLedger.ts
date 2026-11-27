@@ -18,6 +18,7 @@ import type {
   TaskStepFinish,
   TaskTransition
 } from '../persistence/types'
+import { createBoardCardForTask, syncBoardCardOnTransition, type TaskBoardPort } from './taskBoardSync'
 
 export {
   TASK_TRANSITIONS,
@@ -38,6 +39,7 @@ export {
  */
 export class TaskLedger {
   private repository: TaskRepository
+  private board: TaskBoardPort | null = null
 
   constructor(repository: PersistenceRepository | TaskRepository) {
     this.repository = repository
@@ -48,8 +50,18 @@ export class TaskLedger {
     this.repository = repository
   }
 
+  /** Quadro onde as tarefas aparecem como cartões (`taskBoardSync.ts`); `null` desliga. */
+  attachBoard(board: TaskBoardPort | null): void {
+    this.board = board
+  }
+
   createTask(input: TaskCreate): Promise<Task> {
     return this.repository.createTask(input)
+  }
+
+  /** Cria e vincula o cartão da tarefa no Quadro. `null` sem quadro ou se falhar. */
+  async createBoardCard(task: Task): Promise<string | null> {
+    return this.board ? createBoardCardForTask(this.board, this, task) : null
   }
 
   /** Oldest claimable `pending` task, leased to `agentId`; `null` when there is none. */
@@ -61,14 +73,17 @@ export class TaskLedger {
     return this.repository.renewTaskLease(taskId, fence)
   }
 
-  transitionTask(
+  async transitionTask(
     taskId: string,
     from: TaskStatus,
     to: TaskStatus,
     fence?: LeaseFence,
     details?: Pick<TaskTransition, 'agent' | 'reason'>
   ): Promise<Task> {
-    return this.repository.transitionTask({ taskId, from, to, fence, ...details })
+    const task = await this.repository.transitionTask({ taskId, from, to, fence, ...details })
+    // Aqui, e não na ferramenta: o reaper também transiciona, e o cartão tem de acompanhar.
+    if (this.board) await syncBoardCardOnTransition(this.board, this, task, details?.reason)
+    return task
   }
 
   appendStep(input: TaskStepAppend): Promise<TaskStep> {

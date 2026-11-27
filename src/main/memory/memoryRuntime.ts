@@ -5,7 +5,9 @@ import type { MemoryRepository } from '../persistence/types'
 import { MemoryService } from './memoryService'
 import { SecretVault, VAULT_FILENAME, type SecretMetadata } from './secretVault'
 import { createVaultCipher, type VaultCipher } from './vaultKey'
-import { mirrorVaultToDatabase, restoreVaultFromDatabase } from './vaultMirror'
+import { mirrorVaultToDatabase, restoreVaultFromDatabase, VAULT_MIRROR_KEY, type VaultRestore } from './vaultMirror'
+import { deriveKey, isWrapped, loadLocalKey, MIN_PASSPHRASE_CHARS, saveLocalKey, unwrapEnvelope, wrappedSalt, type LocalSeal, type PassphraseKey } from './vaultPassphrase'
+import { readPersistedKv } from '../persistence/kvFacade'
 import type { SecretSink } from './memorySecrets'
 
 /**
@@ -22,6 +24,12 @@ let vault: SecretVault | null = null
 let memoriesDir: string | null = null
 let cipher: VaultCipher | null = null
 let vaultDir: string | null = null
+/** Frase-senha do cofre (vaultPassphrase.ts): o banco está na nuvem? e o selo local da chave. */
+let isCloud: () => Promise<boolean> = async () => false
+let localSeal: LocalSeal | null = null
+let passphraseKey: PassphraseKey | null = null
+let pendingRestore = false
+const LOCAL_KEY_FILENAME = 'frase.local'
 
 export interface SecretVaultDeps {
   /**
@@ -127,16 +135,64 @@ function vaultFile(): string | null {
  * Chamado na inicialização, DEPOIS do banco: é o caminho de quem migrou
  * levando só o `agent-code.db`.
  */
-export async function restoreVault(): Promise<'restored' | 'kept-existing' | 'no-mirror' | 'failed'> {
+export async function restoreVault(): Promise<VaultRestore> {
   const file = vaultFile()
   if (!file) return 'failed'
-  return restoreVaultFromDatabase(file)
+  const key = currentPassphraseKey()
+  const result = await restoreVaultFromDatabase(file, key?.key ?? null)
+  pendingRestore = result === 'needs-passphrase'
+  // Também limpa um espelho antigo em claro se o banco agora é a nuvem (D18).
+  if (result !== 'needs-passphrase') await mirror()
+  return result
 }
 
 /** Reespelha o cofre no banco. Toda gravação passa por aqui. */
 async function mirror(): Promise<void> {
   const file = vaultFile()
-  if (file) await mirrorVaultToDatabase(file)
+  if (file) await mirrorVaultToDatabase(file, { cloud: await isCloud().catch(() => true), key: currentPassphraseKey() })
+}
+
+/** Liga a frase-senha: o main diz como saber se o banco é a nuvem e como selar a chave neste PC. */
+export function configureVaultPassphrase(deps: { isCloud: () => Promise<boolean>; seal: LocalSeal | null }): void {
+  isCloud = deps.isCloud
+  localSeal = deps.seal
+  passphraseKey = null
+}
+
+function currentPassphraseKey(): PassphraseKey | null {
+  if (!passphraseKey && vaultDir && localSeal) passphraseKey = loadLocalKey(join(vaultDir, LOCAL_KEY_FILENAME), localSeal)
+  return passphraseKey
+}
+
+export interface VaultPassphraseStatus {
+  /** Este PC já tem a frase-senha (guardada pelo sistema). */
+  set: boolean
+  /** O banco em uso é a nuvem. */
+  cloud: boolean
+  /** O cofre da nuvem está embrulhado e este PC ainda não tem a frase para abri-lo. */
+  pendingRestore: boolean
+}
+
+export async function vaultPassphraseStatus(): Promise<VaultPassphraseStatus> {
+  return { set: !!currentPassphraseKey(), cloud: await isCloud().catch(() => false), pendingRestore }
+}
+
+/**
+ * Define (ou confirma, em outro PC) a frase-senha. Se o banco já tem um cofre
+ * embrulhado, a frase precisa abrir ESSE cofre: usa o sal dele e confere.
+ */
+export async function setVaultPassphrase(passphrase: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!vaultDir) return { ok: false, error: 'O cofre não está disponível neste PC.' }
+  if (passphrase.trim().length < MIN_PASSPHRASE_CHARS) return { ok: false, error: `A frase-senha precisa de pelo menos ${MIN_PASSPHRASE_CHARS} caracteres.` }
+  const stored = await readPersistedKv(VAULT_MIRROR_KEY).catch(() => null)
+  const salt = stored && isWrapped(stored) ? wrappedSalt(stored) : null
+  const k = deriveKey(passphrase, salt ?? undefined)
+  if (stored && salt && !unwrapEnvelope(stored, k.key)) return { ok: false, error: 'Essa frase-senha não abre o cofre que está na nuvem.' }
+  passphraseKey = k
+  if (localSeal) saveLocalKey(join(vaultDir, LOCAL_KEY_FILENAME), k, localSeal)
+  if (pendingRestore) await restoreVault()
+  else await mirror()
+  return { ok: true }
 }
 
 /** The narrow slice `sanitizeProposal` needs. Null when unavailable on this device. */

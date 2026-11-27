@@ -9,6 +9,7 @@ import { act, cleanup, configure, fireEvent, render, screen, waitFor } from '@te
 import type { BackgroundTask, ChatEvent, TurnEndWait } from '@shared/ipc'
 import { App } from './App'
 import { UiProvider } from './ui/UiProvider'
+import { pickModel } from './components/modelSelect.testing'
 import { cbs, conv, emit, installApi, KEY, sentTexts, seedStorage, stored, toC1, typeInConversation, type FakeApi } from './central/centralAppKit'
 
 configure({ asyncUtilTimeout: 10_000 })
@@ -169,13 +170,13 @@ describe('subagentes em segundo plano seguram a fila', () => {
 
   it('troca de modelo com a conversa ociosa e subagente: não derruba a sessão; entra quando ele acaba', async () => {
     mount()
-    const select = (): HTMLSelectElement => document.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => document.querySelector('button.model-select') as HTMLButtonElement
     await typeInConversation('primeira')
     await waitFor(() => expect(sentTexts(api)).toEqual(['primeira']))
     await emit(background([agent]))
     await emit(result)
     await flush()
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select(), 'claude-sonnet-5-5')
     await flush()
     expect(api.disposeAgent).not.toHaveBeenCalled()
     expect(screen.getAllByText(/entra quando os subagentes em segundo plano terminarem/).length).toBeGreaterThan(0)

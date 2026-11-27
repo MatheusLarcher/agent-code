@@ -27,7 +27,7 @@ describe('applyInboundMcpOptions', () => {
     const servers = { forgia: { command: 'forgia.exe', args: ['mcp.cjs'], env: { ELECTRON_RUN_AS_NODE: '1' } } }
     const out = applyInboundMcpOptions(base, { cliente: 'Forgia', mcpServers: servers })
     expect(out).toEqual({ ...base, model: MCP_TASK_MODEL, skipPermissions: true, inboundMcp: { cliente: 'Forgia', servers } })
-    expect(MCP_TASK_MODEL).toBe('claude-opus-5-5')
+    expect(MCP_TASK_MODEL).toBe('claude-sonnet-5-5')
   })
 
   it('modelo da tarefa: esforço recortado ao teto do modelo e modo rápido só onde existe', () => {
@@ -134,7 +134,7 @@ describe('McpInbound', () => {
         resume: 'sdk-1',
         autoPrompt: { message: 'dois', history: [{ who: 'user', text: 'um' }, { who: 'agent', text: 'ok' }] }
       })
-      expect(inbound.sessionOptions({ ...opts, resume: 'sdk-1' }).model).toBe('claude-opus-5-5')
+      expect(inbound.sessionOptions({ ...opts, resume: 'sdk-1' }).model).toBe(MCP_TASK_MODEL)
       expect(inbound.restartForSend('c1', send('dois', dois.id), live(MCP_TASK_MODEL))).toBeNull()
       // Conversa comum: nada disso vale.
       expect(inbound.sessionOptions({ ...opts, convId: 'c2' }).model).toBe('claude-opus-5-5')

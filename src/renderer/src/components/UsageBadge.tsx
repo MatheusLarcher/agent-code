@@ -81,9 +81,16 @@ function labelOf(limit: RateLimitStatus): string {
 }
 
 type Level = 'ok' | 'warn' | 'crit'
-const pctOf = (limit: RateLimitStatus): number => Math.min(100, (limit.utilization ?? 0) * 100)
-function levelOf(limit: RateLimitStatus): Level {
+/** % usado; `null` sem leitura (número ausente NÃO é 0% — item 3.16). */
+const pctOf = (limit: RateLimitStatus): number | null =>
+  typeof limit.utilization === 'number' ? Math.min(100, limit.utilization * 100) : null
+/** O % para mostrar: "—" sem leitura. */
+const pctText = (limit: RateLimitStatus): string => {
   const pct = pctOf(limit)
+  return pct === null ? '—' : `${pct.toFixed(0)}%`
+}
+function levelOf(limit: RateLimitStatus): Level {
+  const pct = pctOf(limit) ?? 0
   return limit.status === 'rejected' || pct >= 95 ? 'crit' : limit.status === 'allowed_warning' || pct >= 80 ? 'warn' : 'ok'
 }
 
@@ -100,13 +107,13 @@ export function UsagePill({ limit }: { limit: RateLimitStatus }): JSX.Element {
     <div className="usage-item">
       <div
         className={`ctx-bar usage-pill ${level}`}
-        title={`${EXPLAIN[limit.rateLimitType]} ${pct.toFixed(0)}% usado${resetHint}.`}
+        title={pct === null ? `${EXPLAIN[limit.rateLimitType]} Sem leitura${resetHint}.` : `${EXPLAIN[limit.rateLimitType]} ${pct.toFixed(0)}% usado${resetHint}.`}
       >
         <span className="ctx-bar-cap">{label}</span>
         <span className="ctx-bar-track">
-          <span className="ctx-bar-fill" style={{ width: `${pct}%` }} />
+          <span className="ctx-bar-fill" style={{ width: `${pct ?? 0}%` }} />
         </span>
-        <span className="ctx-bar-val">{pct.toFixed(0)}%</span>
+        <span className="ctx-bar-val">{pctText(limit)}</span>
       </div>
       {resetText && <span className="usage-reset">{resetText}</span>}
     </div>
@@ -135,7 +142,7 @@ function Arc({ r, limit }: { r: number; limit?: RateLimitStatus }): JSX.Element 
           cy="14"
           r={r}
           pathLength={100}
-          strokeDasharray={`${pctOf(limit)} 100`}
+          strokeDasharray={`${pctOf(limit) ?? 0} 100`}
         />
       )}
     </>
@@ -149,7 +156,7 @@ export function UsageRing({ name, initial, limits }: { name: string; initial: st
   const session = pick(limits, SESSION_TYPES)
   const weekly = pick(limits, WEEKLY_TYPES)
   const worst = limits.some((l) => levelOf(l) === 'crit') ? 'crit' : limits.some((l) => levelOf(l) === 'warn') ? 'warn' : 'ok'
-  const summary = limits.map((l) => `${labelOf(l)} ${pctOf(l).toFixed(0)}%`).join(', ')
+  const summary = limits.map((l) => `${labelOf(l)} ${pctText(l)}`).join(', ')
   return (
     <div className={`usage-ring ${worst}`} tabIndex={0} role="img" aria-label={`${name}: ${summary}`}>
       <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
@@ -164,7 +171,7 @@ export function UsageRing({ name, initial, limits }: { name: string; initial: st
         {limits.map((l) => (
           <div className={`usage-ring-row ${levelOf(l)}`} key={l.rateLimitType}>
             <span>{labelOf(l)}</span>
-            <b>{pctOf(l).toFixed(0)}%</b>
+            <b>{pctText(l)}</b>
             <small>{l.resetsAt ? fmtResetsAt(l.resetsAt) : ''}</small>
           </div>
         ))}

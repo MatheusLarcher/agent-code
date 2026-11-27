@@ -2,6 +2,7 @@
  * Constantes do servidor MCP de entrada (contrato Forgia → Agent Code). Cada
  * uma mora num lugar só: trocar exige publicar os dois apps juntos.
  */
+import { variantProfile } from '../appVariant'
 
 /** Token fixo do contrato, igual nos dois apps (decisão do usuário). Público —
  *  o Forgia é código aberto —, então só barra chamada acidental; o que barra
@@ -9,8 +10,10 @@
 export const MCP_INBOUND_TOKEN = 'fgac_cFCfAYvVfH0UxI4ZppNsH9s58YSpSmcDd5SSBBso4qc'
 
 /** Faixa 47110–47149 (40 portas): sem registro na IANA, fora da efêmera do
- *  Windows (49152+) e das exclusões Hyper-V/WSL conhecidas desta máquina. */
-export const MCP_INBOUND_PORT_START = 47110
+ *  Windows (49152+) e das exclusões Hyper-V/WSL conhecidas desta máquina.
+ *  A variante Homol começa em 47150 (appVariant.ts): o Forgia, que varre a faixa
+ *  principal, nunca a encontra por engano. */
+export const MCP_INBOUND_PORT_START = variantProfile().mcpInboundPortStart
 export const MCP_INBOUND_PORT_COUNT = 40
 
 export const MCP_PROTOCOL_VERSION = '2025-06-18'

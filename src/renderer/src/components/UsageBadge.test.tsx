@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, fireEvent } from '@testing-library/react'
-import { UsageBadge } from './UsageBadge'
+import { UsageBadge, UsagePill } from './UsageBadge'
 import type { RateLimitStatus } from '@shared/ipc'
 
 afterEach(cleanup)
@@ -98,5 +98,12 @@ describe('UsageBadge — Claude e GPT lado a lado', () => {
     expect(boxes).toHaveLength(2)
     fireEvent.click(boxes[1])
     expect(onChange).toHaveBeenCalledWith({ claude: true, gpt: false })
+  })
+})
+
+describe('UsagePill — sem leitura', () => {
+  it('número ausente mostra "—", não 0%', () => {
+    const { container } = render(<UsagePill limit={{ rateLimitType: 'five_hour', status: 'allowed' } as RateLimitStatus} />)
+    expect(container.querySelector('.ctx-bar-val')?.textContent).toBe('—')
   })
 })

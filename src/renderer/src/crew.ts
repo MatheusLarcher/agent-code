@@ -232,6 +232,10 @@ export interface CrewInput {
   busy: boolean
   /** Quando o turno começou (epoch ms). */
   busySince: number | null
+  /** Nova tentativa agendada (`conv.recovery.reason` com `scheduledAt > 0`, o
+   *  mesmo sinal do `onHold` do ChatPanel). A conversa segue `busy` para segurar
+   *  a fila, mas ninguém trabalha: o Principal não conta no "N trabalhando". */
+  retryHold?: 'limit' | 'transient' | null
   /** Dúvida do vigia aberta nesta conversa, se houver. */
   vigia: { at: number } | null
   /** Último diagnóstico do PO desta conversa. */
@@ -448,6 +452,12 @@ export function buildCrew(input: CrewInput): CrewMember[] {
     ...(input.busy && input.busySince != null ? { startedAt: input.busySince } : {})
   }
   if (!input.busy) principal.badge = { text: 'ocioso', tone: 'plain' }
+  else if (input.retryHold) {
+    principal.state = 'idle'
+    delete principal.startedAt
+    principal.line = [txt(input.retryHold === 'limit' ? 'esperando o limite de uso liberar' : 'esperando para tentar de novo')]
+    principal.badge = { text: 'esperando', tone: 'warn' }
+  }
 
   const members: CrewMember[] = [principal]
   for (const role of SPECIALIST_ROLES) {

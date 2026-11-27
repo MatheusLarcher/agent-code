@@ -33,6 +33,14 @@ export function claudeLoginBusyFor(configDir?: string): boolean {
  * `configDir` logs in one Claude account's own folder (CLAUDE_CONFIG_DIR);
  * without it, the machine's login — as before multiple accounts existed.
  */
+/** Encerra o login em andamento (o processo do CLI) e o resolve como `false`. */
+let cancelCurrent: (() => void) | null = null
+export function cancelClaudeLogin(): boolean {
+  if (!cancelCurrent) return false
+  cancelCurrent()
+  return true
+}
+
 export function runClaudeLogin(
   openUrl: (url: string) => void,
   log: (line: string) => void,
@@ -93,6 +101,7 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
     const finish = (ok: boolean): void => {
       if (done) return
       done = true
+      cancelCurrent = null
       clearTimeout(timer)
       try {
         child.kill()
@@ -100,6 +109,11 @@ async function doLogin(openUrl: (url: string) => void, log: (line: string) => vo
         /* already exited */
       }
       resolve(ok)
+    }
+
+    cancelCurrent = () => {
+      log('login cancelado pelo usuário')
+      finish(false)
     }
 
     // Only check after this login reports success, never poll the old login.
