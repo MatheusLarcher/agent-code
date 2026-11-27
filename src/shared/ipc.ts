@@ -1992,7 +1992,7 @@ export interface AppUpdateState {
   canInstallNow: boolean
   /** O que segura a instalação agora (uma frase), quando há algo segurando. */
   blockedBy: string | null
-  /** Atualização só manual (ex.: a Homol, publicada num repositório privado): a frase que
+  /** Atualização só manual: a frase que
    *  diz de onde baixar. Presente = o app não verifica sozinho. */
   manual?: string | null
 }
@@ -2452,7 +2452,7 @@ export const Channels = {
   // renderer -> main (invoke)
   /** Read the app version from package.json (shown in the Settings screen). */
   appGetVersion: 'app:get-version',
-  /** Nome visível do app: "Agent Code Homol" na variante Homol. */
+  /** Nome visível do app: "Agent Code". */
   appGetName: 'app:get-name',
   /** Atualização automática (main/appUpdate/): o estado atual e cada mudança dele (main → tela). */
   updateStateGet: 'update:state-get',
@@ -2520,11 +2520,6 @@ export const Channels = {
   /** Vault: explicit deletion from the settings screen. */
   secretVaultDelete: 'secret-vault:delete',
   secretVaultPassphraseStatus: 'secret-vault:passphrase-status',
-  /** Importar conversas do Agent Code original para a Homol (main/importar/). */
-  importarPrincipalListar: 'importar-principal:listar',
-  importarPrincipalImportar: 'importar-principal:importar',
-  importarAutoStatus: 'importar-principal:auto-status',
-  importarAutoSet: 'importar-principal:auto-set',
   secretVaultSetPassphrase: 'secret-vault:set-passphrase',
   /** Memory proposals that failed, for the settings screen. */
   memoryConflicts: 'memory:conflicts',

@@ -1,6 +1,5 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { variantProfile } from './appVariant'
 import { devDataDir } from './devDataDir'
 
 /**
@@ -8,11 +7,10 @@ import { devDataDir } from './devDataDir'
  * embutido e o SQLite da configuração: `%LOCALAPPDATA%\agent-code`. Nunca a pasta
  * de dados escolhida pelo usuário (costuma ser o OneDrive, que trava e sincroniza
  * arquivo no meio da escrita) nem o `%APPDATA%` (perfil móvel). Na instância
- * isolada de desenvolvimento (`AGENT_CODE_DEV_DATA_DIR`), dentro dela. Na
- * variante Homol, `agent-code-homol` (appVariant.ts).
+ * isolada de desenvolvimento (`AGENT_CODE_DEV_DATA_DIR`), dentro dela.
  */
 export function machineLocalDir(): string {
-  const name = variantProfile().dirName
+  const name = 'agent-code'
   const dev = devDataDir()
   if (dev) return join(dev, 'localappdata', name)
   // macOS: Application Support é o equivalente local (fora do iCloud Drive).

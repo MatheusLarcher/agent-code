@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { app, shell } from 'electron'
 import { loadConfig, updateConfig } from '../config'
 import type { ChromeBridgeStatus } from '../../shared/chromeBridge'
-import { HOMOL_CHROME_EXTENSION_ID, HOMOL_CHROME_EXTENSION_KEY, isHomol } from '../appVariant'
 import { CHROME_EXTENSION_ID } from './extensionId'
 import {
   installExtensionFiles,
@@ -41,16 +40,8 @@ async function ensureToken(): Promise<string> {
   return token
 }
 
-/** Na variante Homol a extensão instalada ganha outra key (outro ID) e outro nome,
- *  para conviver no mesmo Chrome com a do app principal. */
-const HOMOL_IDENTITY: ExtensionIdentity = {
-  key: HOMOL_CHROME_EXTENSION_KEY,
-  name: 'Agent Code Homol — Controle do Chrome',
-  shortName: 'Agent Code Homol'
-}
-
 function extensionId(): string {
-  return isHomol() ? HOMOL_CHROME_EXTENSION_ID : CHROME_EXTENSION_ID
+  return CHROME_EXTENSION_ID
 }
 
 function install(token: string): string {
@@ -58,8 +49,7 @@ function install(token: string): string {
     sourceDir: sourceDir(),
     targetDir: targetDir(),
     ports: CHROME_BRIDGE_PORTS,
-    token,
-    identity: isHomol() ? HOMOL_IDENTITY : undefined
+    token
   })
 }
 

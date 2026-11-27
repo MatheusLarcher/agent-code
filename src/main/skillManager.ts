@@ -16,7 +16,6 @@ import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 // Sem devDataDir (que importa 'electron'): este módulo roda também no worker de
 // sincronização (skills/skillSyncWorker.ts). Quem chama resolve a home do dev.
-import { isHomol } from './appVariant'
 import { directoryDigest, skillNames, VALID_SKILL_DIRECTORY } from './skillDirs'
 import { bundledSkillSources, kitSkillNames, kitsDigest, type SkillKitId } from './skillKits'
 
@@ -192,9 +191,7 @@ export function exposeCacheSkills(
   skillsDir: string,
   userHome: string = homedir(),
   machine: string = hostname(),
-  // A variante Homol não escreve no ~/.claude/skills (é do app principal): as
-  // sessões dela leem as skills pela raiz nativa (ensureNativeSkillRoot).
-  exposeGlobally: boolean = !isHomol()
+  exposeGlobally: boolean = true
 ): SkillSyncResult {
   const globalRoot = join(userHome, '.claude', 'skills')
   const errors: string[] = []

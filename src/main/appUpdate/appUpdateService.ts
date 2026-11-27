@@ -51,7 +51,7 @@ export interface AppUpdateServiceDeps {
   /** Só em desenvolvimento com AGENT_CODE_DEV_UPDATE_FEED=1 (devUpdateFeed.ts). */
   devFeedConfigPath?: string | null
   /** Atualização só manual: a frase de onde baixar. Com ela, nenhuma verificação é feita
-   *  (nem a automática nem o "Verificar agora") — a Homol sai de um repositório privado,
+   *  (nem a automática nem o "Verificar agora") —
    *  e o feed do GitHub responde 404 sem login. */
   manual?: string | null
   now?: () => Date

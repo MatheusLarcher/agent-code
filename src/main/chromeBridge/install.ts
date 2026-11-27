@@ -9,7 +9,7 @@ export interface InstallOptions {
   targetDir: string
   ports: readonly number[]
   token: string
-  /** Outra identidade para a cópia instalada (variante Homol): outra `key` dá outro
+  /** Outra identidade para a cópia instalada: outra `key` dá outro
    *  ID, e o Chrome mantém as duas extensões lado a lado. A origem não muda. */
   identity?: ExtensionIdentity
 }

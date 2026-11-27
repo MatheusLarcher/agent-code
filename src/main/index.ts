@@ -111,7 +111,6 @@ import { initStore, getCacheInfo, setCacheDir } from './store'
 import { storageLifecycle } from './persistence/lifecycle'
 import { LocalPostgres, localPostgresPaths } from './persistence/localPostgres'
 import { machineLocalDir } from './machineLocalDir'
-import { isHomol, variantProfile } from './appVariant'
 import { DatabaseBackups } from './persistence/backup/databaseBackups'
 import { sideOf } from './persistence/backup/switchSupport'
 import { registerDatabaseBackupIpc } from './databaseBackupIpc'
@@ -200,8 +199,6 @@ import { sessionLeaseRenewal } from './persistence/conversationWriteRecovery'
 import { saveAttachments, resolvePastedPath, downloadPastedUrl, buildAttachmentNote, splitImagesForNote, stashDraftAttachment, discardDraftAttachments, promoteDraftAttachments } from './attachments'
 import { startMemoryCuratorScheduler } from './memoryCurator'
 import { iniciarBibliotecario } from './memoria/orquestracao/bibliotecarioApp'
-import { iniciarImportacao } from './importar/importacaoApp'
-import { sanitizeProposal } from './memory/memorySecrets'
 import { configureTaskBoard, taskLedger } from './tasks/taskRuntime'
 import { buildTaskBoard, buildTaskDetail, type TaskBoardQuery } from './tasks/taskBoard'
 import { startTaskReaper } from './tasks/taskReaper'
@@ -281,7 +278,6 @@ routeInteractiveReads(ipcMain)
 let mainWindow: BrowserWindow | null = null
 let stopMemoryCurator: (() => void) | null = null
 let stopBibliotecario: (() => void) | null = null
-let stopImportacao: (() => void) | null = null
 let stopTaskReaper: (() => void) | null = null
 let stopHandoffSweep: (() => void) | null = null
 let stopRestartGuardFile: (() => void) | null = null
@@ -974,10 +970,7 @@ function appUpdateService(): AppUpdateService {
       const file = state.phase === 'pronta' ? appUpdate?.pendingInstaller() : null
       if (file && state.version) void fastUpdateStager()?.stage(file, state.version)
     },
-    devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath()),
-    // A Homol é publicada em erickxc/agent-code, privado: o feed do GitHub responde 404 sem
-    // login. Atualização só manual (decisão do Erick, 27/11), sem a mensagem de erro.
-    manual: isHomol() ? 'Atualização manual: baixe a versão nova em github.com/erickxc/agent-code/releases' : null
+    devFeedConfigPath: devUpdateFeedConfigPath(process.env, app.isPackaged, app.getAppPath())
   })
   return appUpdate
 }
@@ -1090,8 +1083,6 @@ function updateShutdownSteps(): ShutdownStep[] {
         stopMemoryCurator = null
         stopBibliotecario?.()
         stopBibliotecario = null
-        stopImportacao?.()
-        stopImportacao = null
         stopTaskReaper?.()
         stopTaskReaper = null
         stopHandoffSweep?.()
@@ -1937,7 +1928,7 @@ export function registerIpc(): void {
     else pending.resolve()
   })
   ipcMain.handle(Channels.appGetVersion, () => app.getVersion())
-  ipcMain.handle(Channels.appGetName, () => (isHomol() ? 'Agent Code Homol' : 'Agent Code'))
+  ipcMain.handle(Channels.appGetName, () => 'Agent Code')
   // Atualização automática (appUpdate/appUpdateService.ts): o estado e o "Verificar agora".
   ipcMain.handle(Channels.updateStateGet, () => appUpdateService().snapshot())
   ipcMain.handle(Channels.updateCheckNow, () => appUpdateService().checkNow())
@@ -2145,19 +2136,6 @@ export function registerIpc(): void {
   ipcMain.handle(Channels.secretVaultSetPassphrase, (_e, passphrase: unknown) =>
     typeof passphrase === 'string' ? setVaultPassphrase(passphrase) : { ok: false, error: 'Frase-senha inválida.' }
   )
-  // Importar conversas do Agent Code original — manual e automática (só na Homol; a origem
-  // é lida numa cópia). Ver importar/importacaoApp.ts.
-  stopImportacao = iniciarImportacao({
-    handle: (canal, fn) => ipcMain.handle(canal, fn),
-    disponivel: () => isHomol(),
-    binDir: () => postgresPaths().binDir,
-    tmpDir: () => app.getPath('temp'),
-    dadosDir: () => app.getPath('userData'),
-    repositorio: () => storageLifecycle.repository(),
-    memoria: () => memoryService(),
-    sanitize: async (input) => (await sanitizeProposal(input, { vault: secretSink() })).input,
-    log: (line) => console.log(line)
-  })
   ipcMain.handle(Channels.memoryConflicts, async (): Promise<MemoryConflictItem[]> => {
     const service = memoryService()
     if (!service) return []
@@ -3374,8 +3352,7 @@ if (!app.isPackaged && process.env.AGENT_CODE_DEV_PG_DELAY_MS) {
 // agent-preview do preview (main/preview/previewProtocol.ts).
 registerPrivilegedSchemes([{ scheme: MOCKUP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 // Notificação do Windows: o AppUserModelID tem de ser o do atalho do instalador (appId do electron-builder).
-// Na Homol, o appId dela (electron-builder.homol.yml / appVariant.ts).
-if (process.platform === 'win32') app.setAppUserModelId(variantProfile().appUserModelId)
+if (process.platform === 'win32') app.setAppUserModelId('com.larchertech.agentcode')
 
 /** Os chamados do agente: a notificação do Windows e os avisos da ponte (officeCallCenter.ts). */
 function setupOfficeCalls(): void {

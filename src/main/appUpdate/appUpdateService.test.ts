@@ -69,7 +69,7 @@ describe('AppUpdateService', () => {
     expect(updater.logger).not.toBeNull()
   })
 
-  it('atualização manual (Homol): não consulta o GitHub e diz de onde baixar, sem erro', async () => {
+  it('atualização manual: não consulta o GitHub e diz de onde baixar, sem erro', async () => {
     const { updater, service } = setup({ manual: 'Atualização manual: baixe em X' })
     let consultou = false
     updater.script = async () => {

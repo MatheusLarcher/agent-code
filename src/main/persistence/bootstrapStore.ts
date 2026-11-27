@@ -3,15 +3,14 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import type { PostgresConnectionDraft, PostgresPublicSettings, StorageBackend } from '../../shared/ipc'
-import { variantProfile } from '../appVariant'
 import { StorageError } from './types'
 
 export const POSTGRES_DATABASE = 'agent-code' as const
 /** Porta preferida do PostgreSQL embutido: fora da 5432 (pode ser de outro
  *  Postgres do usuário) e abaixo da faixa dinâmica do Windows (49152+), onde o
  *  WinNAT/Hyper-V reserva blocos inteiros. Ocupada, o app escolhe outra e grava.
- *  45432 no app principal; 45442 na variante Homol (appVariant.ts). */
-export const LOCAL_POSTGRES_PORT = variantProfile().postgresPort
+ *  */
+export const LOCAL_POSTGRES_PORT = 45432
 
 const connectionSchema = z.object({
   host: z.string().trim().min(1).max(255),

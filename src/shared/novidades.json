@@ -2,6 +2,13 @@
   "proxima": [],
   "versoes": [
     {
+      "versao": "0.1.197",
+      "data": "2026-11-27",
+      "itens": [
+        "O Agent Code volta a ser um app só: a cópia de testes \"Agent Code Homol\" deixou de existir, e tudo o que ela tinha de novo já está no Agent Code normal."
+      ]
+    },
+    {
       "versao": "0.1.196",
       "data": "2026-11-27",
       "itens": [
@@ -42,7 +49,6 @@
         "Sem leitura de uso, a barra mostra \"—\" em vez de 0%.",
         "A escolha das memórias que vão junto com a sua mensagem passou a ser feita pelo Sonnet 5.5.",
         "Cofre com frase-senha: com o banco na nuvem, as senhas do cofre só vão para lá cifradas por uma frase que só você sabe, e abrem em outro computador com ela. Sem a frase, o cofre fica só neste computador.",
-        "Agora dá para instalar uma segunda cópia do app, a \"Agent Code Homol\", para testar novidades sem mexer no Agent Code que você já usa: cada uma tem seu atalho, suas conversas, suas memórias e suas configurações, e as duas podem ficar abertas ao mesmo tempo.",
         "O memorista agora confere as memórias mais parecidas antes de guardar uma nova, e completa a que já existe em vez de criar outra igual. Cada memória nova também guarda o assunto, a data e alguns jeitos de você costumar pedir aquilo, para ser achada mais fácil depois.",
         "Novo: o bibliotecário, que de hora em hora separa as memórias por assunto, junta as repetidas e completa as antigas. Nunca apaga nada. Ele começa só mostrando o que faria; para deixá-lo organizar de verdade, vá em Configurações, no item do memorista.",
         "Acabamento visual: as palavras das respostas aparecem mais rápido e sem borrão, os títulos quebram linha sem deixar palavra sozinha, números que mudam não fazem a tela tremer, botões pequenos ficaram mais fáceis de clicar, ícones ficaram uniformes e as animações respeitam o modo de movimento reduzido do Windows.",
@@ -62,11 +68,7 @@
         "A setinha de abrir e fechar volta a girar na Central e no resumo de quando você esteve fora, e na escolha do modelo dá para digitar um nome com espaço sem a lista fechar.",
         "Novo: \"Primeiros passos\" na conversa vazia. Quem abre o Agent Code pela primeira vez passa pela conta e modelo, pelas memórias, pela pasta de dados (OneDrive) e pelos ajudantes e voz — cada passo abre a parte certa das Configurações — e termina fazendo o primeiro pedido com um exemplo. Quem já sabe usar clica em \"Já sei usar, pular\".",
         "Quando há uma versão nova pronta, o botão de atualização no topo pisca até você abrir o aviso, para não passar despercebido.",
-        "Na Homol, o \"Verificar atualização\" não mostra mais o erro 404: ela é atualizada à mão, e Configurações passa a dizer de onde baixar a versão nova (github.com/erickxc/agent-code/releases).",
-        "Novo na Homol, em Configurações › Dados: \"Importar conversas do Agent Code\". Mostra as conversas do Agent Code instalado neste computador; você marca as que quer e elas entram aqui, ao lado das suas, para continuar de onde parou. O Agent Code não é mexido e nada daqui é substituído.",
-        "Cartões do Quadro que esperam a sua decisão agora têm o botão \"Pode fazer\" (ou o campo de resposta) também quando você abre o cartão — antes só dava para dispensar.",
-        "A Homol agora se apresenta como \"Agent Code Homol\" na barra lateral e no título da janela.",
-        "Importação automática: a cada 30 minutos a Homol traz sozinha as conversas novas do Agent Code e as memórias que elas usaram, sem duplicar. Conversa que você continuou lá é atualizada aqui, desde que você não tenha mexido nela na Homol. Dá para desligar em Configurações › Dados."
+        "Cartões do Quadro que esperam a sua decisão agora têm o botão \"Pode fazer\" (ou o campo de resposta) também quando você abre o cartão — antes só dava para dispensar."
       ]
     },
     {

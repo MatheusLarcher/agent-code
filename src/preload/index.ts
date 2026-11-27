@@ -319,10 +319,6 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   deleteSecret: (name: string) => ipcRenderer.invoke(Channels.secretVaultDelete, name),
   vaultPassphraseStatus: () => ipcRenderer.invoke(Channels.secretVaultPassphraseStatus),
   setVaultPassphrase: (passphrase: string) => ipcRenderer.invoke(Channels.secretVaultSetPassphrase, passphrase),
-  importarPrincipalListar: () => ipcRenderer.invoke(Channels.importarPrincipalListar),
-  importarPrincipalImportar: (ids: string[]) => ipcRenderer.invoke(Channels.importarPrincipalImportar, ids),
-  importarAutoStatus: () => ipcRenderer.invoke(Channels.importarAutoStatus),
-  importarAutoSet: (ligado: boolean) => ipcRenderer.invoke(Channels.importarAutoSet, ligado),
   listMemoryConflicts: () => read(Channels.memoryConflicts),
   discardMemoryProposal: (id: string) => ipcRenderer.invoke(Channels.memoryDiscardProposal, id),
   tasksBoard: (

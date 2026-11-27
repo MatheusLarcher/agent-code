@@ -243,7 +243,7 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi, Supor
   getAppVersion(): Promise<string>
   /** Resumo técnico para o "Reportar problema / sugerir melhoria" (versão, Windows, GPU). */
   feedbackDiagnostico(): Promise<FeedbackDiagnostico>
-  /** Nome visível do app ("Agent Code" ou "Agent Code Homol"). */
+  /** Nome visível do app. */
   getAppName?(): Promise<string>
   /** Atualização automática: o estado atual (fase, versão, progresso, se pode instalar agora). */
   getUpdateState(): Promise<AppUpdateState>
@@ -386,16 +386,6 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi, Supor
   vaultPassphraseStatus(): Promise<{ set: boolean; cloud: boolean; pendingRestore: boolean }>
   /** Define ou confirma a frase-senha do cofre (mín. 12 caracteres). */
   setVaultPassphrase(passphrase: string): Promise<{ ok: true } | { ok: false; error: string }>
-  /** Importar do Agent Code original (só na Homol): lista as conversas de lá (lidas numa cópia). */
-  importarPrincipalListar(): Promise<
-    | { ok: true; conversas: Array<{ id: string; titulo: string; pasta: string | null; atualizadaEm: string | null; pedidos: number; jaExiste: boolean }> }
-    | { ok: false; error: string }
-  >
-  /** Importação automática (de 30 em 30 min): ligada? quando foi a última e o que trouxe. */
-  importarAutoStatus(): Promise<{ disponivel: boolean; ligado: boolean; ultimaEm: string | null; ultimoResumo: string | null }>
-  importarAutoSet(ligado: boolean): Promise<{ ok: true } | { ok: false; error: string }>
-  /** Grava as escolhidas ao lado das que já existem (nunca sobrescreve). */
-  importarPrincipalImportar(ids: string[]): Promise<{ ok: true; importadas: number; puladas: number; falhas: string[] } | { ok: false; error: string }>
   /** Memory proposals that failed to apply. */
   listMemoryConflicts(): Promise<MemoryConflictItem[]>
   /** Removes one settled proposal from the conflicts list. */

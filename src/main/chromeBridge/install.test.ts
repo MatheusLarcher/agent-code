@@ -58,7 +58,7 @@ describe('instalador da extensão', () => {
     expect(buildConfigJs([5], TOKEN)).toBe(`self.AGENT_CODE_CONFIG = {"ports":[5],"token":"${TOKEN}"}\n`)
   })
 
-  it('com identidade (Homol) grava key, nome e título no manifest copiado, não no original', () => {
+  it('com identidade grava key, nome e título no manifest copiado, não no original', () => {
     const src = source()
     const original = { version: '1.2.3', action: { default_title: 'Agent Code' } }
     writeFileSync(join(src, 'manifest.json'), JSON.stringify(original))

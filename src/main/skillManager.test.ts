@@ -117,7 +117,7 @@ describe('syncCacheSkills', () => {
     expect(existsSync(globalSkill)).toBe(false)
   })
 
-  it('variante Homol (exposeGlobally=false) lista as skills sem tocar no ~/.claude/skills', async () => {
+  it('exposeGlobally=false lista as skills sem tocar no ~/.claude/skills', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skill-manager-homol-'))
     const skills = join(root, 'cache', 'skills')
     const home = join(root, 'home')

@@ -272,7 +272,6 @@ export const SANDBOX_PAGE = 5
 export function Sidebar(props: Props): JSX.Element {
   const { collapsed, projects, recents, activeId } = props
   const ui = useUI()
-  // "Agent Code Homol" na variante Homol (barra lateral e título da janela).
   const [appName, setAppName] = useState('Agent Code')
   useEffect(() => {
     void window.api?.getAppName?.().then((nome) => {

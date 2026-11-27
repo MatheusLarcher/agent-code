@@ -6,7 +6,6 @@ import { createSocket } from 'node:dgram'
 import { randomBytes } from 'node:crypto'
 import { basename, extname, join, normalize, sep } from 'node:path'
 import { canonicalPath, downloadablesFromEvent, downloadablesFromMessages } from '../downloadAllowlist'
-import { variantProfile } from '../appVariant'
 import { OfficeCallsBridge } from './officeCallsBridge'
 import { HandoffNoticeBridge } from './handoffNoticeBridge'
 import { servePlanningRoute } from './planningBridge'
@@ -108,8 +107,8 @@ export interface RemoteServerDeps {
   appIpc?: Pick<AppIpcBridge, 'invoke'>
 }
 
-/** 8765 no app principal; 8785 na variante Homol (appVariant.ts) — +20 de folga cada. */
-const DEFAULT_PORT = variantProfile().remotePort
+/** Porta da ponte do celular; +20 de folga. */
+const DEFAULT_PORT = 8765
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',

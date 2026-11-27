@@ -4,7 +4,6 @@ import { mkdir, readdir, readFile, rename, rm, stat, access } from 'node:fs/prom
 import { Readable } from 'node:stream'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { isHomol, variantProfile } from '../appVariant'
 
 /**
  * Android toolchain manager (app-global singleton).
@@ -31,8 +30,7 @@ const SDK_PACKAGES = [
   'system-images;android-34;google_apis;x86_64'
 ]
 const SYSTEM_IMAGE = 'system-images;android-34;google_apis;x86_64'
-/** O emulador fica em ~/.android/avd, partilhado: a Homol cria o dela (appVariant.ts). */
-export const DEFAULT_AVD = isHomol() ? 'agent_code_homol_avd' : 'agent_code_avd'
+export const DEFAULT_AVD = 'agent_code_avd'
 
 /** What the remote APK build (Capacitor 8) compiles with. Apart from the preview's
  *  android-34/JDK 17: `detect().ready` never depends on these (see ensureApkToolchain). */
@@ -93,7 +91,7 @@ async function dataDir(): Promise<string> {
     const { app } = await import('electron')
     cachedRoot = app.getPath('userData')
   } catch {
-    cachedRoot = process.env['AGENT_CODE_HOME'] || join(homedir(), variantProfile().homeDirName)
+    cachedRoot = process.env['AGENT_CODE_HOME'] || join(homedir(), '.agent-code')
   }
   return cachedRoot
 }

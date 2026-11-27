@@ -4,7 +4,6 @@ import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isReadableDb, quarantineDb, writeDbAtomically } from './atomicDb'
-import { variantProfile } from './appVariant'
 import { devDataDir } from './devDataDir'
 import { migrateLegacyStorage, moveSyncData } from './storageMigration'
 
@@ -30,10 +29,9 @@ import { migrateLegacyStorage, moveSyncData } from './storageMigration'
  * holding a handle between operations.
  */
 
-// Na variante Homol: `agent-code-homol` e `~/.agent-code-homol` (appVariant.ts).
 // Lidos na avaliação, depois de devDataDirBoot.ts ter fixado a variante.
-const APP_DIRNAME = variantProfile().dirName
-const POINTER_NAME = variantProfile().homeDirName
+const APP_DIRNAME = 'agent-code'
+const POINTER_NAME = '.agent-code'
 
 /** O ponteiro da pasta de dados; numa instância isolada de desenvolvimento
  *  (`devDataDir`), dentro dela — nunca o `~/.agent-code` real. */
