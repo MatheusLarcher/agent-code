@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountDisplayName, readingToLimits, updatedAgo } from './accountUsageView'
+import { accountDisplayName, barLimits, readingToLimits, updatedAgo } from './accountUsageView'
 
 const NOW = Date.parse('2026-09-24T12:00:00Z')
 
@@ -19,8 +19,30 @@ describe('readingToLimits', () => {
     expect(limit).toMatchObject({ utilization: 0, status: 'allowed' })
     expect(limit.resetsAt).toBeUndefined()
   })
+  it('janela só com o horário (sem o número) fica sem utilization, não 0% usado', () => {
+    const [limit] = readingToLimits({ at: NOW, windows: { five_hour: { utilization: null, resetsAt: NOW + 1000 } } }, NOW)
+    expect(limit).toMatchObject({ rateLimitType: 'five_hour', status: 'allowed', resetsAt: NOW + 1000 })
+    expect(limit.utilization).toBeUndefined()
+  })
   it('sem leitura, sem pílulas', () => {
     expect(readingToLimits(null)).toEqual([])
+  })
+})
+
+describe('barLimits (barra do topo)', () => {
+  const week = { seven_day: { utilization: 38, resetsAt: NOW + 1000 } }
+  const types = (r: ReturnType<typeof barLimits>) => [r.limits.map((l) => l.rateLimitType), r.fiveHourUnread]
+  it('five_hour ausente ou só com o horário: fora das pílulas, sem leitura de 5 h', () => {
+    expect(types(barLimits({ at: NOW, windows: week }, NOW))).toEqual([['seven_day'], true])
+    expect(types(barLimits({ at: NOW, windows: { ...week, five_hour: { utilization: null, resetsAt: NOW + 1000 } } }, NOW))).toEqual([['seven_day'], true])
+  })
+  it('uso real, 0% real e janela já zerada são leitura', () => {
+    for (const five of [{ utilization: 62, resetsAt: NOW + 1000 }, { utilization: 0, resetsAt: null }, { utilization: null, resetsAt: NOW - 1 }]) {
+      expect(types(barLimits({ at: NOW, windows: { ...week, five_hour: five } }, NOW))).toEqual([['five_hour', 'seven_day'], false])
+    }
+  })
+  it('conta nunca lida não é "sem leitura de 5 h"', () => {
+    expect(barLimits(null)).toEqual({ limits: [], fiveHourUnread: false })
   })
 })
 

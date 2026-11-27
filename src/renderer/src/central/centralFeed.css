@@ -277,6 +277,19 @@ button.central-opt.best:hover {
   color: var(--central-faint);
   font-size: 10px;
 }
+/* A seta (svg) da linha da Central gira ao abrir. Só o svg: o chat usa um span
+   .central-chev que gira por aria-expanded (chatLook.css, chatSubagent.css). */
+svg.central-chev {
+  transition: transform 0.15s;
+}
+svg.central-chev.open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  svg.central-chev {
+    transition: none;
+  }
+}
 .central-sum {
   flex: 1;
   min-width: 0;
@@ -300,6 +313,7 @@ button.central-opt.best:hover {
   flex: none;
   color: var(--central-faint);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .central-spin {

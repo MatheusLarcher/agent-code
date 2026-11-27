@@ -102,7 +102,7 @@ describe('ToolCard no chat (o cartão compartilhado com o Escritório 3D)', () =
     expect(edit.querySelector('.tool-head-split')).toBeNull()
     expect(edit.querySelectorAll('button')).toHaveLength(1)
     expect(edit.querySelector('.tool-head')?.tagName).toBe('BUTTON')
-    expect(edit.querySelector('.tool-head')?.firstElementChild?.className).toBe('tool-caret')
+    expect(edit.querySelector('.tool-head')?.firstElementChild?.getAttribute('class')).toBe('tool-caret')
     fireEvent.click(edit.querySelector('.tool-head')!)
     expect(edit.querySelector('.tool-body')).toBeTruthy()
   })

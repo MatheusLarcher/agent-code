@@ -124,6 +124,27 @@ export function listMemoryFiles(dir: string): MemoryFile[] {
   return memoryFilesOf(memoryFileIndex(dir)).slice()
 }
 
+/** `sempre: true` (ou `sim`) no frontmatter, em qualquer nível: a memória vai em toda conversa. */
+export function isPinnedMemory(content: string): boolean {
+  const front = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(content)?.[1]
+  return !!front && /^\s*sempre:\s*["']?(?:true|sim)["']?\s*$/im.test(front)
+}
+
+const pinnedLists = new WeakMap<MemoryFileIndex, string[]>()
+
+/** As memórias marcadas `sempre`, por caminho; uma varredura por geração do índice. Nunca lança. */
+export function pinnedMemoryPaths(dir: string): string[] {
+  const index = memoryFileIndex(dir)
+  let list = pinnedLists.get(index)
+  if (!list) {
+    list = memoryFilesOf(index)
+      .filter((file) => isPinnedMemory(index.byRelPath.get(file.relPath)?.content ?? ''))
+      .map((file) => file.relPath)
+    pinnedLists.set(index, list)
+  }
+  return list.slice()
+}
+
 /** One "- [Title](path) — hook" line, capped so the index stays scannable. */
 export function memoryIndexLine(file: MemoryFile): string {
   const prefix = `- [${file.title}](${file.relPath}) — `
@@ -163,11 +184,15 @@ const MAX_MEMORY_BYTES = 64 * 1024
 /** Teto de memórias por turno na busca lexical e no TypeSafe. O Haiku tem o
  *  dele (HAIKU_MEMORY_MAX, em memorySelectionHaiku.ts). */
 export const MAX_SELECTED_MEMORIES = 10
-/** Teto de uma memória sozinha: acima disso ela é pulada, nunca cortada. */
-const MAX_EXCERPT_CHARS = 50_000
-/** Teto do bloco inteiro do turno, em caracteres. Memória que estoura o que
- * sobra é PULADA (a próxima, menor, ainda pode caber), nunca cortada. */
-export const MAX_TOTAL_EXCERPT_CHARS = 50_000
+/** Teto do trecho de UMA memória no prompt, marca de corte inclusa. Uma memória
+ * de memory_propose (título, regra, porquê, como aplicar) cabe nisso; o que
+ * passa é detalhe, e a marca diz ao agente onde ler o arquivo inteiro. */
+export const MAX_MEMORY_EXCERPT_CHARS = 1_500
+/** Teto do bloco inteiro do turno, em caracteres (~1,7 mil tokens): umas quatro
+ * memórias cortadas no teto acima. É um TETO ABSOLUTO — `maxChars` de quem chama
+ * só pode baixá-lo. Memória que estoura o que sobra é pulada (a próxima, menor,
+ * ainda pode caber). */
+export const MAX_TOTAL_EXCERPT_CHARS = 6_000
 
 /** Memory values belong in the encrypted vault, never in automatic context.
  * Old/manual notes can still contain common credential assignments, so protect
@@ -307,7 +332,26 @@ export function memoryContextBlock(relPath: string, text: string): string {
   return `--- Memória relevante: ${relPath} ---\n${text}`
 }
 
-/** Uma memória escolhida para o turno: o caminho e o texto já redigido. */
+/** A marca no fim de um trecho cortado: o agente lê o arquivo se precisar do resto. */
+export function memoryCutMark(relPath: string): string {
+  return `\n[…] (memória completa em ${relPath})`
+}
+
+/**
+ * O trecho de uma memória que vai no prompt: o texto inteiro até
+ * `MAX_MEMORY_EXCERPT_CHARS`; acima, cortado (de preferência numa quebra de
+ * linha) e com `memoryCutMark`. Determinístico e idempotente — conversationSeed
+ * recalcula o mesmo trecho para reconhecer a memória numa mensagem gravada.
+ */
+export function memoryExcerpt(relPath: string, body: string): string {
+  if (body.length <= MAX_MEMORY_EXCERPT_CHARS) return body
+  const mark = memoryCutMark(relPath)
+  const head = body.slice(0, Math.max(0, MAX_MEMORY_EXCERPT_CHARS - mark.length))
+  const newline = head.lastIndexOf('\n')
+  return (newline > head.length / 2 ? head.slice(0, newline) : head).trimEnd() + mark
+}
+
+/** Uma memória escolhida para o turno: o caminho e o trecho (memoryExcerpt) já redigido. */
 export interface MemoryEntry {
   relPath: string
   body: string
@@ -322,11 +366,14 @@ export interface ChosenMemories {
 
 /**
  * Junta memórias em blocos até `maxCount` memórias e `maxChars` caracteres no
- * total (cabeçalhos e separadores inclusos). Cada `relPath` é relido do disco
- * (`readMemoryBody` redige e recusa o que escapa da pasta); a que não cabe no
- * que sobra é PULADA inteira e a seguinte ainda é tentada. Nunca lança.
+ * total (cabeçalhos e separadores inclusos; nunca acima de
+ * MAX_TOTAL_EXCERPT_CHARS), na ordem recebida — a do seletor, mais relevante
+ * primeiro. Cada `relPath` é relido do disco (`readMemoryBody` redige e recusa o
+ * que escapa da pasta) e vira `memoryExcerpt`; o que não cabe no que sobra é
+ * pulado e o seguinte ainda é tentado. Nunca lança.
  */
 export function assembleMemories(dir: string, relPaths: readonly string[], maxCount = MAX_SELECTED_MEMORIES, maxChars = MAX_TOTAL_EXCERPT_CHARS): ChosenMemories {
+  maxChars = Math.min(maxChars, MAX_TOTAL_EXCERPT_CHARS)
   const entries: MemoryEntry[] = []
   const blocks: string[] = []
   const seen = new Set<string>()
@@ -335,8 +382,9 @@ export function assembleMemories(dir: string, relPaths: readonly string[], maxCo
     if (entries.length >= maxCount) break
     if (seen.has(relPath)) continue
     seen.add(relPath)
-    const body = readMemoryBody(dir, relPath)
-    if (!body || body.length > MAX_EXCERPT_CHARS) continue
+    const full = readMemoryBody(dir, relPath)
+    if (!full) continue
+    const body = memoryExcerpt(relPath, full)
     const block = memoryContextBlock(relPath, body)
     const cost = block.length + (blocks.length > 0 ? 2 : 0)
     if (used + cost > maxChars) continue
@@ -347,7 +395,7 @@ export function assembleMemories(dir: string, relPaths: readonly string[], maxCo
   return { block: blocks.join('\n\n'), relPaths: entries.map((entry) => entry.relPath), entries }
 }
 
-/** As memórias do turno pela busca lexical: até 10, até 50.000 caracteres, inteiras. Nunca lança. */
+/** As memórias do turno pela busca lexical: até 10, dentro dos tetos de assembleMemories. Nunca lança. */
 export function selectMemoriesLexically(dir: string, query: string): ChosenMemories {
   const ranked = rankMemoriesByQuery(dir, query).filter((match) => match.score >= MIN_LEXICAL_SCORE)
   return assembleMemories(dir, ranked.map((match) => match.file.relPath))

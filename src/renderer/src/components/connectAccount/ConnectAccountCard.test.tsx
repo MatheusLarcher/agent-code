@@ -11,6 +11,7 @@ const NONE: ProvidersStatus = { claude: false, gpt: false, ollama: false, deepse
 
 interface FakeApi {
   authLogin: ReturnType<typeof vi.fn>
+  authLoginCancel: ReturnType<typeof vi.fn>
   codexLogin: ReturnType<typeof vi.fn>
   providersStatus: ReturnType<typeof vi.fn>
   getConfig: ReturnType<typeof vi.fn>
@@ -22,6 +23,7 @@ beforeEach(() => {
   notify.mockReset()
   api = {
     authLogin: vi.fn(async () => ({ ok: true })),
+    authLoginCancel: vi.fn(async () => ({ ok: true })),
     codexLogin: vi.fn(async () => ({ ok: true })),
     providersStatus: vi.fn(async () => NONE),
     getConfig: vi.fn(async () => ({ ollama: { enabled: false, apiKey: '' } })),
@@ -93,6 +95,7 @@ describe('ConnectAccountCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Claude' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
     expect(notify).toHaveBeenCalledWith('aviso', expect.any(String))
+    expect(api.authLoginCancel).toHaveBeenCalledTimes(1) // encerra o login do CLI de verdade
     expect(screen.getByRole('button', { name: 'Conectar conta' })).toBeTruthy()
     await act(async () => finish({ ok: true }))
     expect(onConnected).not.toHaveBeenCalled()

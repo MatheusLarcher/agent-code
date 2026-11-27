@@ -38,7 +38,17 @@
   overflow-wrap: anywhere;
 }
 .away-strip-chevron {
+  flex: none;
   color: var(--muted);
+  transition: transform 0.15s;
+}
+.away-strip-chevron.open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .away-strip-chevron {
+    transition: none;
+  }
 }
 .away-strip-list {
   list-style: none;

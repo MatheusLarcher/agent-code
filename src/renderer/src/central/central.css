@@ -97,6 +97,7 @@
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  text-wrap: balance;
 }
 .central-head-rail {
   margin-left: auto;

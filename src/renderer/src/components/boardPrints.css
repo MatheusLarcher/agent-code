@@ -42,6 +42,8 @@
   object-fit: cover;
   border-radius: 5px;
   background: var(--bg-3);
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
 }
 .card-print span {
   overflow: hidden;

@@ -13,7 +13,7 @@
  * Nunca lança: falha ou sessão sem mensagens deixa o resumo vazio.
  */
 import { getSessionMessages, type SessionMessage, type SessionStore } from '@anthropic-ai/claude-agent-sdk'
-import { readMemoryBody } from '../memoryIndex'
+import { memoryCutMark, memoryExcerpt, readMemoryBody } from '../memoryIndex'
 import type { DigestRole } from './conversationDigest'
 
 export interface SeedEntry {
@@ -67,8 +67,17 @@ function skipBlock(rest: string, memoryBody: MemoryBodyReader): string | null {
   const head = MEMORY_HEAD_RE.exec(rest)
   if (!head) return rest
   const body = memoryBody(head[1])
-  if (body && rest.startsWith(body, head[0].length)) {
-    const next = afterSeparator(rest, head[0].length + body.length)
+  // O envio põe o trecho (memoryExcerpt); mensagens de antes do corte, o corpo inteiro.
+  for (const sent of body ? [memoryExcerpt(head[1], body), body] : []) {
+    if (!rest.startsWith(sent, head[0].length)) continue
+    const next = afterSeparator(rest, head[0].length + sent.length)
+    if (next !== null) return rest.slice(next)
+  }
+  // Trecho cortado de uma memória que mudou depois: a marca de corte diz onde acaba.
+  const mark = memoryCutMark(head[1])
+  const marked = rest.indexOf(mark, head[0].length)
+  if (marked >= 0) {
+    const next = afterSeparator(rest, marked + mark.length)
     if (next !== null) return rest.slice(next)
   }
   // A memória mudou desde o envio: corta até o próximo bloco do envelope. Sem

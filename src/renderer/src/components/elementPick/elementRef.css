@@ -1,0 +1,138 @@
+/* "[elemento N]" na bolha do usuário: chip com a bolinha numerada (a mesma marca
+   do Preview na página) e a dica rica no hover/foco. */
+.el-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  height: 20px;
+  box-sizing: border-box;
+  padding: 0 8px 0 2px;
+  /* Respiro dos dois lados: o texto da mensagem não encosta na etiqueta. */
+  margin: 0 4px;
+  /* Centro da etiqueta na altura do meio das letras minúsculas do texto ao lado. */
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  cursor: default;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.el-ref-chip:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: var(--accent);
+}
+.el-ref-chip:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+.el-ref-num {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font: 700 10px/16px system-ui, sans-serif;
+  text-align: center;
+}
+.el-ref-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1;
+  color: #f1e9e4;
+}
+.el-ref-chip:first-child {
+  margin-left: 0;
+}
+
+.el-ref-tip {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  animation: el-ref-tip-in 0.12s ease-out;
+}
+@keyframes el-ref-tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .el-ref-tip {
+    animation: none;
+  }
+  .el-ref-chip {
+    transition: none;
+  }
+}
+.el-ref-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+.el-ref-tip-title {
+  font-weight: 600;
+}
+.el-ref-tip-tag {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.el-ref-tip-tagname {
+  color: var(--accent);
+}
+.el-ref-tip-id {
+  color: var(--text);
+}
+.el-ref-tip-class {
+  color: var(--muted);
+}
+.el-ref-tip-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 6px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.el-ref-tip-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.el-ref-tip-row + .el-ref-tip-row {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
+}
+.el-ref-tip-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.el-ref-tip-row code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

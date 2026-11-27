@@ -8,6 +8,7 @@ import { refHrefTipo, refsToMarkdownLinks, splitRefs, type RefCard } from '../pl
 import { CARD_TYPE_LABEL, typeColorVar } from '../planning/cardTypes'
 import { quoteBlockComponents, useQuotableBlocks } from './quoteComment/quoteBlocks'
 import { CodeFrame } from './CodeFrame'
+import { PreviewLink, previewUrlTransform } from '../preview/PreviewLink'
 
 /** Rótulo de [[...]] → card do plano (null = não é um card: fica como texto). */
 export type CardRefResolver = (label: string) => RefCard | null
@@ -16,8 +17,10 @@ export type CardRefResolver = (label: string) => RefCard | null
 // target=_blank routes the click through the main process' window-open handler
 // (shell.openExternal), so the Electron renderer never navigates away.
 // Bloco de código: barra com a linguagem e o botão "Copiar" (CodeFrame).
+// Com a aba Preview montada (App), http(s) e caminhos locais abrem nela
+// (PreviewLink); sem ela, o link segue para o navegador como sempre.
 const mdComponents = {
-  a: (props: ComponentPropsWithoutRef<'a'>) => <a {...props} target="_blank" rel="noreferrer" />,
+  a: (props: ComponentPropsWithoutRef<'a'>) => <PreviewLink {...props} />,
   pre: CodeFrame
 }
 
@@ -76,7 +79,12 @@ const MarkdownBlock = memo(function MarkdownBlock({
 }): JSX.Element {
   const rehypePlugins = useMemo(() => (blur ? [rehypeBlurBlock(shared, index, offset)] : NO_PLUGINS), [blur, shared, index, offset])
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={rehypePlugins} components={components}>
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={rehypePlugins}
+      components={components}
+      urlTransform={previewUrlTransform}
+    >
       {source}
     </ReactMarkdown>
   )

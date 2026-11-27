@@ -128,3 +128,17 @@ describe('preload — contrato IPC do Codex e do agente', () => {
     expect(result).toBe(history)
   })
 })
+
+describe('preload — aba Preview', () => {
+  it('lê o arquivo do preview pelo canal app:preview-read-file e devolve a resposta do main', async () => {
+    const res = { ok: true, kind: 'text', path: 'C:\\p\\a.txt', text: 'oi', truncated: false }
+    electronMock.invoke.mockResolvedValue(res)
+    const previewApi = api as AgentCodeApi & { previewReadFile(path: string): Promise<unknown> }
+
+    const result = await previewApi.previewReadFile('C:\\p\\a.txt')
+
+    expect(Channels.previewReadFile).toBe('app:preview-read-file')
+    expect(electronMock.invoke).toHaveBeenCalledWith(Channels.previewReadFile, 'C:\\p\\a.txt')
+    expect(result).toBe(res)
+  })
+})

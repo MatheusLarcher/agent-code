@@ -62,3 +62,9 @@ scripts/agent-activity-validation/
 scripts/chat-context-validation/
 scripts/context-chat-artifacts/
 __pycache__/
+
+# Firebase do app Android (chaves do projeto): fica só na máquina
+smartfone-remote/firebase/google-services.json
+scripts/medicoes/.avaliar.tmp.mjs
+scripts/medicoes/ambiente-real/.rotular.tmp.mjs
+scripts/medicoes/ambiente-real/.gatilhos.tmp.mjs

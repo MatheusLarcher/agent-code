@@ -172,4 +172,13 @@ describe('registro de contas', () => {
     const candidates = await registry.candidates()
     expect(candidates.find((c) => c.id === added.account.id)?.status).toBe('expired')
   })
+
+  it('conta extra sem .credentials.json (login no Chaveiro do macOS) vale pelo auth status da pasta', async () => {
+    const { registry } = setup({ machine: 'eu@exemplo.com', new: 'outra@exemplo.com' })
+    const added = await registry.add()
+    if (!added.ok) throw new Error('add')
+    rmSync(join(registry.configDirOf(added.account.id)!, '.credentials.json'), { force: true })
+    const candidates = await registry.candidates()
+    expect(candidates.find((c) => c.id === added.account.id)?.status).toBe('connected')
+  })
 })

@@ -255,15 +255,14 @@ function renderTieredCatalog(high: TieredSkill[], medium: TieredSkill[], low: Ti
   const byCategory = SKILL_CATEGORIES.map((category) => [category, low.filter((s) => s.category === category)] as const)
     .filter(([, list]) => list.length > 0)
     .map(([category, list]) => `- ${category}: ${list.map((s) => s.name).sort((a, b) => a.localeCompare(b)).join(', ')}`)
-  return `AUTHORITATIVE FILESYSTEM SKILLS CATALOG (tiered)
-This is the complete current catalog of the skills on disk, in three tiers. It supersedes earlier skill catalogs.
+  // Médio: a lista de skills do próprio SDK já traz nome e descrição; aqui só a contagem.
+  return `FILESYSTEM SKILLS (tiered; supersedes earlier skill catalogs)
 Before acting on every user request, check whether a skill fits — in all three tiers — and use it FIRST.
 
 High (full text already in the system prompt — follow it, no need to load):
 ${high.length ? high.map((s) => `- ${s.name}`).join('\n') : '(none)'}
 
-Medium (the Skill tool lists their descriptions; load with the Skill tool, or Read the SKILL.md):
-${medium.length ? medium.map((s) => `- /${s.name} — ${s.skillFile}`).join('\n') : '(none)'}
+Medium: ${medium.length} skills, shown with descriptions in the runtime's skill listing (not repeated here); load with the Skill tool.
 
 Low (name only, by category; the Skill tool does NOT load these). When a request might need one, call
 mcp__skills__skills_buscar(texto) or mcp__skills__skills_listar(categoria): they return a one-line summary and the

@@ -1,0 +1,20 @@
+{
+  "casos": [
+    {
+      "id": "publicar-app",
+      "pedido": "terminei a correção do Horta Fácil, pode gerar a versão para instalar",
+      "esperadas": [
+        "projetos/gerar-instalador.md",
+        { "umaDe": ["regras/conferir-testes-antes.md", "regras/rodar-testes-antes-de-entregar.md"] }
+      ],
+      "aceitaveis": ["projetos/horta-facil-banco.md"],
+      "nota": "Exemplo fictício: gerar o instalador e conferir os testes antes de entregar. As duas memórias de testes dizem a mesma coisa (grupo umaDe: qualquer uma basta). A do banco do Horta Fácil é vizinha: escolher ou não dá na mesma (aceitável)."
+    },
+    {
+      "id": "cumprimento",
+      "pedido": "bom dia!",
+      "esperadas": [],
+      "nota": "Exemplo fictício: nada se aplica; o certo é não escolher nenhuma."
+    }
+  ]
+}

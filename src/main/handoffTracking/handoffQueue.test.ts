@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { HandoffQueueDispatchedResult, HandoffQueueGateResult, HandoffQueueListResult } from '../../shared/api'
 import { Channels, type ChatEvent } from '../../shared/ipc'
@@ -320,7 +321,7 @@ describe('decideQueue — a fila segue sozinha (regra pura)', () => {
     await h.register([{ conteudo: 'Prompt 1', etapas: ['a'] }, { conteudo: 'Prompt 2', etapas: ['b'] }])
     await turn(h, 'Prompt 1', [['[a] Etapa a', 'in_progress']])
     const q = ipc(h)
-    expect(await q.list('C:\\outra\\pasta')).toEqual({ ok: true, items: [] })
+    expect(await q.list(resolve('/outra/pasta'))).toEqual({ ok: true, items: [] })
     // No Windows, a mesma pasta escrita com outra caixa é a mesma pasta.
     const sameFolder = process.platform === 'win32' ? h.cwd.toUpperCase() : h.cwd
     expect(await q.list(sameFolder)).toMatchObject({ ok: true, items: [{ ordem: 2 }] })

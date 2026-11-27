@@ -33,14 +33,46 @@ export type CardPick = { ok: true; item: BoardItem } | { ok: false; error: strin
 const norm = (s: string): string => s.trim().toLowerCase()
 const names = (items: readonly BoardItem[]): string =>
   items.length === 0 ? 'nenhum' : items.slice(0, 8).map((i) => `"${boardItemTitle(i)}"`).join(', ')
+/** Sem caixa, sem acento, pontuação vira espaço, espaços colapsados. */
+const loose = (s: string): string =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+/** Palavras de 3+ letras (corta "de", "do", "e", "a"). */
+const words = (s: string): Set<string> => new Set(loose(s).split(' ').filter((w) => w.length >= 3))
+
+/** O único cartão com o maior `score` (> 0 e ≥ `min`); empate ou nada → null. */
+function bestBy(items: readonly BoardItem[], score: (i: BoardItem) => number, min: number): BoardItem | null {
+  const scored = items.map((item) => ({ item, s: score(item) })).sort((a, b) => b.s - a.s)
+  const [top, next] = scored
+  return top && top.s >= min && (!next || next.s < top.s) ? top.item : null
+}
 
 /**
- * O cartão do print, entre os da conversa: pelo id da tarefa (o do TodoWrite),
- * pelo título exato ou pelo prefixo "[id-da-etapa]". Sem `tarefa`, o único em
- * andamento. Ambíguo ou nenhum → erro que diz quais existem.
+ * Quando o nome não bate exato: o único cartão cujo título contém o pedido (ou
+ * está contido nele), senão o único que divide mais palavras (2 ou mais) com ele.
+ * ponytail: heurística por palavras inteiras, sem sinônimo nem erro de digitação.
+ */
+function looseMatch(mine: readonly BoardItem[], wanted: string): BoardItem | null {
+  const w = loose(wanted)
+  const titles = (i: BoardItem): string[] => [loose(boardItemTitle(i)), loose(i.sourceTitle)].filter(Boolean)
+  if (w.length >= 4) {
+    const contains = mine.filter((i) => titles(i).some((t) => t.includes(w) || w.includes(t)))
+    if (contains.length === 1) return contains[0]
+  }
+  const ww = words(wanted)
+  const shared = (i: BoardItem): number => Math.max(...titles(i).map((t) => [...words(t)].filter((x) => ww.has(x)).length), 0)
+  return bestBy(mine, shared, 2)
+}
+
+/**
+ * O cartão do print, entre os da conversa. Um só cartão na conversa → ele,
+ * diga `tarefa` o que disser. Senão: pelo id da tarefa (o do TodoWrite), pelo
+ * título exato, pelo prefixo "[id-da-etapa]" e, por fim, pelo título parecido
+ * (`looseMatch`). Sem `tarefa`, o único em andamento. Ambíguo ou nenhum → erro
+ * que diz quais existem.
  */
 export function resolvePrintCard(items: readonly BoardItem[], conversationId: string, tarefa?: string | null): CardPick {
   const mine = items.filter((i) => i.conversationId === conversationId && i.dismissedAt === null)
+  if (mine.length === 1) return { ok: true, item: mine[0] }
   const wanted = (tarefa ?? '').trim()
   if (!wanted) {
     const doing = mine.filter((i) => boardItemStatus(i) === 'in_progress')
@@ -61,6 +93,8 @@ export function resolvePrintCard(items: readonly BoardItem[], conversationId: st
   for (const found of [byId, byTitle, byPrefix]) if (found.length === 1) return { ok: true, item: found[0] }
   const many = [byId, byTitle, byPrefix].find((found) => found.length > 1)
   if (many) return { ok: false, error: `"${wanted}" casa com mais de um cartão (${names(many)}); use o id da tarefa ou o título exato` }
+  const near = looseMatch(mine, wanted)
+  if (near) return { ok: true, item: near }
   return { ok: false, error: `nenhum cartão desta conversa casa com "${wanted}" (cartões: ${names(mine)})` }
 }
 

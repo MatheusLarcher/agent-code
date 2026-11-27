@@ -40,6 +40,7 @@ const {
   MEMORY_SELECTION_NONE
 } = await import('./memorySelection')
 const { typeSafePause } = await import('./pause')
+const { memoryCutMark, MAX_MEMORY_EXCERPT_CHARS, MAX_TOTAL_EXCERPT_CHARS } = await import('../memoryIndex')
 
 function config(typesafe: Partial<AppConfig['typesafe']>): void {
   state.config = { ...DEFAULT_CONFIG, typesafe: { ...DEFAULT_CONFIG.typesafe, ...typesafe } }
@@ -107,14 +108,14 @@ describe('seleção de memória pelo TypeSafe', () => {
     expect(JSON.stringify(question.criteria)).not.toContain('detalhe do ERP')
   })
 
-  it('injeta a memória INTEIRA relida do disco no momento do request, sem corte em 1600 chars', async () => {
+  it('relê a memória do disco no momento do request e a corta no teto, com a marca', async () => {
     const dir = await fixture()
     // O arquivo muda DEPOIS da varredura de candidatas e antes da resposta: o
     // que entra no prompt tem de ser o conteúdo atual, não o que foi lido antes.
     systemOne.mockImplementation(async () => {
       await writeFile(
         join(dir, '2D', 'erp.md'),
-        `---\ndescription: ERP da 2D usa o banco FALCAO\n---\n# ERP da 2D\n${'detalhe do ERP. '.repeat(400)}CONTEUDO_ATUALIZADO\n`,
+        `---\ndescription: ERP da 2D usa o banco FALCAO\n---\n# ERP da 2D\nCONTEUDO_ATUALIZADO\n${'detalhe do ERP. '.repeat(400)}FIM_NOVO\n`,
         'utf8'
       )
       return answer({ '2D/erp.md': 0.9, '2D/nota.md': 0.05, 'raiz.md': 0.05 })
@@ -125,7 +126,28 @@ describe('seleção de memória pelo TypeSafe', () => {
     expect(selection!.block).toContain('--- Memória relevante: 2D/erp.md ---')
     expect(selection!.block).toContain('CONTEUDO_ATUALIZADO')
     expect(selection!.block).not.toContain('FIM_DO_ARQUIVO')
-    expect(selection!.block.length).toBeGreaterThan(1_600)
+    // A memória tem ~6,4 mil caracteres: sai cortada, com a marca que aponta o arquivo.
+    expect(selection!.block).not.toContain('FIM_NOVO')
+    expect(selection!.block.endsWith(memoryCutMark('2D/erp.md'))).toBe(true)
+    const body = selection!.block.slice('--- Memória relevante: 2D/erp.md ---\n'.length)
+    expect(body.length).toBeLessThanOrEqual(MAX_MEMORY_EXCERPT_CHARS)
+  })
+
+  it('três memórias longas escolhidas: cada uma cortada com a marca, o bloco dentro do teto total', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mem-sel-longa-'))
+    const names = ['a.md', 'b.md', 'c.md']
+    for (const name of names) {
+      await writeFile(join(dir, name), `---\ndescription: longa ${name}\n---\n# ${name}\n${'linha comprida. '.repeat(30).concat('\n').repeat(40)}`, 'utf8')
+    }
+    // 40 candidatas: limiar = 8/40 = 0,2, as três longas passam.
+    for (let i = 0; i < 37; i++) await writeFile(join(dir, `f${i}.md`), `# F${i}\ncurta\n`, 'utf8')
+    systemOne.mockResolvedValue(answer({ 'a.md': 0.4, 'b.md': 0.3, 'c.md': 0.29, [MEMORY_SELECTION_NONE]: 0.01 }))
+
+    const selection = await selectMemoriesWithTypeSafe(dir, 'tudo longo')
+
+    expect(selection!.relPaths).toEqual(names)
+    for (const name of names) expect(selection!.block).toContain(memoryCutMark(name))
+    expect(selection!.block.length).toBeLessThanOrEqual(MAX_TOTAL_EXCERPT_CHARS)
   })
 
   it('devolve os relPath escolhidos junto do bloco — é o que o gate do memorista consome', async () => {
@@ -171,6 +193,16 @@ describe('seleção de memória pelo TypeSafe', () => {
     expect(selection!.relPaths).toEqual(chosen)
     expect(chosen.length).toBeLessThanOrEqual(MEMORY_SELECTION_MAX)
     expect(new Set(chosen).size).toBe(chosen.length)
+  })
+
+  it('memória marcada "sempre" entra na frente mesmo com ZERO escolhidas, e conta no teto', async () => {
+    const dir = await fixture()
+    await writeFile(join(dir, 'pt.md'), '---\nname: pt\nmetadata:\n  sempre: true\n---\n# Português\nResponder em português.\n', 'utf8')
+    systemOne.mockResolvedValue(answer({ '2D/erp.md': 0.3, '2D/nota.md': 0.25, 'raiz.md': 0.25, 'pt.md': 0.2 }))
+    expect((await selectMemoriesWithTypeSafe(dir, 'oi'))!.relPaths).toEqual(['pt.md'])
+
+    systemOne.mockResolvedValue(answer({ 'raiz.md': 0.9, '2D/erp.md': 0.05, '2D/nota.md': 0.03, 'pt.md': 0.02 }))
+    expect((await selectMemoriesWithTypeSafe(dir, 'oi'))!.relPaths).toEqual(['pt.md', 'raiz.md'])
   })
 
   it('distribuição espalhada devolve ZERO memória — e zero não é falha', async () => {

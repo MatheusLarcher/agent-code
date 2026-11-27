@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { memoryWriteDenial, pathInside, realPathInside } from './memoryPaths'
+import { isSystemSymlink, memoryWriteDenial, pathInside, realPathInside } from './memoryPaths'
 
 const roots: string[] = []
 afterEach(() => {
@@ -74,5 +74,17 @@ describe('memoryWriteDenial', () => {
     expect(memoryWriteDenial(memories, 'Bash', { command: `type ${memories.toUpperCase()}\\a.md` })).toBeTruthy()
     expect(memoryWriteDenial(memories, 'Bash', { command: `ls ${outside}` })).toBeNull()
     expect(memoryWriteDenial(memories, 'Bash', {})).toBeNull()
+  })
+})
+
+describe('isSystemSymlink', () => {
+  it.runIf(process.platform === 'darwin')('aceita só os links do sistema do macOS', () => {
+    expect(isSystemSymlink('/var')).toBe(true)
+    expect(isSystemSymlink('/tmp')).toBe(true)
+    expect(isSystemSymlink('/Users')).toBe(false)
+    const root = mkdtempSync(join(tmpdir(), 'syslink-'))
+    roots.push(root)
+    symlinkSync('/private/var', join(root, 'var'))
+    expect(isSystemSymlink(join(root, 'var'))).toBe(false)
   })
 })

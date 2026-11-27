@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Mapa das memórias</title>
+    <link rel="stylesheet" href="estilo.css" />
+  </head>
+  <body>
+    <a class="pular" href="#painel">Ir para os detalhes</a>
+    <header class="topo">
+      <div class="titulo">
+        <h1>Mapa das memórias</h1>
+        <p id="resumo" class="resumo"></p>
+      </div>
+      <nav id="abas" class="abas" role="tablist" aria-label="Visões do mapa">
+        <button type="button" role="tab" data-visao="temas" aria-selected="true" aria-controls="palco">Temas</button>
+        <button type="button" role="tab" data-visao="arvore" aria-selected="false" aria-controls="palco" tabindex="-1">Árvore do tema</button>
+        <button type="button" role="tab" data-visao="memorias" aria-selected="false" aria-controls="palco" tabindex="-1">Memórias parecidas</button>
+      </nav>
+    </header>
+
+    <div id="barra" class="barra">
+      <label id="campo-filtro" class="campo" hidden>
+        <span id="rotulo-filtro">Tema</span>
+        <select id="filtro-tema" name="filtro-tema"></select>
+      </label>
+      <label class="campo campo-busca">
+        <span>Buscar</span>
+        <input id="busca" name="busca" type="search" placeholder="Título ou caminho…" autocomplete="off" spellcheck="false" />
+      </label>
+      <span id="busca-total" class="busca-total" aria-live="polite"></span>
+      <ul id="legenda" class="legenda" aria-label="Legenda"></ul>
+    </div>
+
+    <main class="corpo">
+      <section class="mapa">
+        <div id="palco" class="palco" role="img" aria-label="Mapa"></div>
+        <div class="zoom" role="group" aria-label="Zoom do mapa">
+          <button type="button" id="aproximar" aria-label="Aproximar">+</button>
+          <button type="button" id="afastar" aria-label="Afastar">−</button>
+          <button type="button" id="ver-tudo">Ver tudo</button>
+        </div>
+        <p id="dica" class="dica"></p>
+      </section>
+      <aside id="painel" class="painel" aria-live="polite" tabindex="-1"></aside>
+    </main>
+
+    <script src="dados.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

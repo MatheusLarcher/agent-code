@@ -1,6 +1,6 @@
 import { mkdtemp, rm, stat } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, sep } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // store.ts puxa node:sqlite e electron; aqui só a pasta local importa.
@@ -29,25 +29,26 @@ describe('sandboxDirName', () => {
 })
 
 describe('isInsideSandbox', () => {
-  const root = 'C:\\Users\\x\\AppData\\agent-code-local\\sandbox'
+  const root = process.platform === 'win32' ? 'C:\\Users\\x\\AppData\\agent-code-local\\sandbox' : '/Users/x/Library/agent-code-local/sandbox'
+  const outside = process.platform === 'win32' ? 'C:\\GitHub\\agent-code' : '/Users/x/GitHub/agent-code'
 
   it('subpasta conta', () => {
-    expect(isInsideSandbox(root, `${root}\\2026-09-29_07-05_a1b2`)).toBe(true)
+    expect(isInsideSandbox(root, `${root}${sep}2026-09-29_07-05_a1b2`)).toBe(true)
   })
   it('a própria raiz não conta', () => {
     expect(isInsideSandbox(root, root)).toBe(false)
-    expect(isInsideSandbox(root, `${root}\\`)).toBe(false)
+    expect(isInsideSandbox(root, `${root}${sep}`)).toBe(false)
   })
   it('fora não conta, nem prefixo parecido', () => {
-    expect(isInsideSandbox(root, 'C:\\GitHub\\agent-code')).toBe(false)
-    expect(isInsideSandbox(root, `${root}-2\\a`)).toBe(false)
+    expect(isInsideSandbox(root, outside)).toBe(false)
+    expect(isInsideSandbox(root, `${root}-2${sep}a`)).toBe(false)
   })
   it('caixa diferente conta no Windows', () => {
-    const upper = `${root.toUpperCase()}\\ABC`
+    const upper = `${root.toUpperCase()}${sep}ABC`
     expect(isInsideSandbox(root, upper)).toBe(process.platform === 'win32')
   })
   it('.. que sai da raiz não conta', () => {
-    expect(isInsideSandbox(root, `${root}\\a\\..\\..\\fora`)).toBe(false)
+    expect(isInsideSandbox(root, `${root}${sep}a${sep}..${sep}..${sep}fora`)).toBe(false)
     expect(isInsideSandbox(root, `${root}\\a\\..`)).toBe(false)
   })
   it('vazio não conta', () => {

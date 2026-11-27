@@ -35,6 +35,7 @@
   color: #1a1a1a;
   font-size: 10px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 16px;
   display: grid;
   place-items: center;
@@ -87,7 +88,8 @@
   overflow: auto;
   background: var(--bg-2, #262624);
   border: 1px solid var(--line, #3a3836);
-  border-radius: 12px;
+  /* raio externo = raio dos itens (9px) + padding (6px): cantos concêntricos */
+  border-radius: 15px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   padding: 6px;
   color: var(--text, #e8e6e3);
@@ -108,6 +110,7 @@
   letter-spacing: 0.06em;
 }
 .tpop-h .x {
+  position: relative;
   margin-left: auto;
   display: grid;
   place-items: center;
@@ -120,6 +123,8 @@
   color: inherit;
   cursor: pointer;
 }
+/* área de toque de 40x40 sem mudar o desenho de 22x22 */
+.tpop-h .x::after { content: ''; position: absolute; inset: -9px; }
 .tpop-h .x:hover { background: var(--bg-3, #302e2c); color: var(--text, #e8e6e3); }
 .titem { border-radius: 9px; }
 .titem + .titem { border-top: 1px solid var(--line-soft, #2f2d2b); }

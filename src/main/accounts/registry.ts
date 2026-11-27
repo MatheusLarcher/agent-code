@@ -63,9 +63,10 @@ export function createAccountRegistry(deps: RegistryDeps) {
   let accounts: AccountRecord[] = []
   let autoSwitch = true
   let loaded: Promise<void> | null = null
-  // Status do login da máquina quando não há `.credentials.json` para ler (ex.:
-  // credencial no chaveiro do sistema). `auth status` custa ~0,8 s: cache curto.
-  let defaultAuth: { at: number; status: ClaudeAuthStatus } | null = null
+  // Status do login quando não há `.credentials.json` para ler (credencial no
+  // chaveiro do sistema — no macOS, sempre). `auth status` custa ~0,8 s: cache
+  // curto, por pasta ('' = a conta da máquina).
+  const authCache = new Map<string, { at: number; status: ClaudeAuthStatus }>()
 
   const blank = blankRecord
 
@@ -192,24 +193,21 @@ export function createAccountRegistry(deps: RegistryDeps) {
     return id === DEFAULT_ACCOUNT_ID ? undefined : accountDir(deps.localDir(), id)
   }
 
-  async function defaultAuthStatus(): Promise<ClaudeAuthStatus> {
-    if (defaultAuth && Date.now() - defaultAuth.at < 30_000) return defaultAuth.status
-    const status = await deps.authStatus()
-    defaultAuth = { at: Date.now(), status }
+  async function cachedAuthStatus(dir?: string): Promise<ClaudeAuthStatus> {
+    const hit = authCache.get(dir ?? '')
+    if (hit && Date.now() - hit.at < 30_000) return hit.status
+    const status = await deps.authStatus(dir)
+    authCache.set(dir ?? '', { at: Date.now(), status })
     return status
   }
 
   async function statusOf(record: AccountRecord): Promise<ClaudeAccountStatus> {
     const dir = configDirOf(record.id)
-    if (dir) {
-      const cred = readCredentialInfo(dir)
-      if (!cred.present) return 'logged-out'
-      return cred.live ? 'connected' : 'expired'
-    }
-    // Conta padrão: o arquivo de credencial pode nem existir (chaveiro).
-    const cred = readCredentialInfo(machineConfigDir())
+    const cred = readCredentialInfo(dir ?? machineConfigDir())
     if (cred.present) return cred.live ? 'connected' : 'expired'
-    return (await defaultAuthStatus()).loggedIn ? 'connected' : 'logged-out'
+    // Sem o arquivo a credencial pode estar no chaveiro (no macOS o CLI só usa o
+    // Chaveiro): quem responde é o `auth status` daquela pasta.
+    return (await cachedAuthStatus(dir)).loggedIn ? 'connected' : 'logged-out'
   }
 
   function tierOf(record: AccountRecord): string | null {
@@ -241,7 +239,7 @@ export function createAccountRegistry(deps: RegistryDeps) {
     if (!record) return
     const dir = configDirOf(id)
     const status = await deps.authStatus(dir)
-    if (!dir) defaultAuth = { at: Date.now(), status }
+    authCache.set(dir ?? '', { at: Date.now(), status })
     if (!status.loggedIn) return
     const email = status.email ?? readOauthEmail(dir)
     const org = readOauthOrg(dir)
@@ -370,7 +368,7 @@ export function createAccountRegistry(deps: RegistryDeps) {
       try {
         ok = await deps.login(dir)
         if (ok && dir) clearRecreatedMark(dir)
-        if (ok && !dir) defaultAuth = null
+        if (ok) authCache.delete(dir ?? '')
         if (ok) await refreshIdentity(id)
       } finally {
         reserved.delete(id)

@@ -11,6 +11,7 @@ import {
 import { IconSpinner } from './Icons'
 import { CardPrints } from './BoardPrints'
 import { ReadRetry } from './ReadRetry'
+import { BoardCardReply, type BoardCardReplyHandler } from './BoardCardReply'
 
 /**
  * O detalhe de um cartão do Quadro — o MESMO no painel (BoardPanel) e na janela
@@ -98,6 +99,9 @@ export interface BoardCardDetailProps {
   onClose: () => void
   onOpenConversation: (convId: string) => void
   onDismiss: (item: BoardItem) => void
+  /** Responder ao cartão que espera você ("Pode fazer" / campo de resposta), como na coluna.
+   *  Sem ele, o detalhe só mostrava o pedido, sem como responder. */
+  onReply?: BoardCardReplyHandler
   /** De onde vem a linha do tempo (padrão: o Quadro do app). O 3D passa a fonte do quadro da sala. */
   loadEvents?: (boardItemId: string) => Promise<BoardItemEvent[]>
   /** Acha outro cartão do quadro pelo id — o pai da pendência ("Pendência de"). */
@@ -115,6 +119,7 @@ export function BoardCardDetail({
   onClose,
   onOpenConversation,
   onDismiss,
+  onReply,
   loadEvents = appEvents,
   findItem,
   onOpenItem
@@ -221,6 +226,7 @@ export function BoardCardDetail({
           <span>{item.poUserAction}</span>
         </div>
       )}
+      {onReply && <BoardCardReply item={item} onReply={onReply} className="in-detail" />}
       {/* A trilha do PO é o que torna a correção automática auditável: sem o
           motivo na tela, um PO errado vira um quadro errado sem explicação. */}
       {/* "Motivo atual", não "PO": o motivo também pode ser de uma regra

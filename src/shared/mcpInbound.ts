@@ -1,7 +1,7 @@
-/** Modelo fixo das tarefas do MCP de entrada, "por enquanto" (decisão do
- *  usuário). Um lugar só: o main força este modelo na sessão e a tela cria a
- *  conversa com ele. */
-export const MCP_TASK_MODEL = 'claude-opus-5-5'
+/** Modelo padrão das tarefas do MCP de entrada (decisão do usuário, 25/11/2026:
+ *  Sonnet, era Opus). Um lugar só: o main força este modelo na sessão e a tela
+ *  cria a conversa com ele. Quem chama ainda pode pedir outro com `modelo`. */
+export const MCP_TASK_MODEL = 'claude-sonnet-5-5'
 
 /**
  * Regra 1 do MCP de entrada: um envio que leva o id de uma tarefa que não está

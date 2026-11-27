@@ -20,6 +20,7 @@ export default defineConfig({
     // well over the 5s default while still passing in isolation.
     testTimeout: 20_000,
     globals: true,
-    include: ['src/**/*.test.{ts,tsx}']
+    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./vitest.setup.ts']
   }
 })

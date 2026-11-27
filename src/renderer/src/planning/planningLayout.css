@@ -26,13 +26,15 @@
   left: 3px;
   width: 1px;
   background: var(--line);
-  transition: background 0.12s ease, left 0.12s ease, width 0.12s ease;
+  /* engrossa por transform (sem recalcular layout): 1px vira 3px no mesmo centro */
+  transform-origin: center;
+  transition: background-color 0.12s ease-out, transform 0.12s ease-out;
 }
 /* A borda do roteiro já desenha a linha: a da alça só aparece ao passar o mouse ou focar. */
 .pl-roteiro-splitter::after { background: transparent; }
 .pl-splitter:hover::after,
 .pl-splitter:active::after,
-.pl-splitter:focus-visible::after { left: 2px; width: 3px; background: var(--accent); }
+.pl-splitter:focus-visible::after { transform: scaleX(3); background: var(--accent); }
 
 /* ---- roteiro: botão de recolher e o trilho ---- */
 .planning .pl-progress-head { align-items: center; gap: 6px; }

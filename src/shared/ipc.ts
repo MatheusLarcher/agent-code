@@ -871,6 +871,8 @@ export interface PermissionRequest {
    *  (questions → proceed without an answer; tool permissions → auto-deny).
    *  Drives the countdown bar in the modal. */
   deadline?: number
+  /** Id do subagente quando quem pede é um agente do time (ausente = o agente principal). */
+  agentId?: string
 }
 
 /** A chat event tagged with the conversation whose agent produced it. Each
@@ -1557,9 +1559,9 @@ export const VIGIA_MODELS: ReadonlyArray<{ id: string; label: string }> = [
 /**
  * O quadro de tarefas do projeto e quem o mantém honesto.
  *
- * `requirePlan` é a TRAVA: o gate de permissão recusa a primeira escrita de
- * arquivo do turno enquanto o agente não declarou o plano. É o que garante que
- * o quadro exista — instrução no prompt o modelo esquece.
+ * `requirePlan` é o LEMBRETE: a primeira escrita de arquivo do turno sem plano
+ * declarado volta com o pedido de TaskCreate anexado ao resultado (PostToolUse).
+ * É o que garante que o quadro exista — instrução no prompt o modelo esquece.
  *
  * `po` é o agente auditor que roda em paralelo (molde do vigia): compara o que
  * o agente declarou com o que de fato aconteceu e conserta o buraco. Ligado por
@@ -1676,7 +1678,17 @@ export interface MemoristaConfig {
   enabled: boolean
   /** Model id da análise (mais barato que o da conversa observada). */
   model: string
+  /** O bibliotecário (organiza as memórias de hora em hora). `simulacao` só escreve o
+   *  relatório do que faria; `ligado` grava. Ausente = `simulacao`. */
+  bibliotecario?: BibliotecarioModo
 }
+
+export type BibliotecarioModo = 'desligado' | 'simulacao' | 'ligado'
+export const BIBLIOTECARIO_MODOS: ReadonlyArray<{ id: BibliotecarioModo; label: string }> = [
+  { id: 'simulacao', label: 'Só mostrar o que faria' },
+  { id: 'ligado', label: 'Organizar de verdade' },
+  { id: 'desligado', label: 'Desligado' }
+]
 
 /** Modelos oferecidos para o memorista: a mesma lista curta do vigia e do PO,
  *  mais o Automático — ele é o único dos três observadores cujo custo varia
@@ -1980,6 +1992,9 @@ export interface AppUpdateState {
   canInstallNow: boolean
   /** O que segura a instalação agora (uma frase), quando há algo segurando. */
   blockedBy: string | null
+  /** Atualização só manual (ex.: a Homol, publicada num repositório privado): a frase que
+   *  diz de onde baixar. Presente = o app não verifica sozinho. */
+  manual?: string | null
 }
 
 /** Everything the user can configure — persisted across app restarts. */
@@ -2427,6 +2442,8 @@ export const Channels = {
   // renderer -> main (invoke)
   /** Read the app version from package.json (shown in the Settings screen). */
   appGetVersion: 'app:get-version',
+  /** Nome visível do app: "Agent Code Homol" na variante Homol. */
+  appGetName: 'app:get-name',
   /** Atualização automática (main/appUpdate/): o estado atual e cada mudança dele (main → tela). */
   updateStateGet: 'update:state-get',
   updateStateChanged: 'update:state-changed',
@@ -2492,6 +2509,13 @@ export const Channels = {
   secretVaultList: 'secret-vault:list',
   /** Vault: explicit deletion from the settings screen. */
   secretVaultDelete: 'secret-vault:delete',
+  secretVaultPassphraseStatus: 'secret-vault:passphrase-status',
+  /** Importar conversas do Agent Code original para a Homol (main/importar/). */
+  importarPrincipalListar: 'importar-principal:listar',
+  importarPrincipalImportar: 'importar-principal:importar',
+  importarAutoStatus: 'importar-principal:auto-status',
+  importarAutoSet: 'importar-principal:auto-set',
+  secretVaultSetPassphrase: 'secret-vault:set-passphrase',
   /** Memory proposals that failed, for the settings screen. */
   memoryConflicts: 'memory:conflicts',
   /** Drops a settled (conflict/rejected) proposal from the list. */
@@ -2675,6 +2699,8 @@ export const Channels = {
   fileRead: 'app:file-read',
   /** Read a local file as base64 bytes (for binary previews: PDF, images, xlsx…). */
   fileReadBytes: 'app:file-read-bytes',
+  /** Aba Preview: lê/converte um arquivo local (main/preview/readPreviewFile.ts → PreviewFileResult). */
+  previewReadFile: 'app:preview-read-file',
   /** Resolve a pasted line as a local file path (stat only, no bytes read). */
   resolvePastedPath: 'app:resolve-pasted-path',
   /** Download a pasted http(s) file URL to disk, streaming (no bytes over IPC). */
@@ -2727,6 +2753,7 @@ export const Channels = {
   authStatus: 'auth:status',
   /** Run the Claude OAuth login (opens the browser); resolves when authenticated. */
   authLogin: 'auth:login',
+  authLoginCancel: 'auth:login-cancel',
   /** Erase the saved Claude OAuth login. */
   authLogout: 'auth:logout',
   /** Contas Claude (uma pasta de login por conta): listar, adicionar, gerenciar. */

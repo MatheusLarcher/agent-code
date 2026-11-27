@@ -51,12 +51,14 @@ describe('destructiveCommandReason — destrutivos', () => {
     expect(bash(command)).toEqual(expect.any(String))
   })
 
+  // Caminho absoluto no formato da plataforma: `C:\\` só é absoluto no Windows.
+  const win = process.platform === 'win32'
   it.each([
-    'Remove-Item -Recurse -Force C:\\Users\\x\\Desktop',
+    win ? 'Remove-Item -Recurse -Force C:\\Users\\x\\Desktop' : 'Remove-Item -Recurse -Force /Users/x/Desktop',
     'Remove-Item -Path .. -Recurse -Force',
-    'rm -Recurse -Force C:\\Windows\\Temp\\x',
+    win ? 'rm -Recurse -Force C:\\Windows\\Temp\\x' : 'rm -Recurse -Force /private/tmp/x',
     'Restart-Computer',
-    'cmd /c rd /s /q C:\\dados'
+    ...(win ? ['cmd /c rd /s /q C:\\dados'] : [])
   ])('PowerShell: %s → motivo', (command) => {
     expect(ps(command)).toEqual(expect.any(String))
   })

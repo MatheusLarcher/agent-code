@@ -94,6 +94,27 @@ describe('BoardCardDetail — "Pendência de"', () => {
     expect(within(detail).getByText('um cartão que não está mais no quadro')).toBeTruthy()
   })
 
+  it('cartão que espera autorização: o detalhe tem "Pode fazer" e a resposta vai para a conversa do cartão', async () => {
+    mockApi({ available: true, items: [parent, child] })
+    const onCardReply = vi.fn().mockResolvedValue('sent')
+    render(
+      <BoardPanel
+        projectCwd="C:/proj"
+        conversationId="conv-1"
+        conversationTitles={{ 'conv-1': 'Implementação' }}
+        busy={false}
+        onClose={vi.fn()}
+        onOpenConversation={vi.fn()}
+        onCardReply={onCardReply}
+      />
+    )
+    fireEvent.click(await screen.findByText('Commitar a fase 1 do escritório'))
+    const detail = document.querySelector('.board-detail') as HTMLElement
+    fireEvent.click(within(detail).getByRole('button', { name: /pode fazer/i }))
+    await vi.waitFor(() => expect(onCardReply).toHaveBeenCalled())
+    expect(onCardReply.mock.calls[0][0]).toBe('conv-1')
+  })
+
   it('cartão comum não tem a linha', async () => {
     mockApi({ available: true, items: [parent] })
     render(panel())

@@ -1,7 +1,7 @@
 import type { TaskCounts } from '@shared/stepProgress'
-import { IconBoard, IconCollapseRight, IconScrum } from './Icons'
+import { IconBoard, IconCollapseRight, IconPreview, IconScrum } from './Icons'
 
-export type RightPane = 'board' | 'scrum'
+export type RightPane = 'board' | 'scrum' | 'preview'
 
 interface Props {
   active: RightPane
@@ -16,7 +16,8 @@ interface Props {
 }
 
 /**
- * Segmented switch at the top of the right-hand pane: Quadro ⇄ Scrum Master.
+ * Segmented switch at the top of the right-hand pane: Quadro ⇄ Scrum Master ⇄ Preview
+ * (o Preview mostra sites, HTML e arquivos sem sair do app — ver preview/).
  * O navegador do agente não mora mais aqui — é uma janela do Chrome no PC. O
  * Quadro é o padrão; a aba Scrum Master mostra o mesmo Diário do Escritório 3D.
  * Dica de cada botão: o tooltip do app (`data-tip`), nunca o `title` nativo.
@@ -55,6 +56,17 @@ export function RightPaneTabs({ active, onSelect, onCollapse, liveAgents, boardP
       >
         <IconScrum size={14} />
         Scrum Master
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'preview'}
+        className={`pane-tab${active === 'preview' ? ' on' : ''}`}
+        onClick={() => onSelect('preview')}
+        data-tip="Ver sites, páginas e arquivos sem sair do app"
+      >
+        <IconPreview size={14} />
+        Preview
       </button>
       <button type="button" className="nav-btn pane-collapse" onClick={onCollapse} data-tip="Recolher painel" aria-label="Recolher painel">
         <IconCollapseRight />

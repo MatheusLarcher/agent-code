@@ -45,18 +45,13 @@ files:
   # exclusões são a trava caso um .onnx apareça em out/ ou em node_modules.
   - '!**/*.onnx'
   - '!**/*.onnx_data'
+  # O onnxruntime traz binários de Linux (~77 MB) que nem Windows nem Mac usam.
+  - '!node_modules/onnxruntime-node/bin/napi-v3/linux/**'
 
 extraResources:
-  # Helper nativo do controle do Windows (resolveHelperPath → resources/windows-control)
-  - from: out/windows-control
-    to: windows-control
   # PostgreSQL 18.6 embutido, gerenciado pelo app (persistence/localPostgres.ts → resources/postgres)
   - from: out/postgres
     to: postgres
-  # 7-Zip do electron-builder (scripts/stage-7zip.mjs): extrai a versão nova em
-  # segundo plano para a atualização rápida (main/appUpdate/fastSwap.ts).
-  - from: out/7zip
-    to: 7zip
   # Extensão local do Chrome (chromeBridge/runtime.ts → resources/chrome-extension).
   # config.js é gerado por instalação (token), nunca empacotado.
   - from: src/chromeExtension
@@ -86,6 +81,29 @@ win:
     - target: nsis
       arch: [x64]
   icon: build/icon.ico
+  # Só no Windows (somam aos extraResources de cima).
+  extraResources:
+    # Helper nativo do controle do Windows (resolveHelperPath → resources/windows-control)
+    - from: out/windows-control
+      to: windows-control
+    # 7-Zip do electron-builder (scripts/stage-7zip.mjs): extrai a versão nova em
+    # segundo plano para a atualização rápida (main/appUpdate/fastSwap.ts).
+    - from: out/7zip
+      to: 7zip
+
+# macOS: .dmg SEM assinatura (decisão do usuário, 25/11). Na 1ª abertura o Mac pede
+# para liberar em Ajustes → Privacidade e Segurança; sem atualização automática
+# (o macOS exige app assinado) — atualizar = instalar o .dmg novo por cima.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  identity: null
+
+dmg:
+  artifactName: AgentCode-mac-${arch}.dmg
 
 nsis:
   artifactName: AgentCode-setup.exe

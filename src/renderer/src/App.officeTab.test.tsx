@@ -14,6 +14,7 @@ import type { TtsControls } from './components/ChatRows'
 import type { Office3DWorkspaceProps } from './office3d/Office3DWorkspace'
 import { makePlan } from './planning/planningTestUtils'
 import { UiProvider } from './ui/UiProvider'
+import { modelOptions, modelValue, pickModel } from './components/modelSelect.testing'
 import { syncIntoLocalStorage } from './conversationSyncFake'
 
 configure({ asyncUtilTimeout: 10_000 })
@@ -344,11 +345,11 @@ describe('App — aba Escritório', () => {
     office.pickerFor = 'c2'
     render(<UiProvider><App /></UiProvider>)
     const stub = await screen.findByTestId('office-picker-stub')
-    const select = (await within(stub).findByRole('combobox', { name: 'Modelo' })) as HTMLSelectElement
-    expect(select.value).toBe('claude-opus-4-8')
-    const other = Array.from(select.options).find((o) => o.value !== 'claude-opus-4-8' && o.value !== 'auto')!
-    fireEvent.change(select, { target: { value: other.value } })
-    await waitFor(() => expect((within(screen.getByTestId('office-picker-stub')).getByRole('combobox', { name: 'Modelo' }) as HTMLSelectElement).value).toBe(other.value))
+    const select = await within(stub).findByRole('button', { name: /^Modelo:/ })
+    expect(modelValue(select)).toBe('claude-opus-4-8')
+    const other = modelOptions(select).find((o) => o.value !== 'claude-opus-4-8' && o.value !== 'auto')!
+    pickModel(select, other.value)
+    await waitFor(() => expect(modelValue(within(screen.getByTestId('office-picker-stub')).getByRole('button', { name: /^Modelo:/ }))).toBe(other.value))
     // A conversa ativa (c1) não muda.
     expect(office.props?.conversation?.id).toBe('c1')
     const saved = (): Array<{ id: string; model: string }> => JSON.parse(localStorage.getItem('agentcode.conversations.v1') ?? '[]')

@@ -195,14 +195,16 @@ describe('ConversationWriteQueue', () => {
     db.state.failNext = new StorageError('INVALID_PERSISTED_DATA', 'payload torto')
     queue.apply([full(conversation('c1', ['x']), true)])
     await vi.advanceTimersByTimeAsync(5_000)
-    expect(queue.status()).toMatchObject({ state: 'error', error: 'payload torto' })
+    // vi.waitFor avança o relógio falso a cada volta e espera em tempo real: o
+    // diário grava em disco de verdade, e com a máquina carregada o fs passa dos
+    // poucos ms falsos (item 3.22).
+    await vi.waitFor(() => expect(queue.status()).toMatchObject({ state: 'error', error: 'payload torto' }), { timeout: 5_000, interval: 10 })
     expect(db.state.writes).toBe(0)
     // Só recusa sobrando: uma troca de banco não fica presa esperando por ela.
     expect(queue.onlyRefusedLeft()).toBe(true)
     queue.apply([full(conversation('c1', ['y']), true)])
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.waitFor(() => expect(queue.status().state).toBe('saved'), { timeout: 5_000, interval: 10 })
     expect(db.state.writes).toBe(1)
-    expect(queue.status().state).toBe('saved')
     expect(queue.onlyRefusedLeft()).toBe(false)
   })
 })

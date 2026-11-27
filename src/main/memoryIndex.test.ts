@@ -5,8 +5,12 @@ import { join } from 'node:path'
 import {
   assembleMemories,
   buildDynamicMemoryContext,
+  MAX_MEMORY_EXCERPT_CHARS,
   MAX_SELECTED_MEMORIES,
   MAX_TOTAL_EXCERPT_CHARS,
+  isPinnedMemory,
+  memoryExcerpt,
+  pinnedMemoryPaths,
   selectMemoriesLexically,
   buildMemoryIndexContext,
   createMemoryCatalogSnapshot,
@@ -245,18 +249,38 @@ describe('assembleMemories / selectMemoriesLexically', () => {
     expect(chosen.entries.every((entry) => entry.body.endsWith('d'.repeat(100)))).toBe(true)
   })
 
-  it('não passa de 50.000 caracteres: a que estoura é PULADA e a menor seguinte ainda entra', async () => {
+  it('memória longa é cortada no teto por item, com a marca e o caminho do arquivo inteiro', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mem-asm-'))
-    await writeFile(join(dir, 'a.md'), `# A\n${'a'.repeat(30_000)}`, 'utf8')
-    await writeFile(join(dir, 'b.md'), `# B\n${'b'.repeat(30_000)}`, 'utf8')
-    await writeFile(join(dir, 'c.md'), `# C\n${'c'.repeat(5_000)}`, 'utf8')
-    const chosen = assembleMemories(dir, ['a.md', 'b.md', 'c.md'])
-    expect(MAX_TOTAL_EXCERPT_CHARS).toBe(50_000)
-    expect(chosen.relPaths).toEqual(['a.md', 'c.md'])
-    expect(chosen.block.length).toBeLessThanOrEqual(50_000)
-    // Nada cortado ao meio: cada memória entra com o texto completo.
-    expect(chosen.block).toContain('a'.repeat(30_000))
-    expect(chosen.block).not.toContain('Memória relevante: b.md')
+    await writeFile(join(dir, 'longa.md'), `# Longa\n${'regra importante.\n'.repeat(500)}`, 'utf8')
+    const [entry] = assembleMemories(dir, ['longa.md']).entries
+    expect(MAX_MEMORY_EXCERPT_CHARS).toBe(1_500)
+    expect(entry.body.length).toBeLessThanOrEqual(MAX_MEMORY_EXCERPT_CHARS)
+    expect(entry.body.startsWith('# Longa\nregra importante.\n')).toBe(true)
+    expect(entry.body.endsWith('regra importante.\n[…] (memória completa em longa.md)')).toBe(true)
+    // Curta passa inteira, e o corte é idempotente (conversationSeed recalcula).
+    expect(memoryExcerpt('x.md', 'curta')).toBe('curta')
+    expect(memoryExcerpt('longa.md', readMemoryBody(dir, 'longa.md')!)).toBe(entry.body)
+  })
+
+  it('o bloco não passa de 6.000 caracteres, na ordem do seletor, nem se quem chama pedir mais', async () => {
+    const { dir, paths } = await many(10, 3_000)
+    const chosen = assembleMemories(dir, paths, 15, 75_000)
+    expect(MAX_TOTAL_EXCERPT_CHARS).toBe(6_000)
+    expect(chosen.block.length).toBeLessThanOrEqual(MAX_TOTAL_EXCERPT_CHARS)
+    expect(chosen.relPaths).toEqual(paths.slice(0, chosen.relPaths.length))
+    expect(chosen.relPaths.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('a que estoura o que sobra é PULADA e a menor seguinte ainda entra', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mem-asm-'))
+    await writeFile(join(dir, 'a.md'), `# A\n${'a'.repeat(3_000)}`, 'utf8')
+    await writeFile(join(dir, 'b.md'), `# B\n${'b'.repeat(3_000)}`, 'utf8')
+    await writeFile(join(dir, 'c.md'), `# C\n${'c'.repeat(3_000)}`, 'utf8')
+    await writeFile(join(dir, 'd.md'), `# D\n${'d'.repeat(3_000)}`, 'utf8')
+    await writeFile(join(dir, 'e.md'), `# E\n${'e'.repeat(100)}`, 'utf8')
+    const chosen = assembleMemories(dir, ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'])
+    expect(chosen.relPaths).toEqual(['a.md', 'b.md', 'c.md', 'e.md'])
+    expect(chosen.block.length).toBeLessThanOrEqual(MAX_TOTAL_EXCERPT_CHARS)
   })
 
   it('ignora caminho repetido, fora da pasta e inexistente', async () => {
@@ -269,5 +293,19 @@ describe('assembleMemories / selectMemoriesLexically', () => {
     const chosen = selectMemoriesLexically(dir, 'deploy')
     expect(chosen.relPaths).toHaveLength(10)
     expect(buildDynamicMemoryContext(dir, 'deploy', false)).toBe(chosen.block)
+  })
+})
+
+describe('memória marcada "sempre"', () => {
+  it('lê a flag só do frontmatter, em qualquer nível', async () => {
+    expect(isPinnedMemory('---\nmetadata:\n  type: feedback\n  sempre: true\n---\n# X')).toBe(true)
+    expect(isPinnedMemory('﻿---\r\nsempre: sim\r\n---\r\n# X')).toBe(true)
+    expect(isPinnedMemory('---\nsempre: false\n---\n# X')).toBe(false)
+    expect(isPinnedMemory('---\nname: x\n---\nsempre: true')).toBe(false)
+    expect(isPinnedMemory('# X\nsempre: true')).toBe(false)
+    const dir = await mkdtemp(join(tmpdir(), 'mem-pin-'))
+    await writeFile(join(dir, 'a.md'), '---\nsempre: true\n---\n# A\n', 'utf8')
+    await writeFile(join(dir, 'b.md'), '---\nname: b\n---\n# B\n', 'utf8')
+    expect(pinnedMemoryPaths(dir)).toEqual(['a.md'])
   })
 })

@@ -175,14 +175,20 @@ function trackActivity(track: AgentTrack): Activity {
   return activityFor(track.steps[track.steps.length - 1]?.name)
 }
 
+/** Limite/erro com nova tentativa agendada: o elenco mostra "esperando", não "trabalhando" (crew.ts). */
+function retryHoldOf(c: Conversation): 'limit' | 'transient' | null {
+  return c.recovery && c.recovery.scheduledAt > 0 ? c.recovery.reason : null
+}
+
 function principalOf(c: Conversation, feed: OfficeFeed, roomId: string, crew: CrewMember[], now: number): OfficeCharacterModel {
   const busy = feed.busyIds.has(c.id)
   const turn = scanTurn(c.messages)
-  const tool = busy ? turn.tool : null
-  const perm = feed.permissions[c.id]
-  const task = hasActiveTask(c, feed)
   // Recuperação agendada: o App mantém a conversa ocupada (sem busySince) até a retomada sair.
   const retrying = (c.recovery?.scheduledAt ?? 0) > 0
+  // Esperando a nova tentativa ninguém está usando ferramenta: o rótulo vem do elenco ("esperando…").
+  const tool = busy && !retrying ? turn.tool : null
+  const perm = feed.permissions[c.id]
+  const task = hasActiveTask(c, feed)
   let bubble: BubbleKind | null = null
   if (perm && !perm.questions) bubble = 'permissao'
   else if (perm?.questions || feed.vigiaAlerts[c.id]) bubble = 'pergunta'
@@ -313,6 +319,7 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
         po: null,
         poEnabled: false,
         vigiaEnabled: false,
+        retryHold: retryHoldOf(c),
         now
       })
       const principal = principalOf(c, feed, room.id, crew, now)
@@ -420,7 +427,7 @@ export function deriveOfficeModel(feed: OfficeFeed, now: number, boardRooms?: Re
 
 /** O personagem da Central: o estado de um principal, sem sala (filtro nenhum o tira) e com destino no console. */
 function centralOf(c: Conversation, feed: OfficeFeed, now: number): OfficeCharacterModel {
-  const crew = buildCrew({ tracks: {}, busy: feed.busyIds.has(c.id), busySince: feed.busySince[c.id] ?? null, vigia: null, po: null, poEnabled: false, vigiaEnabled: false, now })
+  const crew = buildCrew({ tracks: {}, busy: feed.busyIds.has(c.id), busySince: feed.busySince[c.id] ?? null, vigia: null, po: null, poEnabled: false, vigiaEnabled: false, retryHold: retryHoldOf(c), now })
   return { ...principalOf(c, feed, '', crew, now), roomId: null, placement: { kind: 'destination', papel: 'central' } }
 }
 

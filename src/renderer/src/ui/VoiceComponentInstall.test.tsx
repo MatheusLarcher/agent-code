@@ -66,7 +66,8 @@ describe('VoiceComponentInstall (Configurações › Voz)', () => {
       voiceComponentInstall: vi.fn(async () => ({ ok: false, error: 'sem rede' }))
     })
     render(<VoiceComponentInstall component={{ kind: 'tts' }} />)
-    await waitFor(() => expect(screen.getByText('Instalar')).toBeTruthy())
+    // O botão aparece desativado até o status chegar; clicar antes disso não faz nada.
+    await waitFor(() => expect((screen.getByText('Instalar') as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByText('Instalar'))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('sem rede'))
     expect((screen.getByText('Instalar') as HTMLButtonElement).disabled).toBe(false)

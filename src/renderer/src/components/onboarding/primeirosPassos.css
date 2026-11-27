@@ -1,0 +1,178 @@
+/* Primeiros passos — usa as cores do app (styles.css :root). A trilha vertical liga os
+   passos e acende no passo concluído: é o único destaque; o resto fica quieto. */
+/* A tela vazia normal ignora o mouse; com os passos ela rola (janela baixa) e centraliza
+   sem cortar o topo. */
+.empty-state.empty-state-passos {
+  /* Acima da lista de mensagens (vazia, mas por cima no DOM e roubava o clique). */
+  z-index: 2;
+  pointer-events: auto;
+  overflow-y: auto;
+  justify-content: safe center;
+  /* Embaixo: espaço para a barra de modelo/esforço que flutua sobre a lista. */
+  padding: 24px 16px 84px;
+}
+.pp {
+  pointer-events: auto;
+  width: min(460px, 100%);
+  text-align: left;
+  color: var(--muted);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 22px 14px;
+}
+.pp-cabeca {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.pp-estrela {
+  font-size: 26px;
+  color: var(--accent);
+  line-height: 1;
+}
+.pp-cabeca h2 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+.pp-cabeca p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+.pp-passos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pp-passo {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+/* a trilha entre um passo e o próximo */
+.pp-passo:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 28px;
+  bottom: 2px;
+  width: 2px;
+  background: var(--line);
+}
+.pp-passo.feito:not(:last-child)::before {
+  background: var(--accent-dim);
+}
+.pp-marca {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1.5px solid var(--line);
+  background: var(--bg);
+}
+.pp-passo.atual .pp-marca {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.pp-passo.feito .pp-marca {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pp-corpo h3 {
+  margin: 3px 0 4px;
+  font-size: 14px;
+  color: var(--text);
+}
+.pp-corpo p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.pp-corpo strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.pp-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.pp-acao {
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.pp-acao:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.pp-acao:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pp-exemplos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.pp-exemplo {
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.pp-exemplo:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.pp-exemplo:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.pp-pular {
+  display: block;
+  margin: 4px 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 6px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.pp-pular:hover {
+  color: var(--text);
+}
+.pp-exemplo:focus-visible,
+.pp-pular:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pp-exemplo {
+    transition: none;
+  }
+}

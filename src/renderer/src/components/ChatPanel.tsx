@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { marcarPrimeirosPassos, PrimeirosPassos, primeirosPassosFeito } from './onboarding/PrimeirosPassos'
+import type { SettingsTab } from '../ui/SettingsModal'
 import type {
   BackgroundTask,
   FileAttachment,
@@ -18,6 +20,7 @@ import type { DraftMedia } from '../inlineMedia/inlineAttachments'
 import { CrewChip } from './CrewChip'
 import { QueueStrip } from './QueueStrip'
 import { EffortPicker } from './EffortPicker'
+import { ModelSelect } from './ModelSelect'
 import { BackgroundTasksCard, InterruptQueueWarning } from './ActivityPanels'
 import { PromptSuggestionChip } from './PromptSuggestionChip'
 import type { ComposerInject } from './promptSuggestion'
@@ -271,6 +274,8 @@ interface Props {
    *  substitui o texto e o "Conectar" do estado vazio; com mensagens, fica
    *  acima do campo de mensagem. */
   connectAccount?: React.ReactNode
+  /** Abre as Configurações numa aba (a apresentação inicial leva a cada módulo). */
+  onOpenSettings?: (tab: SettingsTab) => void
   /** O aviso da fila do projeto (plano na fila, resposta guardada, implantação na pasta). */
   projectNotice?: React.ReactNode
   /** No topo da conversa, abaixo do cabeçalho: o resumo "Desde que você saiu". */
@@ -379,10 +384,22 @@ function ContextBar({ context, model }: { context: number; model: string }): JSX
 
 export function ChatPanel(props: Props): JSX.Element {
   const { messages, hasActive, busy, tokens } = props
+  // Limite/erro com nova tentativa agendada: a conversa segue ocupada (fila e
+  // Parar), mas a tela mostra só o cartão da espera, não "trabalhando/pensando".
+  const onHold = !!props.recovery && props.recovery.scheduledAt > 0
   const [tokenPanelOpen, setTokenPanelOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   // O texto que o chip da sugestão põe no campo (a cada nonce novo, sem enviar).
   const [inject, setInject] = useState<ComposerInject | null>(null)
+  // Apresentação inicial: até o 1º pedido (em qualquer conversa) ou o "pular".
+  const [passosFeitos, setPassosFeitos] = useState(primeirosPassosFeito)
+  const concluirPassos = (): void => {
+    marcarPrimeirosPassos()
+    setPassosFeitos(true)
+  }
+  useEffect(() => {
+    if (!passosFeitos && messages.length > 0) concluirPassos()
+  }, [messages.length, passosFeitos])
   // Compacto (chat minimizado do planejamento): sem consumo e sem o aviso do Windows.
   const { compact, hideWindowsBanner, hideLastUsage, usageMini, onComposerHasText } = useChatDisplay()
   // "Comentar" num bloco da resposta: "[trecho N]" inline no cursor do campo de mensagem.
@@ -463,9 +480,20 @@ export function ChatPanel(props: Props): JSX.Element {
 
       {props.topNotice}
 
-      {busy && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} apiRetry={props.apiRetry} waiting={props.waitingOn} />}
+      {busy && !onHold && <WorkingBanner stalledSince={props.stalledSince} compacting={props.compactingSince != null} apiRetry={props.apiRetry} waiting={props.waitingOn} />}
 
-      {messages.length === 0 && (
+      {messages.length === 0 && hasActive && !passosFeitos && !compact && (
+        <div className="empty-state empty-state-passos">
+          <PrimeirosPassos
+            conectarConta={props.connectAccount ?? null}
+            onExemplo={(text) => setInject((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }))}
+            onPular={concluirPassos}
+            onAbrirConfiguracoes={props.onOpenSettings}
+          />
+        </div>
+      )}
+
+      {messages.length === 0 && !(hasActive && !passosFeitos && !compact) && (
         <div className="empty-state">
           <div className="empty-logo">✦</div>
           <h2>Claude Code</h2>
@@ -491,6 +519,7 @@ export function ChatPanel(props: Props): JSX.Element {
         scrollToId={props.scrollToId}
         scrollSeq={props.scrollSeq}
         busy={busy}
+        onHold={onHold}
         compactingSince={props.compactingSince}
         waiting={props.waitingOn}
         tts={props.tts}
@@ -544,54 +573,23 @@ export function ChatPanel(props: Props): JSX.Element {
         }}
       />
 
-      {!compact && !hideLastUsage && (
-        <div className="last-usage-float" aria-label="Consumo da última resposta">
-          <span className="last-usage-title">Última resposta</span>
-          <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">
-            ↓ {fmt(tokens.context)} entrada
-          </span>
-          <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
-          <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
-        </div>
-      )}
-
       <div className="composer-bar">
-        <select
-          className={`model-select${props.modelLocked ? ' locked' : ''}`}
+        {/* Locked only when there's no active conversation: keep it clickable
+            (so we can explain why) but block the list and show a hint. */}
+        <ModelSelect
+          models={props.models}
           value={props.model}
-          aria-disabled={props.modelLocked}
-          title={
+          locked={props.modelLocked}
+          tip={
             props.modelLocked
               ? 'Selecione uma conversa para trocar o modelo.'
               : props.busy
                 ? 'Muda a partir da próxima mensagem da fila (a tarefa atual continua no modelo atual).'
                 : 'Modelo usado nesta conversa'
           }
-          // Locked only when there's no active conversation: keep it clickable
-          // (so we can explain why) but block the dropdown and show a hint.
-          onMouseDown={(e) => {
-            if (props.modelLocked) {
-              e.preventDefault()
-              e.currentTarget.blur()
-              props.onModelLockedClick()
-            }
-          }}
-          onKeyDown={(e) => {
-            if (props.modelLocked) {
-              e.preventDefault()
-              props.onModelLockedClick()
-            }
-          }}
-          onChange={(e) => {
-            if (!props.modelLocked) props.onModelChange(e.target.value)
-          }}
-        >
-          {props.models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+          onChange={props.onModelChange}
+          onLockedClick={props.onModelLockedClick}
+        />
         {props.effortLevels.length > 0 && (
           <EffortPicker
             levels={props.effortLevels}
@@ -613,6 +611,17 @@ export function ChatPanel(props: Props): JSX.Element {
             <span className="fast-icon"><IconZap size={13} /></span>
             <span className="fast-label">Rápido</span>
           </button>
+        )}
+        {/* "Última resposta" na mesma barra, logo à direita do Rápido. */}
+        {!compact && !hideLastUsage && (
+          <div className="last-usage-float" aria-label="Consumo da última resposta">
+            <span className="last-usage-title">Última resposta</span>
+            <span className="tok in" title="Tokens de entrada enviados ao modelo na última resposta">
+              ↓ {fmt(tokens.context)} entrada
+            </span>
+            <span className="tok out">↑ {fmt(tokens.lastOutput ?? 0)} saída</span>
+            <span className="tok cost">~${(tokens.lastCost ?? 0).toFixed(2)}</span>
+          </div>
         )}
         {props.onQuestionnaire && (
           <button

@@ -59,12 +59,15 @@ export function flowSeconds(drainPerMin: number, busy: number): number {
 }
 
 const agents = (n: number): string => `${n} agente${n > 1 ? 's' : ''} trabalhando`
-const resetText = (b: BankAccount, now: number): string => (b.resetsAt === null ? 'janela de 5 h ainda sem uso' : `recarrega às ${resetClock(b.resetsAt, now)}`)
+/** A janela de 5 h da conta lida: sem o número dela (pct null) não é "sem uso" nem 100%. */
+const resetText = (b: BankAccount, now: number): string =>
+  b.pct === null ? 'janela de 5 h sem leitura' : b.resetsAt === null ? 'janela de 5 h ainda sem uso' : `recarrega às ${resetClock(b.resetsAt, now)}`
 /** A leitura velha (1 min ou mais) mostra a idade. */
 const ageText = (b: BankAccount, now: number): string | null => (b.at !== null && now - b.at >= 60_000 ? updatedAgo(b.at, now) : null)
 
 function Spare({ b, now }: { b: BankAccount; now: number }): JSX.Element {
-  const tip = b.pct === null ? `${b.name}: sem leitura ainda` : [`${b.name}: ${b.pct}% restantes`, b.busy ? agents(b.busy) : 'parada', resetText(b, now), ageText(b, now)].filter(Boolean).join(' · ')
+  const head = b.pct === null ? `${b.name}: ${resetText(b, now)}` : `${b.name}: ${b.pct}% restantes`
+  const tip = b.at === null ? `${b.name}: sem leitura ainda` : [head, b.busy ? agents(b.busy) : 'parada', b.pct === null ? null : resetText(b, now), ageText(b, now)].filter(Boolean).join(' · ')
   return (
     <span className={`o3d-bank-spare${b.busy ? ' busy' : ''}${b.pct === null ? ' none' : ''}`} data-level={b.level ?? 'cheia'} title={tip} data-testid="o3d-bank-spare">
       <span className="o3d-bank-mini" aria-hidden="true">
@@ -78,7 +81,7 @@ function Spare({ b, now }: { b: BankAccount; now: number }): JSX.Element {
 
 function Row({ b, featured, now }: { b: BankAccount; featured: boolean; now: number }): JSX.Element {
   const tag = featured ? <span className="o3d-bank-tag">em destaque</span> : b.busy ? <span className="o3d-bank-tag use">em uso</span> : <span className="o3d-bank-tag ghost">parada</span>
-  const meta = b.pct === null ? 'sem leitura ainda' : [b.busy ? agents(b.busy) : null, resetText(b, now), b.weekUsed !== null ? `7 dias: ${b.weekUsed}% usados` : null, ageText(b, now)].filter(Boolean).join(' · ')
+  const meta = b.at === null ? 'sem leitura ainda' : [b.busy ? agents(b.busy) : null, resetText(b, now), b.weekUsed !== null ? `7 dias: ${b.weekUsed}% usados` : null, ageText(b, now)].filter(Boolean).join(' · ')
   const on = Math.round((b.pct ?? 0) / 5)
   return (
     <div className={`o3d-bank-row${featured ? ' active' : ''}`} data-level={b.level ?? 'cheia'} data-testid="o3d-bank-row">
@@ -125,7 +128,9 @@ export function SessionBattery({ power, now = Date.now() }: { power: OfficePower
   const time = resetClock(power.resetsAt, now)
   const out = level === 'apagao'
   const flowing = !!featured && featured.busy > 0 && !out
-  const pctText = power.unread ? '—' : `${power.pct}%`
+  // Conta em destaque lida mas sem a janela de 5 h: a pílula também fica "—", nunca 100%.
+  const unread = !!power.unread || featured?.pct === null
+  const pctText = unread ? '—' : `${power.pct}%`
   const reset = out ? (time ? `Apagão — recarrega às ${time}` : 'Apagão — recarrega na próxima janela') : time ? `recarrega às ${time}` : ''
   const style = { '--o3d-flow': `${flowSeconds(power.drainPerMin, featured?.busy ?? 0)}s` } as CSSProperties
   const cls = ['o3d-glass', 'o3d-bank', flowing && 'flowing', swap && 'swap', open && 'open'].filter(Boolean).join(' ')
@@ -146,14 +151,14 @@ export function SessionBattery({ power, now = Date.now() }: { power: OfficePower
         className="o3d-bank-main"
         aria-haspopup={bank.length > 0 ? 'dialog' : undefined}
         aria-expanded={bank.length > 0 ? open : undefined}
-        title={powerTitle(power, now, featured?.name ?? null)}
+        title={powerTitle({ ...power, unread }, now, featured?.name ?? null)}
         onClick={() => bank.length > 0 && setOpen((v) => !v)}
       >
         <svg className="o3d-bank-bolt" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M13 2 4 14h6l-1 8 9-12h-6z" />
         </svg>
         <span className="o3d-bank-cable" aria-hidden="true" />
-        <Cells pct={power.unread ? 0 : power.pct} />
+        <Cells pct={unread ? 0 : power.pct} />
         <span className="o3d-bank-pct">{pctText}</span>
         <span className="o3d-bank-who">{featured ? featured.name : 'Energia do escritório'}</span>
         {level !== 'cheia' && !out && <span className="o3d-bank-lvl">{POWER_LABEL[level]}</span>}

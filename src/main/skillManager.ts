@@ -16,6 +16,7 @@ import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 // Sem devDataDir (que importa 'electron'): este módulo roda também no worker de
 // sincronização (skills/skillSyncWorker.ts). Quem chama resolve a home do dev.
+import { isHomol } from './appVariant'
 import { directoryDigest, skillNames, VALID_SKILL_DIRECTORY } from './skillDirs'
 import { bundledSkillSources, kitSkillNames, kitsDigest, type SkillKitId } from './skillKits'
 
@@ -187,14 +188,22 @@ function removeGlobalEntry(link: string): void {
  * `isDirectory() === false`, so the SDK's skill scanner skips it and the Skill
  * tool answers `Unknown skill` for a skill the catalog just advertised.
  */
-export function exposeCacheSkills(skillsDir: string, userHome: string = homedir(), machine: string = hostname()): SkillSyncResult {
+export function exposeCacheSkills(
+  skillsDir: string,
+  userHome: string = homedir(),
+  machine: string = hostname(),
+  // A variante Homol não escreve no ~/.claude/skills (é do app principal): as
+  // sessões dela leem as skills pela raiz nativa (ensureNativeSkillRoot).
+  exposeGlobally: boolean = !isHomol()
+): SkillSyncResult {
   const globalRoot = join(userHome, '.claude', 'skills')
   const errors: string[] = []
   mkdirSync(skillsDir, { recursive: true })
-  mkdirSync(globalRoot, { recursive: true })
+  if (exposeGlobally) mkdirSync(globalRoot, { recursive: true })
 
   errors.push(...importUserSkills(skillsDir, userHome, machine))
   const available = skillNames(skillsDir)
+  if (!exposeGlobally) return { skillsDir, available, errors }
   const availableSet = new Set(available)
   const previouslyManaged = readManagedLinks(globalRoot)
   const managedNow = new Map<string, string>()

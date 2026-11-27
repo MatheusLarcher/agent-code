@@ -1,10 +1,11 @@
 /**
- * O seletor de modelo e de esforço de uma conversa: o `<select>` do modelo e,
+ * O seletor de modelo e de esforço de uma conversa: o ModelSelect do modelo e,
  * quando o modelo tem níveis, o EffortPicker ao lado. Quem monta põe dentro da
  * `.composer-bar`. Usado pelo campo de digitar da tela do monitor no Escritório
  * (para a conversa do agente focado); as regras de troca ficam com o App.
  */
 import { EffortPicker } from './EffortPicker'
+import { ModelSelect } from './ModelSelect'
 
 export interface ModelPickerProps {
   models: { id: string; label: string }[]
@@ -27,41 +28,20 @@ export interface ModelPickerProps {
 export function ModelPicker(props: ModelPickerProps): JSX.Element {
   return (
     <>
-      <select
-        className={`model-select${props.modelLocked ? ' locked' : ''}`}
+      <ModelSelect
+        models={props.models}
         value={props.model}
-        aria-label="Modelo"
-        aria-disabled={props.modelLocked}
-        title={
+        locked={props.modelLocked}
+        tip={
           props.modelLocked
             ? 'Selecione uma conversa para trocar o modelo.'
             : props.busy
               ? 'Muda a partir da próxima mensagem da fila (a tarefa atual continua no modelo atual).'
               : 'Modelo usado nesta conversa'
         }
-        onMouseDown={(e) => {
-          if (props.modelLocked) {
-            e.preventDefault()
-            e.currentTarget.blur()
-            props.onModelLockedClick()
-          }
-        }}
-        onKeyDown={(e) => {
-          if (props.modelLocked) {
-            e.preventDefault()
-            props.onModelLockedClick()
-          }
-        }}
-        onChange={(e) => {
-          if (!props.modelLocked) props.onModelChange(e.target.value)
-        }}
-      >
-        {props.models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
+        onChange={props.onModelChange}
+        onLockedClick={props.onModelLockedClick}
+      />
       {props.effortLevels.length > 0 && (
         <EffortPicker
           levels={props.effortLevels}

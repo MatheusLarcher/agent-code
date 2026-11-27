@@ -28,6 +28,7 @@ export function MessageList({
   convId,
   messages,
   busy,
+  onHold = false,
   compactingSince,
   waiting,
   tts,
@@ -40,6 +41,8 @@ export function MessageList({
   convId?: string | null
   messages: UIMessage[]
   busy: boolean
+  /** Esperando nova tentativa (limite/erro): ocupada, mas ninguém está pensando. */
+  onHold?: boolean
   /** Epoch ms do início da compactação em curso: a linha ao vivo vira "Compactando a conversa…". */
   compactingSince?: number
   /** O agente parou esperando o usuário: a linha ao vivo diz isso (ChatLive). */
@@ -117,8 +120,8 @@ export function MessageList({
   // Estável entre renders (ChatRow e ChatStepRow são memo): um evento que não mexe
   // em nada disto re-renderiza só a linha cuja mensagem mudou.
   const rowCtx = useMemo<ChatRowContext>(
-    () => ({ resolveRef, planDir, lastTsId, busy, liveLine: busy, onRetry, tts, quote, onUseAccount }),
-    [resolveRef, planDir, lastTsId, busy, onRetry, tts, quote, onUseAccount]
+    () => ({ resolveRef, planDir, lastTsId, busy, liveLine: busy && !onHold, onRetry, tts, quote, onUseAccount }),
+    [resolveRef, planDir, lastTsId, busy, onHold, onRetry, tts, quote, onUseAccount]
   )
 
   // New/updated messages: jump to bottom on first paint, then only when the
@@ -214,13 +217,13 @@ export function MessageList({
           )}
         </LazyMarkdownProvider>
       </AnimGateProvider>
-      {busy && <ChatLive messages={messages} compactingSince={compactingSince} convId={convId ?? undefined} waiting={waiting} />}
+      {busy && !onHold && <ChatLive messages={messages} compactingSince={compactingSince} convId={convId ?? undefined} waiting={waiting} />}
       <div ref={endRef} />
     </div>
       {showJump && (
         <button className="jump-bottom" title="Ir para o final" onClick={jumpToBottom}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+               strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
             <polyline points="6 13 12 19 18 13" />
           </svg>

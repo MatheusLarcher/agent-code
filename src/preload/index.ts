@@ -11,6 +11,7 @@ import type {
   StorageTransitionResultDto
 } from '../shared/databaseBackup'
 import type { RemoteSearchResult } from '../shared/remoteSearch'
+import type { PreviewFileResult } from '../shared/preview'
 import type {
   AgentCodeApi,
   HandoffChangedMsg,
@@ -180,6 +181,7 @@ const read = <T>(channel: string, ...args: unknown[]): Promise<T> => invokeRead<
 // propósito: o contrato mora junto da fila do quadro, e a tela o lê como opcional.
 const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(Channels.appGetVersion),
+  getAppName: (): Promise<string> => ipcRenderer.invoke(Channels.appGetName),
   // Atualização automática (main/appUpdate/): estado, mudanças e as ações do indicador.
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke(Channels.updateStateGet),
   onUpdateStateChanged: (cb: (state: AppUpdateState) => void): (() => void) => on(Channels.updateStateChanged, cb),
@@ -280,6 +282,8 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
     ipcRenderer.invoke(Channels.fileDownload, path),
   readFile: (path: string): Promise<string> => ipcRenderer.invoke(Channels.fileRead, path),
   readFileBytes: (path: string): Promise<FileBytes> => ipcRenderer.invoke(Channels.fileReadBytes, path),
+  // Aba Preview: texto/planilha convertidos no main, ou a URL agent-preview:// (html/mídia).
+  previewReadFile: (path: string): Promise<PreviewFileResult> => ipcRenderer.invoke(Channels.previewReadFile, path),
   resolvePastedPath: (path: string): Promise<ResolvedPastedRef> =>
     ipcRenderer.invoke(Channels.resolvePastedPath, path),
   downloadPastedUrl: (url: string, convId: string): Promise<ResolvedPastedRef> =>
@@ -301,6 +305,12 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
   chooseCacheDir: (): Promise<CacheInfo | null> => ipcRenderer.invoke(Channels.cacheChooseDir),
   listSecrets: () => ipcRenderer.invoke(Channels.secretVaultList),
   deleteSecret: (name: string) => ipcRenderer.invoke(Channels.secretVaultDelete, name),
+  vaultPassphraseStatus: () => ipcRenderer.invoke(Channels.secretVaultPassphraseStatus),
+  setVaultPassphrase: (passphrase: string) => ipcRenderer.invoke(Channels.secretVaultSetPassphrase, passphrase),
+  importarPrincipalListar: () => ipcRenderer.invoke(Channels.importarPrincipalListar),
+  importarPrincipalImportar: (ids: string[]) => ipcRenderer.invoke(Channels.importarPrincipalImportar, ids),
+  importarAutoStatus: () => ipcRenderer.invoke(Channels.importarAutoStatus),
+  importarAutoSet: (ligado: boolean) => ipcRenderer.invoke(Channels.importarAutoSet, ligado),
   listMemoryConflicts: () => read(Channels.memoryConflicts),
   discardMemoryProposal: (id: string) => ipcRenderer.invoke(Channels.memoryDiscardProposal, id),
   tasksBoard: (
@@ -448,6 +458,7 @@ const api: AgentCodeApi & HandoffQueueUndispatchApi = {
     ipcRenderer.invoke(Channels.androidToolchainInstall),
   authStatus: (): Promise<{ authenticated: boolean }> => ipcRenderer.invoke(Channels.authStatus),
   authLogin: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLogin),
+  authLoginCancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(Channels.authLoginCancel),
   authLogout: (): Promise<ClaudeAuthStatus> => ipcRenderer.invoke(Channels.authLogout),
   claudeAccountsList: (): Promise<ClaudeAccountView[]> => ipcRenderer.invoke(Channels.claudeAccountsList),
   claudeAccountsAdd: (): Promise<AddClaudeAccountResult> => ipcRenderer.invoke(Channels.claudeAccountsAdd),

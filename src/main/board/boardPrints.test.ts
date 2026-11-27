@@ -74,6 +74,38 @@ describe('resolvePrintCard', () => {
     const twoDoing = resolvePrintCard([...items, item('d', { sourceStatus: 'in_progress' })], 'c1')
     expect(!twoDoing.ok && twoDoing.error).toMatch(/mais de um cartão em andamento/)
   })
+
+  it('um só cartão na conversa: é ele, diga a tarefa o que disser', () => {
+    const one = [item('kb', { sourceTitle: 'Página do KB com busca, mais espaço e atalhos' }), items[3]]
+    expect(resolvePrintCard(one, 'c1', '1')).toMatchObject({ ok: true, item: { id: 'kb' } })
+    expect(resolvePrintCard(one, 'c1', 'qualquer coisa')).toMatchObject({ ok: true, item: { id: 'kb' } })
+    expect(resolvePrintCard(one, 'c1')).toMatchObject({ ok: true, item: { id: 'kb' } })
+  })
+
+  it('título parecido: contém (sem acento, caixa ou pontuação) ou divide mais palavras', () => {
+    const cards = [
+      item('p', { sourceTitle: 'Página do produto: busca em foco' }),
+      item('t', { sourceTitle: 'Ajustar a tela ao abrir um pedido' }),
+      item('r', { sourceTitle: 'Relatório de vendas' })
+    ]
+    expect(resolvePrintCard(cards, 'c1', 'pagina do produto')).toMatchObject({ ok: true, item: { id: 'p' } })
+    expect(resolvePrintCard(cards, 'c1', 'Página do produto: busca em foco com recentes e dicas')).toMatchObject({ ok: true, item: { id: 'p' } })
+    expect(resolvePrintCard(cards, 'c1', 'tela ao abrir o pedido novo')).toMatchObject({ ok: true, item: { id: 't' } })
+  })
+
+  it('parecido com mais de um, ou com nenhum: continua recusando com a lista', () => {
+    const cards = [
+      item('a', { sourceTitle: 'Busca na tela de produtos' }),
+      item('b', { sourceTitle: 'Busca na tela de clientes' }),
+      item('c', { sourceTitle: 'Relatório de vendas' })
+    ]
+    const tie = resolvePrintCard(cards, 'c1', 'busca da tela')
+    expect(!tie.ok && tie.error).toMatch(/nenhum cartão desta conversa casa com "busca da tela" \(cartões: "Busca na tela de produtos"/)
+    const weak = resolvePrintCard(cards, 'c1', 'vendas')
+    expect(weak).toMatchObject({ ok: true, item: { id: 'c' } })
+    const oneWord = resolvePrintCard(cards, 'c1', 'ajuste de vendas no mês')
+    expect(oneWord.ok).toBe(false)
+  })
 })
 
 describe('compressPrint', () => {

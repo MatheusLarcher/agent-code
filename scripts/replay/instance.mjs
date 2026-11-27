@@ -6,15 +6,20 @@
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 
-export const APP_ROOT = 'C:/GitHub/agent-code'
+const MAC = process.platform === 'darwin'
+/** A raiz deste repositório (o arnês mora em scripts/replay). */
+export const APP_ROOT = path.resolve(import.meta.dirname, '..', '..')
 /** Workers do vitest nas rodadas e na avaliação (ver isolatedEnv). */
 export const VITEST_WORKERS = '4'
 
-/** Memória comprometida livre do Windows, em GB. */
+/** Memória livre, em GB: comprometida no Windows; a do memory_pressure no Mac. */
 export function freeCommitGb() {
   try {
+    // Mac: o livre que o próprio macOS considera (memory_pressure), não só as páginas soltas.
+    if (MAC) return ((1 - ramUsedFraction()) * os.totalmem()) / 1024 ** 3
     const kb = execFileSync('powershell', ['-NoProfile', '-Command', '(Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory'], { encoding: 'utf8' }).trim()
     return Number(kb) / 1024 / 1024
   } catch {
@@ -28,6 +33,22 @@ export function freeCommitGb() {
  * esgotar a memória derruba processos dele, inclusive o Agent Code em uso. Por padrão
  * espera sem limite — o teste para, o PC do usuário não.
  */
+/** Fração da RAM em uso. No Mac, `os.freemem()` conta o cache do sistema como usado
+ *  (dá ~99% sempre): usa a medida do próprio macOS (`memory_pressure`). */
+export function ramUsedFraction() {
+  const total = os.totalmem()
+  if (!MAC) return 1 - os.freemem() / total
+  try {
+    // O mesmo número que o macOS usa para a pressão de memória ("free percentage").
+    const out = execFileSync('memory_pressure', { encoding: 'utf8' })
+    const pct = Number(/free percentage:\s*(\d+)%/.exec(out)?.[1])
+    if (Number.isFinite(pct)) return 1 - pct / 100
+  } catch {
+    // sem memory_pressure: cai na conta simples abaixo
+  }
+  return 1 - os.freemem() / total
+}
+
 export async function waitForMemory(minGb, { maxWaitMs = Number.POSITIVE_INFINITY, log = console.log } = {}) {
   const t0 = Date.now()
   let free = freeCommitGb()
@@ -54,13 +75,28 @@ const require = createRequire(`${APP_ROOT}/package.json`)
  * dos comandos do agente caem lá, não nos dados reais nem no rascunho de outra rodada.
  * O CLI continua com o login de sempre por CLAUDE_CONFIG_DIR = ~/.claude real.
  */
-export function isolatedEnv(dataDir, base = process.env, realHome = base.USERPROFILE ?? base.HOME ?? '') {
+export function isolatedEnv(dataDir, base = process.env, realHome = base.USERPROFILE ?? base.HOME ?? '', platform = process.platform) {
   const env = {}
   for (const [k, v] of Object.entries(base)) {
     if (/^(CLAUDE|ANTHROPIC)/i.test(k) || k === 'ELECTRON_RUN_AS_NODE') continue
     env[k] = v
   }
   const user = path.join(dataDir, 'perfil')
+  // shortcut: no Mac o HOME fica o real — o login do CLI mora nas Chaves, ligado à pasta
+  // de config padrão (com CLAUDE_CONFIG_DIR ou outro HOME ele some). Isola só os dados do app.
+  if (platform === 'darwin') {
+    return {
+      ...env,
+      TMPDIR: path.join(user, 'tmp'),
+      AGENT_CODE_DEV_DATA_DIR: dataDir,
+      AGENT_CODE_DEV_HOOKS: '1',
+      // Sem hooks/CLAUDE.md/plugins do ~/.claude de quem roda (devHooks.withoutUserSettings).
+      AGENT_CODE_SEM_CONFIG_DO_USUARIO: '1',
+      VITEST_MAX_WORKERS: VITEST_WORKERS,
+      // Outra conta (pasta de config já logada), ex.: quando a padrão bateu no limite.
+      ...(base.BATERIA_CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: base.BATERIA_CLAUDE_CONFIG_DIR } : {})
+    }
+  }
   const dirs = {
     HOME: user,
     USERPROFILE: user,
@@ -74,6 +110,7 @@ export function isolatedEnv(dataDir, base = process.env, realHome = base.USERPRO
     ...dirs,
     AGENT_CODE_DEV_DATA_DIR: dataDir,
     AGENT_CODE_DEV_HOOKS: '1',
+    AGENT_CODE_SEM_CONFIG_DO_USUARIO: '1',
     // 24 núcleos = 23 workers do vitest por padrão: com o PC do usuário já carregado,
     // isso esgota a memória e derruba processos dele. Mesmo limite nos dois lados.
     VITEST_MAX_WORKERS: VITEST_WORKERS,
@@ -106,9 +143,11 @@ export function seedDataDir(dataDir, { userSkillsDir, plan }) {
 export async function launch(dataDir, { log = console.log } = {}) {
   const { _electron } = require('playwright')
   const env = isolatedEnv(dataDir)
-  for (const k of ['APPDATA', 'LOCALAPPDATA', 'TEMP']) mkdirSync(env[k], { recursive: true })
+  for (const k of ['APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMPDIR']) if (env[k]) mkdirSync(env[k], { recursive: true })
   const app = await _electron.launch({
-    executablePath: path.join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
+    executablePath: MAC
+      ? path.join(APP_ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+      : path.join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
     args: ['.'],
     cwd: APP_ROOT,
     env,
@@ -243,20 +282,23 @@ export async function shutdown(app, dataDir, { log = console.log } = {}) {
   const pgdata = findPgData(dataDir)
   if (pgdata) {
     try {
-      execFileSync(path.join(APP_ROOT, 'out', 'postgres', 'bin', 'pg_ctl.exe'), ['stop', '-D', pgdata, '-m', 'fast', '-w'], { stdio: 'ignore' })
+      execFileSync(path.join(APP_ROOT, 'out', 'postgres', 'bin', MAC ? 'pg_ctl' : 'pg_ctl.exe'), ['stop', '-D', pgdata, '-m', 'fast', '-w'], { stdio: 'ignore' })
     } catch {
       /* já parado */
     }
   }
   for (const p of [pid, ...descendants].filter(Boolean)) {
     try {
-      execFileSync('taskkill', ['/PID', String(p), '/T', '/F'], { stdio: 'ignore' })
+      if (MAC) process.kill(p, 'SIGKILL')
+      else execFileSync('taskkill', ['/PID', String(p), '/T', '/F'], { stdio: 'ignore' })
     } catch {
       /* já saiu */
     }
   }
   const marker = dataDir.replace(/'/g, "''")
   try {
+    if (MAC) execFileSync('pkill', ['-9', '-f', dataDir], { stdio: 'ignore' })
+    else
     execFileSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*${marker}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { stdio: 'ignore' })
   } catch {
     /* nada sobrou */
@@ -267,6 +309,15 @@ export async function shutdown(app, dataDir, { log = console.log } = {}) {
 /** PIDs de todos os descendentes de `root` (busca por ParentProcessId). */
 function descendantPids(root) {
   try {
+    if (MAC) {
+      const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' }).trim().split('\n')
+      const kids = new Map()
+      for (const [pid, ppid] of rows.map((r) => r.trim().split(/\s+/).map(Number))) kids.set(ppid, [...(kids.get(ppid) ?? []), pid])
+      const out = []
+      const queue = [root]
+      while (queue.length) for (const k of kids.get(queue.shift()) ?? []) if (!out.includes(k)) out.push(k), queue.push(k)
+      return out
+    }
     const json = execFileSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     const all = JSON.parse(json)
     const kids = new Map()

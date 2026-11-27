@@ -11,13 +11,14 @@ import type { BrowserController } from './browserController'
 
 const configState = vi.hoisted(() => ({
   ollama: { enabled: false, apiKey: '' },
-  deepseek: { enabled: false, apiKey: '' }
+  deepseek: { enabled: false, apiKey: '' },
+  chromeControlEnabled: false as unknown
 }))
 const cacheState = vi.hoisted(() => ({ dir: '', memoriesDir: '', skillsDir: '', localDir: '' }))
 vi.mock('./config', () => ({
   loadConfig: () => ({
     windowsControlEnabled: false,
-    chromeControlEnabled: false,
+    chromeControlEnabled: configState.chromeControlEnabled,
     memorySelector: 'typesafe',
     ollama: configState.ollama,
     deepseek: configState.deepseek,
@@ -48,18 +49,21 @@ vi.mock('./memory/memoryRuntime', () => ({
 vi.mock('./tasks/taskRuntime', () => ({ taskLedger: () => ({}) }))
 
 const queryMock = vi.hoisted(() => vi.fn())
+const keepAlive = vi.hoisted(() => ({ on: false }))
+const setMcpServersMock = vi.hoisted(() => vi.fn(async (_servers: Record<string, unknown>) => ({ added: ['rea'], removed: [], errors: {} })))
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@anthropic-ai/claude-agent-sdk')
   return {
     ...actual,
     query: (args: { options: unknown }) => {
       queryMock(args)
-      return (async function* () {})()
+      return Object.assign((async function* () { if (keepAlive.on) await new Promise(() => {}) })(), { setMcpServers: setMcpServersMock, close: () => undefined, interrupt: async () => undefined })
     }
   }
 })
 
 import { AgentSession } from './agentSession'
+import { CHROME_CONTROL_HINT, CHROME_ENABLED_NOTE } from './chromeBridge/hint'
 
 let root = ''
 let previousConfigDir: string | undefined
@@ -97,6 +101,7 @@ beforeEach(() => {
   queryMock.mockClear()
   configState.ollama = { enabled: false, apiKey: '' }
   configState.deepseek = { enabled: false, apiKey: '' }
+  configState.chromeControlEnabled = false
 })
 afterEach(() => {
   for (const s of sessions.splice(0)) s.dispose()
@@ -119,5 +124,114 @@ describe('AgentSession — Options por família de modelo', () => {
     expect(options.model).toBe(model)
     expect(options).not.toHaveProperty('agentProgressSummaries')
     expect(options).not.toHaveProperty('promptSuggestions')
+  })
+})
+
+describe('AgentSession — app_rodar_como_admin', () => {
+  it('a sessão normal recebe a ferramenta (o Agent Manager não: agentSession.planning.test.ts)', async () => {
+    const options = await optionsFor('claude-opus-5-5')
+    const app = (options.mcpServers as Record<string, { instance?: { _registeredTools?: object } }>).app
+    expect(Object.keys(app.instance?._registeredTools ?? {})).toContain('app_rodar_como_admin')
+    expect((options.allowedTools as string[] | undefined) ?? []).not.toContain('mcp__app__app_rodar_como_admin')
+  })
+})
+
+describe('AgentSession — Android sob demanda', () => {
+  it('fora de projeto Android nasce sem o android; ligar acrescenta mantendo os da subida', async () => {
+    setMcpServersMock.mockClear()
+    keepAlive.on = true
+    const options = await optionsFor('claude-opus-5-5')
+    const servers = options.mcpServers as Record<string, unknown>
+    expect(servers).not.toHaveProperty('android')
+    const session = sessions[sessions.length - 1] as unknown as { enableAndroid: () => Promise<string> }
+    expect(await session.enableAndroid()).toMatch(/Android ligado/)
+    const sent = setMcpServersMock.mock.calls[0][0]
+    expect(Object.keys(sent).sort()).toEqual([...Object.keys(servers), 'android'].sort())
+    expect(await session.enableAndroid()).toMatch(/já estão ligadas/)
+    keepAlive.on = false
+  })
+})
+
+describe('AgentSession — Chrome do usuário só com a permissão ligada', () => {
+  const appendOf = (options: Record<string, unknown>): string => (options.systemPrompt as { append?: string }).append ?? ''
+
+  it.each([false, undefined, 'true'])('chromeControlEnabled=%o (não é o booleano true): sem o servidor chrome e sem a dica', async (value) => {
+    configState.chromeControlEnabled = value
+    const options = await optionsFor('claude-opus-5-5')
+    expect(options.mcpServers as Record<string, unknown>).not.toHaveProperty('chrome')
+    expect(appendOf(options)).not.toContain(CHROME_CONTROL_HINT)
+  })
+
+  it('chromeControlEnabled=true: servidor chrome e dica, como antes', async () => {
+    configState.chromeControlEnabled = true
+    const options = await optionsFor('claude-opus-5-5')
+    expect(options.mcpServers as Record<string, unknown>).toHaveProperty('chrome')
+    expect(appendOf(options)).toContain(CHROME_CONTROL_HINT)
+  })
+
+  it('ligada com a conversa aberta: o chrome entra uma vez, repetindo os servidores da subida', async () => {
+    setMcpServersMock.mockClear()
+    keepAlive.on = true
+    const options = await optionsFor('claude-opus-5-5')
+    const servers = options.mcpServers as Record<string, unknown>
+    const session = sessions[sessions.length - 1] as unknown as { enableChromeIfTurnedOn: () => Promise<string> }
+    expect(await session.enableChromeIfTurnedOn()).toBe('') // ainda desligada
+    expect(setMcpServersMock).not.toHaveBeenCalled()
+    configState.chromeControlEnabled = true
+    expect(await session.enableChromeIfTurnedOn()).toBe(CHROME_ENABLED_NOTE)
+    const sent = setMcpServersMock.mock.calls[0][0]
+    expect(Object.keys(sent).sort()).toEqual([...Object.keys(servers), 'chrome'].sort())
+    expect(await session.enableChromeIfTurnedOn()).toBe('') // já ligado
+    expect(setMcpServersMock).toHaveBeenCalledTimes(1)
+    keepAlive.on = false
+  })
+})
+
+describe('AgentSession — canUseTool: resposta do usuário não é erro', () => {
+  it('AskUserQuestion respondida → tool-result com isError=false; erro de outra ferramenta continua erro', async () => {
+    const sink = vi.fn()
+    const ask = vi.fn()
+    const s = new AgentSession({ convId: 'c1', cwd: path.join(root, 'projeto'), model: 'claude-opus-5-5' }, {} as BrowserController, sink, ask, vi.fn())
+    sessions.push(s)
+    await s.start()
+    type CanUse = (n: string, i: Record<string, unknown>, o: { signal: AbortSignal; toolUseID: string }) => Promise<{ behavior: string }>
+    const canUse = (queryMock.mock.calls[0][0] as { options: { canUseTool: CanUse } }).options.canUseTool
+    const questions = [{ header: 'Lib', question: 'Qual lib usar?', multiSelect: false, options: [{ label: 'Zod', description: '' }, { label: 'Yup', description: '' }] }]
+    const pending = canUse('AskUserQuestion', { questions }, { signal: new AbortController().signal, toolUseID: 'pergunta' })
+    s.resolvePermission({ id: ask.mock.calls[0][0].id, behavior: 'allow', answers: [{ header: 'Lib', question: 'Qual lib usar?', selected: ['Zod'] }] })
+    expect((await pending).behavior).toBe('deny') // o SDK devolve o tool_result com is_error=true
+    const toolResult = (id: string, text: string): unknown => ({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: true }] }
+    })
+    const handle = (m: unknown): void => (s as unknown as { handleMessage(m: unknown): void }).handleMessage(m)
+    handle(toolResult('pergunta', 'The user answered your question(s):\nLib: Zod'))
+    handle(toolResult('bash-1', 'Exit code 1'))
+    const results = sink.mock.calls.map((c) => c[0]).filter((e: { kind?: string }) => e?.kind === 'tool-result')
+    expect(results).toEqual([
+      expect.objectContaining({ toolUseId: 'pergunta', isError: false }),
+      expect.objectContaining({ toolUseId: 'bash-1', isError: true })
+    ])
+  })
+})
+
+describe('AgentSession — rea (engenharia reversa) sob demanda', () => {
+  it('a sessão nasce sem o rea; ligar repete os servidores da subida e acrescenta o rea', async () => {
+    setMcpServersMock.mockClear()
+    keepAlive.on = true // sessão viva: o stream não termina
+    const options = await optionsFor('claude-opus-5-5')
+    const servers = options.mcpServers as Record<string, unknown>
+    expect(servers).not.toHaveProperty('rea')
+    expect(servers).toHaveProperty('app')
+    const session = sessions[sessions.length - 1] as unknown as { enableRea: () => Promise<string> }
+    const first = await session.enableRea()
+    if (/não está instalado/.test(first)) return // cópia sem o rea-agents: nada a ligar
+    expect(first).toMatch(/Rea ligado/)
+    const sent = setMcpServersMock.mock.calls[0][0] as Record<string, unknown>
+    expect(Object.keys(sent).sort()).toEqual([...Object.keys(servers), 'rea'].sort())
+    expect(await session.enableRea()).toMatch(/já está ligado/)
+    expect(setMcpServersMock).toHaveBeenCalledTimes(1)
+    keepAlive.on = false
   })
 })

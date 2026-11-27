@@ -346,4 +346,17 @@ describe('workingMembers', () => {
     const crew = buildCrew(input({ tracks: { t1: track() }, busy: true, busySince: T - 5_000 }))
     expect(workingMembers(crew).map((m) => m.role)).toEqual(['principal', 'executor'])
   })
+
+  it('esperando a nova tentativa do limite não conta como trabalhando (selo preso em "1 trabalhando")', () => {
+    const crew = buildCrew(input({ busy: true, busySince: T - 5_000, retryHold: 'limit' }))
+    expect(workingMembers(crew)).toEqual([])
+    const principal = crew.find((m) => m.role === 'principal')!
+    expect(lineText(principal.line)).toBe('esperando o limite de uso liberar')
+    expect(principal.badge).toEqual({ text: 'esperando', tone: 'warn' })
+  })
+
+  it('de fato trabalhando (sem espera agendada) continua contando', () => {
+    const crew = buildCrew(input({ busy: true, busySince: T - 5_000, retryHold: null }))
+    expect(workingMembers(crew).map((m) => m.role)).toEqual(['principal'])
+  })
 })

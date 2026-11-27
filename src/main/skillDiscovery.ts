@@ -173,19 +173,44 @@ export function discoverSkills(
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+const NO_SKILLS = '(no filesystem skills are currently available)'
+
+/**
+ * Só a regra: cada skill daqui foi confirmada pelo `reloadSkills()`, e a lista
+ * de skills do próprio SDK já leva nome e descrição de todas. Repetir o catálogo
+ * aqui mandava o mesmo texto duas vezes por conversa (~8k tokens).
+ */
 export function renderAgentSkillCatalog(skills: DiscoveredSkill[]): string {
-  const lines = skills.map(
-    (skill) =>
-      `- /${skill.name}\n  Description: ${skill.description || '(missing description in SKILL.md frontmatter)'}\n  SKILL.md: ${skill.skillFile}`
-  )
-  return `AUTHORITATIVE FILESYSTEM SKILLS CATALOG
-This is the complete current catalog of every skill discovered in the configured project, Agent Code,
-cache, and user-global filesystem roots. It supersedes shorter or incomplete listings of those skills;
-SDK-bundled commands that have no SKILL.md in these roots may still be listed separately by the runtime.
-Before acting on every user request, compare it with ALL descriptions below. When the user names a skill,
-or the request clearly matches a description, load that skill through the Skill tool FIRST and follow it.
-Every filesystem skill listed here has been exposed through a native SDK root; never claim that a skill was
-loaded unless the Skill tool call succeeded.\n\n${lines.length > 0 ? lines.join('\n') : '(no filesystem skills are currently available)'}`
+  if (skills.length === 0) return `FILESYSTEM SKILLS\n${NO_SKILLS}`
+  return `FILESYSTEM SKILLS: ${skills.length} skills are loaded in the Skill tool; the runtime's skill listing shows each name and description (not repeated here).
+Before acting on each user request, compare it with those descriptions. When the user names a skill or the request clearly matches one, load it with the Skill tool FIRST and follow it. Never claim a skill was loaded unless the Skill tool call succeeded.`
+}
+
+const skillLine = (skill: DiscoveredSkill): string =>
+  `- /${skill.name}\n  Description: ${skill.description || '(missing description in SKILL.md frontmatter)'}`
+
+/**
+ * O que mudou desde o que o modelo já viu (a lista do SDK na subida, ou o último
+ * anúncio). A lista do SDK só anuncia nome novo: descrição trocada e skill
+ * removida não chegam por ela, então vão aqui. `head` abre o bloco.
+ */
+export function renderSkillCatalogChange(
+  previous: readonly DiscoveredSkill[],
+  next: readonly DiscoveredSkill[],
+  head = `FILESYSTEM SKILLS changed (${next.length} available). Use the Skill tool as before.`
+): string {
+  if (next.length === 0) return `FILESYSTEM SKILLS\n${NO_SKILLS}`
+  const before = new Map(previous.map((s) => [s.name, s]))
+  const changed = next.filter((s) => {
+    const old = before.get(s.name)
+    return !old || old.description !== s.description || old.skillFile !== s.skillFile
+  })
+  const names = new Set(next.map((s) => s.name))
+  const removed = previous.filter((s) => !names.has(s.name)).map((s) => s.name)
+  const parts = [head]
+  if (changed.length) parts.push(`Added or updated:\n${changed.map(skillLine).join('\n')}`)
+  if (removed.length) parts.push(`Removed (no longer available): ${removed.join(', ')}`)
+  return parts.join('\n\n')
 }
 
 export function createSkillCatalogSnapshot(skills: DiscoveredSkill[]): SkillCatalogSnapshot {
@@ -205,10 +230,19 @@ export function createSkillCatalogSnapshot(skills: DiscoveredSkill[]): SkillCata
   }
 }
 
-export function renderSkillCatalogUpdate(snapshot: SkillCatalogSnapshot): string {
+/**
+ * `since.skills` = o que o modelo já viu nesta conversa (a lista do SDK na subida
+ * ou o último anúncio): vai só a diferença. Sem `since.announced`, a regra
+ * (`snapshot.catalog`) abre o bloco. Sem `since`, vai o catálogo inteiro.
+ */
+export function renderSkillCatalogUpdate(
+  snapshot: SkillCatalogSnapshot,
+  since?: { skills: readonly DiscoveredSkill[]; announced: boolean } | null
+): string {
+  const body = since
+    ? renderSkillCatalogChange(since.skills, snapshot.skills, since.announced ? undefined : snapshot.catalog)
+    : snapshot.catalog
   return `[SKILL_CATALOG_UPDATE]
-The skills on disk changed after this conversation started. Replace every earlier skill catalog with the
-complete authoritative catalog below. Do not mention this automatic refresh to the user unless it blocks
-the task.\n\n${snapshot.catalog}
+Automatic skill catalog refresh (newer than any earlier one). Do not mention it to the user unless it blocks the task.\n\n${body}
 [/SKILL_CATALOG_UPDATE]`
 }

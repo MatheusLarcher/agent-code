@@ -3,6 +3,8 @@ import type { MemoryConflictItem, SecretVaultItem } from '@shared/ipc'
 import { useUI } from './UiProvider'
 import { IconKey, IconWarning } from '../components/Icons'
 import { ReadRetry } from '../components/ReadRetry'
+import { VaultPassphraseField } from './VaultPassphraseField'
+import { ImportarConversasField } from './ImportarConversasField'
 
 /** Short, local date for a stored timestamp; falls back to the raw string. */
 function when(iso: string): string {
@@ -135,6 +137,8 @@ export function MemoryDataSection(): JSX.Element {
             </div>
           ))}
         </div>
+        <VaultPassphraseField />
+        <ImportarConversasField />
       </section>
 
       {loaded && conflictsError ? (

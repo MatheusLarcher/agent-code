@@ -8,6 +8,7 @@ import type { PickedElement } from '@shared/ipc'
 import type { EditorElement } from '../../inlineMedia/InlineEditor'
 import type { InlineAtt } from '../../inlineMedia/inlineAttachments'
 import { elementsInOrder, makeElementAtt } from './elementToken'
+import { publishComposerElements } from '../../preview/composerElements'
 
 interface MediaApi {
   atts: ReadonlyMap<string, InlineAtt>
@@ -39,11 +40,14 @@ export function useComposerElements(
     onConsumed()
   }, [picked, editorRef, onConsumed])
 
-  // Renumera "[elemento N]" pela ordem no texto.
+  // Renumera "[elemento N]" pela ordem no texto e avisa o Preview do que está no
+  // campo (a marca na página só dura enquanto o elemento estiver aqui).
   useEffect(() => {
-    elementsInOrder(media.order, media.atts).forEach((a, i) => {
+    const els = elementsInOrder(media.order, media.atts)
+    els.forEach((a, i) => {
       if (a.name !== `elemento ${i + 1}`) media.replaceAtt(a.id, makeElementAtt(a.el, i + 1, a.id))
     })
+    publishComposerElements(els.map((a) => a.el))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [media.order, media.version])
 }

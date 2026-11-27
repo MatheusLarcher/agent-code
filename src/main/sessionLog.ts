@@ -33,6 +33,8 @@ export type SessionLogEvent =
   /** O usuário parou UMA tarefa de fundo (`taskId`; `threw` quando o SDK recusou). */
   | 'task-stop'
   | 'stop-input-dropped'
+  /** Tempo das etapas de um turno (sessionTiming.ts): só números em `ms`. */
+  | 'turn-timing'
 
 export type SessionLogReason =
   | 'auto-pair'
@@ -68,6 +70,8 @@ export interface SessionLogFields {
   mcpChanged?: boolean
   idleMs?: number
   turnIds?: readonly string[]
+  /** Duração por etapa, em ms (nomes curtos, só números). */
+  ms?: Record<string, number>
 }
 
 const STRING_KEYS = ['convId', 'reason', 'model', 'fallbackModel', 'effort', 'account', 'taskId'] as const
@@ -86,6 +90,13 @@ export function sanitizeSessionLogFields(fields: SessionLogFields): Record<strin
     if (typeof raw[key] === 'boolean') out[key] = raw[key]
   }
   if (typeof raw.idleMs === 'number' && Number.isFinite(raw.idleMs)) out.idleMs = Math.round(raw.idleMs)
+  if (raw.ms && typeof raw.ms === 'object') {
+    const ms: Record<string, number> = {}
+    for (const [k, v] of Object.entries(raw.ms as Record<string, unknown>).slice(0, 32)) {
+      if (/^[\w.]{1,40}$/.test(k) && typeof v === 'number' && Number.isFinite(v)) ms[k] = Math.round(v)
+    }
+    out.ms = ms
+  }
   if (Array.isArray(raw.turnIds)) {
     out.turnIds = raw.turnIds
       .filter((id): id is string => typeof id === 'string')

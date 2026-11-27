@@ -155,6 +155,10 @@ import { buildMemoryGateState } from './typesafe/memoryGate'
 import { claudeAuthExpiry } from './authExpiry'
 import { onHandoffNotice } from './handoffTracking/handoffNotices'
 
+// localDir é criado de verdade (cli-config-sem-login): no tmp, nunca um `C:\\` relativo ao cwd.
+const TEST_LOCAL_DIR = join(tmpdir(), 'agent-code-test-local')
+cacheState.localDir = TEST_LOCAL_DIR
+
 const secretsForPrompt = vi.hoisted(() => vi.fn(async () => [] as Array<{ name: string; value: string }>))
 vi.mock('./memory/memoryRuntime', async () => {
   const actual = await vi.importActual<typeof import('./memory/memoryRuntime')>('./memory/memoryRuntime')
@@ -1339,7 +1343,7 @@ describe('AgentSession — backend de fora não recebe o login guardado', () => 
     if (previousConfigDir === undefined) delete process.env['CLAUDE_CONFIG_DIR']
     else process.env['CLAUDE_CONFIG_DIR'] = previousConfigDir
     cacheState.dir = 'C:\\test\\agent-code'
-    cacheState.localDir = 'C:\\test\\agent-code-local'
+    cacheState.localDir = TEST_LOCAL_DIR
     await rm(home, { recursive: true, force: true })
     await rm(cache, { recursive: true, force: true })
   })
@@ -1627,8 +1631,10 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
     const dispatched = String(pushedMessages(s).at(-1)?.message.content)
     expect(dispatched).toContain('[SKILL_CATALOG_UPDATE]')
-    expect(dispatched).toContain('/modelar')
-    expect(dispatched).toContain('Description: editar qualquer arquivo STL ou 3MF')
+    // Catálogo uma vez só (25/11/2026): nome e descrição vêm na listagem do SDK;
+    // o app manda a regra e a contagem (agentSession.skillCatalog.test.ts).
+    expect(dispatched).toContain('FILESYSTEM SKILLS: 1 skills are loaded in the Skill tool')
+    expect(dispatched).not.toContain('Description: editar qualquer arquivo STL ou 3MF')
     expect(dispatched).not.toContain('CORPO_NAO_VAI_NO_PROMPT')
   })
 
@@ -2049,8 +2055,8 @@ describe('AgentSession — GPT mantém o mesmo harness do Claude', () => {
 
     const first = String(pushedMessages(s).at(-2)?.message.content)
     expect(first).toContain('[SKILL_CATALOG_UPDATE]')
-    expect(first).toContain('/caveman')
-    expect(first).toContain('/graphify')
+    // As duas entram no catálogo, contadas; nome e descrição vêm na listagem do SDK.
+    expect(first).toContain('FILESYSTEM SKILLS: 2 skills')
     expect(first).not.toContain('no filesystem skills')
     // Skill só do usuário não dispara re-recarga a cada mensagem.
     expect(reloadSkills).toHaveBeenCalledTimes(1)
@@ -2736,6 +2742,7 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
   }
 
   it('decide UMA vez por mensagem, não a cada volta do loop de ferramentas', async () => {
+    await memoriesFixture()
     typeSafeState.active = true
     typeSafeState.selection = { block: '--- Memória relevante: erp.md ---\nO banco chama FALCAO.', relPaths: ['erp.md'] }
     const { s } = makeSession()
@@ -2758,6 +2765,18 @@ describe('AgentSession — o TypeSafe escolhe as memórias do turno', () => {
     await s.send('e agora?')
     await liveContext(requestHooks().postToolBatch, 'PostToolBatch')
     expect(typeSafeState.queries).toEqual(['e o ERP?', 'e agora?'])
+  })
+
+  it('a mesma memória escolhida de novo pelo TypeSafe não volta na mensagem seguinte (já enviada)', async () => {
+    await memoriesFixture()
+    typeSafeState.active = true
+    typeSafeState.selection = { block: '--- Memória relevante: erp.md ---\nO banco chama FALCAO.', relPaths: ['erp.md'] }
+    const { s } = makeSession()
+    await s.start()
+    await s.send('e o ERP?')
+    expect(await liveContext(requestHooks().user, 'UserPromptSubmit')).toContain('O banco chama FALCAO.')
+    await s.send('e o banco do ERP?')
+    expect(await liveContext(requestHooks().user, 'UserPromptSubmit')).not.toContain('FALCAO')
   })
 
   it('com o seletor no ar, catálogo e atualização de catálogo somem do prompt', async () => {
@@ -3248,12 +3267,15 @@ describe('AgentSession — árvore de consumo de tokens (llm-call)', () => {
     )
   })
 
-  it('corrige a chamada persistida com modelUsage no resultado terminal', async () => {
+  // Só a chamada que veio ZERADA é completada pelo modelUsage do resultado; uma com
+  // uso próprio fica com ele (agentSession.llmCalls.test.ts cobre esse lado).
+  it('completa com modelUsage a chamada persistida que veio sem uso', async () => {
     const insertLlmCall = vi.fn(async () => ({ id: 'llm-call-1' }) as never)
     const updateLlmCall = vi.fn(async () => null)
     const { s } = makeSession({ tokenUsageRepository: { insertLlmCall, updateLlmCall } })
     const turnId = turnIdOf(s)
-    handle(s, assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }] }))
+    const zerado = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+    handle(s, assistantMsg({ parent_tool_use_id: null, content: [{ type: 'text', text: 'oi' }], usage: zerado }))
     await Promise.resolve()
     handle(s, { type: 'result', subtype: 'success', is_error: false, duration_ms: 1, modelUsage: {
       'claude-sonnet-5-5': { inputTokens: 40, outputTokens: 50, cacheReadInputTokens: 6, cacheCreationInputTokens: 7 }

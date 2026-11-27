@@ -41,6 +41,7 @@ export function describeUpdate(s: AppUpdateState, nowMs: number): string {
     case 'erro':
       return `Não foi possível verificar: ${s.error ?? 'erro sem mensagem'}`
     default:
+      if (s.manual) return s.manual
       return s.checkedAt ? `Última verificação ${fmtAgo(s.checkedAt, nowMs)}` : 'Ainda não verificado'
   }
 }

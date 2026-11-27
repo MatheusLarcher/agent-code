@@ -20,7 +20,8 @@ export const featuredName = (p: OfficePower | null): string => p?.bank.find((b) 
 /** A linha de baixo do painel: "recarrega às 23:40", "Modo economia · …", "Bateria fraca · …" ou "Apagão — recarrega às …". */
 export function panelSubline(p: OfficePower | null, now: number): string {
   if (!p) return 'Sem leitura da sessão de 5h'
-  if (p.unread) return 'ainda sem leitura'
+  // Os textos da pílula do HUD (SessionBattery): nunca leu a conta × leu, mas sem a janela de 5 h.
+  if (p.unread) return p.bank.find((b) => b.id === p.accountId)?.at == null ? 'ainda sem leitura' : 'janela de 5 h sem leitura'
   const time = resetClock(p.resetsAt, now)
   if (p.level === 'apagao') return time ? `Apagão — recarrega às ${time}` : 'Apagão — recarrega na próxima janela'
   const when = time ? `recarrega às ${time}` : 'janela de 5 h ainda sem uso'

@@ -1,4 +1,5 @@
 import type { AccountUsageReading, AccountUsageResult, UsageWindow } from '../../shared/claudeAccounts'
+import { mergeReading } from './usageMath'
 
 /** Leitura com menos de 60 s não é refeita. */
 export const USAGE_CACHE_TTL_MS = 60_000
@@ -42,7 +43,11 @@ export function createUsageReader(deps: UsageReaderDeps) {
           }, timeout)
         })
       ])
-      const reading: AccountUsageReading = { at: now(), windows }
+      // A consulta pode vir sem a janela de 5 h (five_hour: null): a que a sessão gravou e ainda não venceu fica.
+      const at = now()
+      const previous = deps.load(accountId)
+      const alive = previous && { ...previous, windows: Object.fromEntries(Object.entries(previous.windows).filter(([, w]) => w.resetsAt != null && w.resetsAt > at)) }
+      const reading = mergeReading(alive, windows, at)
       deps.save(accountId, reading)
       return { accountId, reading, fresh: true }
     } catch (error) {

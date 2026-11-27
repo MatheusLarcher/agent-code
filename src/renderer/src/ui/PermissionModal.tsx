@@ -29,7 +29,7 @@ export function PermissionModal({ request, onRespond }: Props): JSX.Element {
       >
         <h3 className="modal-title">Permitir ferramenta</h3>
         <p className="modal-message">
-          O agente quer executar <strong>{niceName}</strong>.
+          {request.agentId ? 'Um agente do time' : 'O agente'} quer executar <strong>{niceName}</strong>.
         </p>
         <pre className="modal-pre">{JSON.stringify(request.input, null, 2).slice(0, 800)}</pre>
         <div className="modal-actions">

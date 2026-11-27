@@ -1,6 +1,9 @@
 /** Contrato da ponte Chrome — ver docs/superpowers/plans/2026-09-28-chrome-extension.md. */
 
-export const CHROME_BRIDGE_PORTS = [47831, 47832, 47833, 47834, 47835] as const
+import { variantProfile } from '../appVariant'
+
+/** 47831–47835 no app principal; 47841–47845 na variante Homol (appVariant.ts). */
+export const CHROME_BRIDGE_PORTS: readonly number[] = variantProfile().chromeBridgePorts
 
 export const HELLO_TIMEOUT_MS = 3000
 export const REQUEST_TIMEOUT_MS = 30000

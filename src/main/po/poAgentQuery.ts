@@ -1,4 +1,5 @@
 import { query, type CanUseTool, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { withoutUserSettings } from '../devHooks'
 import type { AutoModeClassifierModel } from '../../shared/ipc'
 import { autoModeClassifierEnv, configuredAutoModeClassifierModel } from '../autoModeClassifier'
 
@@ -105,7 +106,7 @@ export function poAgentOptions(req: PoAgentRequest, abortController: AbortContro
     disallowedTools: [...PO_AGENT_DISALLOWED_TOOLS],
     canUseTool: denyUnattended,
     // As mesmas fontes de configuração do agente normal (agentSession.ts).
-    settingSources: ['user', 'project', 'local'],
+    settingSources: withoutUserSettings() ? ['project', 'local'] : ['user', 'project', 'local'],
     systemPrompt: { type: 'preset', preset: 'claude_code', append: PO_AGENT_SYSTEM_APPEND },
     settings: { autoMemoryEnabled: false },
     // Avaliação descartável: não entra na lista de sessões do usuário.

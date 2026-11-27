@@ -956,4 +956,44 @@ describe('Memorista — modo Automático', () => {
     expect(MEMORISTA_AUTO_MODELS).toEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'])
     expect(seen[0]?.model).toBe('claude-sonnet-5-5')
   })
+
+  it('conversa no Opus + memorista em Automático: a análise roda no Sonnet', async () => {
+    const memory = fakeMemory()
+    const seen: MemoristaObserverRequest[] = []
+    // A mesma decisão que pôs a conversa no Opus devolve Opus ao memorista.
+    chooseAutoExecution.mockResolvedValueOnce({ model: 'claude-opus-5-5', effort: 'low', source: 'typesafe' })
+    const memorista = new Memorista({
+      config: () => config({ model: 'auto' }),
+      memory: () => memory,
+      runClaude: async (request) => {
+        seen.push(request)
+        return { provider: 'claude', state: 'completed', text: 'OK' }
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'redesenhe a arquitetura da fila')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(seen[0]?.model).toBe('claude-sonnet-5-5')
+  })
+
+  it('Opus escolhido à mão pelo usuário para o memorista é respeitado', async () => {
+    const memory = fakeMemory()
+    const seen: MemoristaObserverRequest[] = []
+    const memorista = new Memorista({
+      config: () => config({ model: 'claude-opus-5-5' }),
+      memory: () => memory,
+      runClaude: async (request) => {
+        seen.push(request)
+        return { provider: 'claude', state: 'completed', text: 'OK' }
+      }
+    })
+
+    memorista.noteUserMessage('conv-1', 'C:/p', 'use pnpm neste projeto')
+    memorista.observe('conv-1', result)
+    await memorista.settled('conv-1')
+
+    expect(seen[0]?.model).toBe('claude-opus-5-5')
+  })
 })

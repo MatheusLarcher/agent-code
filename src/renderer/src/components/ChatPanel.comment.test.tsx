@@ -280,7 +280,9 @@ describe('ChatPanel — "Comentar" põe o trecho inline no campo (chat principal
     type('veja  e ')
     caretAt(5)
     fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [png] } })
-    await screen.findByAltText('Imagem anexada: tela.png')
+    // A miniatura só existe depois do FileReader (assíncrono) e do upgrade do
+    // anexo: com a suíte inteira disputando a CPU, o 1s padrão não basta.
+    await screen.findByAltText('Imagem anexada: tela.png', {}, { timeout: 10_000 })
     act(() => box().blur())
     commentOn(firstP(container))
     send()

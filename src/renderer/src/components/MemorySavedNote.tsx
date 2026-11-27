@@ -20,7 +20,7 @@ const BADGE: Record<MemorySaveOp, JSX.Element> = {
 /** O cérebro inteiro (o mesmo das memórias lidas), com um recorte em volta do selo. */
 function SavedBrain({ op }: { op: MemorySaveOp }): JSX.Element {
   const cut = `mem-saved-cut-${useId().replace(/:/g, '')}`
-  return <svg className="mem-saved-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+  return <svg className="mem-saved-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <mask id={cut}><rect x="-2" y="-2" width="28" height="28" fill="#fff" /><circle cx="19" cy="18" r="6.4" fill="#000" /></mask>
     <g mask={`url(#${cut})`}>
       <path d="M12 5a3 3 0 0 0-5.8-1A3.5 3.5 0 0 0 3 8a4 4 0 0 0-1 6 3.5 3.5 0 0 0 3 5 3.6 3.6 0 0 0 7 1V5Zm0 0a3 3 0 0 1 5.8-1A3.5 3.5 0 0 1 21 8a4 4 0 0 1 1 6 3.5 3.5 0 0 1-3 5 3.6 3.6 0 0 1-7 1" />

@@ -56,5 +56,6 @@ export const dialog = (): HTMLElement => screen.getByRole('dialog')
 export const button = (name: string | RegExp): HTMLButtonElement =>
   within(dialog()).getByRole('button', { name }) as HTMLButtonElement
 /** A 1ª listagem decide o passo inicial; até lá o diálogo só diz que está lendo. */
-export const loaded = (): Promise<void> => waitFor(() => expect(screen.queryByText(LOADING)).toBeNull())
+// 10 s: com a suíte inteira rodando, a máquina carregada passa de 1 s (item 3.13).
+export const loaded = (): Promise<void> => waitFor(() => expect(screen.queryByText(LOADING)).toBeNull(), { timeout: 10_000 })
 export const area = (n: number): HTMLTextAreaElement => screen.getByLabelText(`Prompt ${n}`) as HTMLTextAreaElement

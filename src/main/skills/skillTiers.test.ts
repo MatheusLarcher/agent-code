@@ -129,12 +129,13 @@ describe('skillCatalogPolicy — catálogo em níveis', () => {
     expect(policy.sdkSkills(all)).toContain('verification-before-completion')
   })
 
-  it('catálogo do app: médias com o caminho, baixas só o nome por categoria, e as ferramentas de busca', () => {
+  it('catálogo do app: médias só contadas, baixas só o nome por categoria, e as ferramentas de busca', () => {
     const policy = skillCatalogPolicy(ON, { read })
     const confirmed = createSkillCatalogSnapshot(policy.nativeExpected(all))
     const { catalog, version } = policy.announce(confirmed, all)
-    expect(catalog).toContain('C:/skills/brag/SKILL.md')
-    // A descrição da média já vai na listagem nativa do SDK: não se repete aqui.
+    // Nome e descrição da média já vão na listagem nativa do SDK: não se repetem aqui.
+    expect(catalog).toMatch(/Medium: \d+ skills, shown with descriptions in the runtime's skill listing/)
+    expect(catalog).not.toContain('C:/skills/brag/SKILL.md')
     expect(catalog).not.toContain('descrição de brag')
     expect(catalog).toMatch(/Depuração: click-path-audit/)
     expect(catalog).toMatch(/Testes e qualidade: react-testing/)
@@ -165,7 +166,8 @@ describe('skillCatalogPolicy — achados da revisão', () => {
     const later = [...all] // a de nível alto apareceu depois
     const { catalog } = policy.announce(createSkillCatalogSnapshot(policy.nativeExpected(later)), later)
     expect(catalog).toMatch(/High[^\n]*\n\(none\)/)
-    expect(catalog).toContain('/verification-before-completion — C:/skills/verification-before-completion/SKILL.md')
+    // Não entrou no prompt: conta como média (brag + ela), carregada pela ferramenta Skill.
+    expect(catalog).toContain('Medium: 2 skills')
   })
 
   it('skill do usuário em nível baixo com nome de embutida (simplify) não volta pela lista de embutidas', () => {

@@ -239,6 +239,8 @@ export type PoAuthorizationListResult = { ok: true; authorizations: PoAuthorizat
 export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   /** App version from package.json (matches the installer/build). */
   getAppVersion(): Promise<string>
+  /** Nome visível do app ("Agent Code" ou "Agent Code Homol"). */
+  getAppName?(): Promise<string>
   /** Atualização automática: o estado atual (fase, versão, progresso, se pode instalar agora). */
   getUpdateState(): Promise<AppUpdateState>
   /** O main avisa a cada mudança de estado da atualização. */
@@ -349,6 +351,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   readFile(path: string): Promise<string>
   /** Read a local file as base64 bytes — for binary previews (PDF, images, xlsx…). */
   readFileBytes(path: string): Promise<FileBytes>
+  /** Aba Preview: lê/converte um arquivo local (com a barreira de caminho sensível). */
+  previewReadFile(path: string): Promise<import('./preview').PreviewFileResult>
   /** Resolve a composer-pasted line as a local file path (stat only, no bytes read). */
   resolvePastedPath(path: string): Promise<ResolvedPastedRef>
   /** Download a composer-pasted http(s) file URL to disk (streamed, no bytes over IPC). */
@@ -374,6 +378,20 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   listSecrets(): Promise<SecretVaultItem[]>
   /** Explicit deletion of one vault entry. */
   deleteSecret(name: string): Promise<boolean>
+  /** Frase-senha do cofre: já definida neste PC? banco na nuvem? cofre da nuvem esperando a frase? */
+  vaultPassphraseStatus(): Promise<{ set: boolean; cloud: boolean; pendingRestore: boolean }>
+  /** Define ou confirma a frase-senha do cofre (mín. 12 caracteres). */
+  setVaultPassphrase(passphrase: string): Promise<{ ok: true } | { ok: false; error: string }>
+  /** Importar do Agent Code original (só na Homol): lista as conversas de lá (lidas numa cópia). */
+  importarPrincipalListar(): Promise<
+    | { ok: true; conversas: Array<{ id: string; titulo: string; pasta: string | null; atualizadaEm: string | null; pedidos: number; jaExiste: boolean }> }
+    | { ok: false; error: string }
+  >
+  /** Importação automática (de 30 em 30 min): ligada? quando foi a última e o que trouxe. */
+  importarAutoStatus(): Promise<{ disponivel: boolean; ligado: boolean; ultimaEm: string | null; ultimoResumo: string | null }>
+  importarAutoSet(ligado: boolean): Promise<{ ok: true } | { ok: false; error: string }>
+  /** Grava as escolhidas ao lado das que já existem (nunca sobrescreve). */
+  importarPrincipalImportar(ids: string[]): Promise<{ ok: true; importadas: number; puladas: number; falhas: string[] } | { ok: false; error: string }>
   /** Memory proposals that failed to apply. */
   listMemoryConflicts(): Promise<MemoryConflictItem[]>
   /** Removes one settled proposal from the conflicts list. */
@@ -564,6 +582,8 @@ export interface AgentCodeApi extends OfficeApi, FreezeLogApi, TarefasApi {
   authStatus(): Promise<{ authenticated: boolean }>
   /** Trigger the Claude OAuth login (opens the system browser); resolves when done. */
   authLogin(): Promise<{ ok: boolean }>
+  /** Cancela o login do Claude em andamento (mata o processo do CLI). */
+  authLoginCancel(): Promise<{ ok: boolean }>
   /** Erase the saved Claude OAuth login (+ stale caches); resolves with the verified status. */
   authLogout(): Promise<ClaudeAuthStatus>
   /** Contas Claude na ordem do usuário (sem token nenhum). */

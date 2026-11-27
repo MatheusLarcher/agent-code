@@ -71,6 +71,7 @@ vi.mock('electron', () => ({
     getAppPath: () => '/app',
     getPath: () => '/app-data',
     getVersion: () => '0.0.0',
+    getName: () => 'agent-code-desktop',
     quit: vi.fn(),
     whenReady: () => new Promise(() => {}),
     on: vi.fn(),
@@ -313,7 +314,7 @@ vi.mock('../attachments', () => ({
   splitImagesForNote: vi.fn(() => ({ refs: [], toSave: [] }))
 }))
 vi.mock('../memoryCurator', () => ({ startMemoryCuratorScheduler: vi.fn() }))
-vi.mock('../tasks/taskRuntime', () => ({ taskLedger: vi.fn() }))
+vi.mock('../tasks/taskRuntime', () => ({ taskLedger: vi.fn(), configureTaskBoard: vi.fn() }))
 vi.mock('../tasks/taskBoard', () => ({ buildTaskBoard: vi.fn(), buildTaskDetail: vi.fn() }))
 vi.mock('../tasks/taskReaper', () => ({ startTaskReaper: vi.fn() }))
 vi.mock('../memory/memoryRuntime', () => ({

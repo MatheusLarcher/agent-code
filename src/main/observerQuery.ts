@@ -147,6 +147,25 @@ export async function runObserverAttempt(request: ObserverRequest): Promise<Obse
   return { provider: 'claude', state: 'failed', reason: 'claude_plan' }
 }
 
+/** O teto de um modelo HERDADO por observador (o Automático escolheu, ou veio
+ *  da conversa). */
+export const OBSERVER_INHERITED_MODEL_CAP = 'claude-sonnet-5-5'
+
+/**
+ * Observador nunca roda Opus (nem o Fable, mais caro ainda) por herança: o
+ * modelo herdado acima do Sonnet desce para o Sonnet; um mais leve fica como
+ * está. Aceita o id completo (`claude-opus-5-5`) e o apelido do CLI (`opus`,
+ * `opus[1m]`). A escolha explícita do usuário para o observador NÃO passa por
+ * aqui — medido em 24/11: 251 respostas de observador no Opus.
+ */
+export function capInheritedObserverModel(model: string): string {
+  return /\b(opus|fable)\b/i.test(model) ? OBSERVER_INHERITED_MODEL_CAP : model
+}
+
+/** Prompt de sistema mínimo dos observadores (o papel e as regras vêm no pedido). */
+export const OBSERVER_SYSTEM_PROMPT =
+  'Você é um observador interno do Agent Code. Responda somente ao que o pedido do usuário pede, no formato que ele exige, sem usar ferramentas.'
+
 /** Uma consulta; `exhausted` traz o aviso de limite do provedor, quando houve. */
 async function runOnce(
   request: ObserverRequest,
@@ -162,7 +181,16 @@ async function runOnce(
     includePartialMessages: false,
     permissionMode: 'bypassPermissions',
     // Sem a auto-memória do CLI: a única pasta de memória é a de Configurações.
-    settings: { autoMemoryEnabled: false }
+    settings: { autoMemoryEnabled: false },
+    // Observador = uma pergunta, sem ferramentas: nada do ambiente do Claude Code.
+    // Sem isto cada chamada carregava ~45k tokens (prompt padrão, skills, plugins,
+    // MCPs e CLAUDE.md do usuário) para responder poucas palavras — medido na
+    // bateria (scripts/bateria): PO e memorista somavam ~165k tokens por mensagem.
+    // As instruções do observador vêm inteiras no próprio pedido.
+    settingSources: [],
+    strictMcpConfig: true,
+    mcpServers: {},
+    systemPrompt: OBSERVER_SYSTEM_PROMPT
   }
 
   let text = ''

@@ -43,7 +43,7 @@ const PATHS: Record<PoAction | 'camera', ReactNode> = {
 
 function Glyph({ name, size = 12 }: { name: keyof typeof PATHS; size?: number }): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={1.8}strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {PATHS[name]}
     </svg>
   )

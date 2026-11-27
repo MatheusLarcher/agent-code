@@ -151,7 +151,7 @@ const partialConfigSchema = z
     preventSleepWhileBusy: z.boolean().optional(),
     manterAcordadoTarefas: z.boolean().optional(),
     vigia: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
-    memorista: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional() }).strict().optional(),
+    memorista: z.object({ enabled: z.boolean().optional(), model: z.string().min(1).optional(), bibliotecario: z.enum(['desligado', 'simulacao', 'ligado']).optional() }).strict().optional(),
     // Valores soltos de propósito: quem valida é `normalizePlanningConfig`, que
     // devolve o padrão em vez de lançar (ver o comentário dela).
     planning: z.object({ model: z.unknown().optional(), effort: z.unknown().optional() }).strict().optional(),

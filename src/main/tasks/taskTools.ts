@@ -35,7 +35,7 @@ export interface TaskToolDeps {
     TaskLedger,
     | 'createTask' | 'claimTask' | 'renewTaskLease' | 'transitionTask' | 'appendStep' | 'finishStep'
     | 'addDeliverable' | 'appendEvent' | 'getTask' | 'listTasks' | 'listSteps' | 'listDeliverables' | 'listEvents'
-    | 'recordProjectIdentity' | 'projectCwdsForIdentity' | 'linkTaskToBoardItem'
+    | 'recordProjectIdentity' | 'projectCwdsForIdentity' | 'linkTaskToBoardItem' | 'createBoardCard'
   >
   conversationId: string
   /** Pasta do projeto da conversa: padrão de `project_cwd` quando o modelo não informa. */
@@ -209,9 +209,11 @@ export function buildTaskTools(deps: TaskToolDeps): AnyTool[] {
               )
             }
           }
+          // Sem cartão informado, a tarefa ganha o seu — senão some do Quadro.
+          const cardId = a.board_item_id ?? (await deps.ledger.createBoardCard(task))
           return text(
             `Tarefa criada: ${task.id} [${task.status}] ${task.title}` +
-              (a.board_item_id ? ` · vinculada ao cartão ${a.board_item_id}` : '') +
+              (cardId ? ` · vinculada ao cartão ${cardId}` : '') +
               '. Para executá-la, reivindique com task_claim.'
           )
         })

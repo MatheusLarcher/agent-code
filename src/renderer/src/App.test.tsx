@@ -7,6 +7,7 @@ import { MCP_TASK_GONE_MARK, MCP_TASK_GONE_WARNING, NO_LIVE_SESSION_MARK } from 
 import type { Conversation, UIMessage, TodoItem } from './types'
 import { makePlan } from './planning/planningTestUtils'
 import { deliveredIds, syncIntoLocalStorage } from './conversationSyncFake'
+import { modelOptions, modelValue, pickModel } from './components/modelSelect.testing'
 
 // Espião transparente da entrega à fila de gravação: o comportamento é o real,
 // mas os testes do autosave conferem COM QUE `only` cada tique foi chamado.
@@ -1131,7 +1132,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => container.querySelector('button.model-select') as HTMLButtonElement
 
     await send('msg1')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -1142,8 +1143,8 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
 
     // Trocar durante o processamento não mexe na sessão em andamento — só fica
     // pendente para quando essa mensagem terminar.
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
-    expect(select().value).toBe('claude-sonnet-5-5')
+    pickModel(select(), 'claude-sonnet-5-5')
+    expect(modelValue(select())).toBe('claude-sonnet-5-5')
     expect(api.disposeAgent).not.toHaveBeenCalled()
     expect(screen.getByText(/próxima mensagem da fila/)).toBeTruthy()
   })
@@ -1154,8 +1155,8 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement =>
-      document.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement =>
+      document.querySelector('button.model-select') as HTMLButtonElement
 
     await send('msg1')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -1168,7 +1169,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     expect(screen.getByText(/Na fila/)).toBeTruthy()
 
     // Troca o modelo com a msg1 ainda rodando e a msg2 já na fila.
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select(), 'claude-sonnet-5-5')
     expect(api.disposeAgent).not.toHaveBeenCalled() // não mexe no turno em andamento
 
     await emit(result) // msg1 termina no modelo antigo → agora despacha a msg2
@@ -1188,15 +1189,15 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement =>
-      document.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement =>
+      document.querySelector('button.model-select') as HTMLButtonElement
 
     await send('msg1')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
     await flushConnect()
     await waitFor(() => expect(api.sendMessage).toHaveBeenCalledTimes(1))
 
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select(), 'claude-sonnet-5-5')
     expect(api.disposeAgent).not.toHaveBeenCalled()
 
     await emit(result) // termina sem nada na fila → aplica a troca agora, ocioso
@@ -1214,7 +1215,7 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => container.querySelector('button.model-select') as HTMLButtonElement
 
     await send('msg1')
     await waitFor(() => expect(api.startAgent).toHaveBeenCalledTimes(1))
@@ -1224,11 +1225,11 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
     await waitFor(() => expect(select().getAttribute('aria-disabled')).toBe('false'))
 
     // Troca o modelo sem clicar em "Parar sessão".
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select(), 'claude-sonnet-5-5')
 
     // A sessão antiga é encerrada em silêncio (sem exigir o botão "Parar").
     await waitFor(() => expect(api.disposeAgent).toHaveBeenCalledWith('c1'))
-    expect(select().value).toBe('claude-sonnet-5-5')
+    expect(modelValue(select())).toBe('claude-sonnet-5-5')
     expect(screen.getByText(/Modelo trocado/)).toBeTruthy()
 
     // A próxima mensagem reconecta — já com o modelo novo.
@@ -1244,18 +1245,18 @@ describe('App — trocar de modelo sem precisar parar a sessão manualmente', ()
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => container.querySelector('button.model-select') as HTMLButtonElement
     await waitFor(() => expect(select()).toBeTruthy())
     expect(select().getAttribute('aria-disabled')).toBe('false')
 
     // Opus 4.8 saiu do seletor quando o Opus 5 entrou, mas esta conversa (fixture)
     // continua nele. O picker precisa MOSTRAR o modelo real, senão o <select>
     // cairia na primeira opção e a UI diria "Opus 5" com a sessão rodando em 4.8.
-    expect(select().value).toBe('claude-opus-4-8')
-    expect(Array.from(select().options).find((o) => o.value === 'claude-opus-4-8')?.textContent).toContain('antigo')
+    expect(modelValue(select())).toBe('claude-opus-4-8')
+    expect(modelOptions(select()).find((o) => o.value === 'claude-opus-4-8')?.textContent).toContain('antigo')
 
-    fireEvent.change(select(), { target: { value: 'claude-fable-5-2' } })
-    expect(select().value).toBe('claude-fable-5-2')
+    pickModel(select(), 'claude-fable-5-2')
+    expect(modelValue(select())).toBe('claude-fable-5-2')
     expect(api.disposeAgent).not.toHaveBeenCalled()
   })
 })
@@ -1272,7 +1273,7 @@ describe('App — modelo GPT conectado por OAuth', () => {
     await send('próxima tarefa')
     await emit({ kind: 'provider-switch', id: 'switch-1', fromModel: 'claude-opus-5', model: 'gpt-6-astra', effort: 'high', fastMode: false, text: 'Troquei automaticamente para GPT-6 Astra.' })
     expect(screen.getByText('Troquei automaticamente para GPT-6 Astra.').getAttribute('role')).toBe('status')
-    expect((view.container.querySelector('select.model-select') as HTMLSelectElement).value).toBe('gpt-6-astra')
+    expect(modelValue(view.container.querySelector('button.model-select') as HTMLButtonElement)).toBe('gpt-6-astra')
     expect(screen.getByTitle('Parar tarefa atual')).toBeTruthy()
     expect(api.sendMessage).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/Tentar novamente em/)).toBeNull()
@@ -1300,12 +1301,12 @@ describe('App — modelo GPT conectado por OAuth', () => {
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => container.querySelector('button.model-select') as HTMLButtonElement
 
     await waitFor(() => {
-      expect(Array.from(select().options).some((option) => option.value === model)).toBe(true)
+      expect(modelOptions(select()).some((option) => option.value === model)).toBe(true)
     })
-    fireEvent.change(select(), { target: { value: model } })
+    pickModel(select(), model)
     await waitFor(() => expect(container.querySelector('.effort-trigger')?.textContent).toContain('Alto'))
 
     await send('use uma ferramenta')
@@ -1327,7 +1328,7 @@ describe('App — modo rápido (fast mode)', () => {
         <App />
       </UiProvider>
     )
-    const select = (): HTMLSelectElement => container.querySelector('select.model-select') as HTMLSelectElement
+    const select = (): HTMLButtonElement => container.querySelector('button.model-select') as HTMLButtonElement
     // A fixture começa no Opus 4.8, que suporta modo rápido — e começa DESLIGADO.
     await waitFor(() => expect(fastToggle()).toBeTruthy())
     expect(fastToggle()?.className).not.toContain('on')
@@ -1343,7 +1344,7 @@ describe('App — modo rápido (fast mode)', () => {
 
     // Sonnet não suporta: o toggle some e a flag cai junto, para a próxima sessão
     // não sair com fastMode ligado (a API rejeitaria a request).
-    fireEvent.change(select(), { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select(), 'claude-sonnet-5-5')
     await waitFor(() => expect(fastToggle()).toBeNull())
 
     await send('msg2')
@@ -1354,7 +1355,7 @@ describe('App — modo rápido (fast mode)', () => {
     })
 
     // Voltar para um Opus suportado traz o toggle de volta, ainda desligado.
-    fireEvent.change(select(), { target: { value: 'claude-opus-5-5' } })
+    pickModel(select(), 'claude-opus-5-5')
     await waitFor(() => expect(fastToggle()).toBeTruthy())
     expect(fastToggle()?.className).not.toContain('on')
   })
@@ -2584,16 +2585,16 @@ describe('App — diagnóstico seguro do failover do PO', () => {
 })
 
 describe('App — modo Automático', () => {
-  const selectModel = (container: HTMLElement): HTMLSelectElement =>
-    container.querySelector('select.model-select') as HTMLSelectElement
+  const selectModel = (container: HTMLElement): HTMLButtonElement =>
+    container.querySelector('button.model-select') as HTMLButtonElement
   // O App só aceita o Automático depois de saber (assíncrono, no boot) que o
   // TypeSafe está configurado. Escolher antes disso é recusado — e o teste
   // seguia com o modelo antigo, falhando ao acaso conforme a carga da máquina.
   const pickAuto = async (container: HTMLElement): Promise<void> => {
     await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
     await act(async () => {})
-    fireEvent.change(selectModel(container), { target: { value: 'auto' } })
-    await waitFor(() => expect(selectModel(container).value).toBe('auto'))
+    pickModel(selectModel(container), 'auto')
+    await waitFor(() => expect(modelValue(selectModel(container))).toBe('auto'))
   }
 
   it('"Automático" é uma opção do seletor que já existe', async () => {
@@ -2601,8 +2602,8 @@ describe('App — modo Automático', () => {
     await waitFor(() => expect(selectModel(container)).toBeTruthy())
 
     // Com o TypeSafe pronto (resposta assíncrona do boot) o Automático entra na frente.
-    await waitFor(() => expect(selectModel(container).options[0]?.value).toBe('auto'))
-    expect(selectModel(container).options[0].textContent).toBe('Automático')
+    await waitFor(() => expect(modelOptions(selectModel(container))[0]?.value).toBe('auto'))
+    expect(modelOptions(selectModel(container))[0]?.textContent).toBe('Automático')
   })
 
   it('sem TypeSafe configurado, as opções Automático (modelo e esforço) não aparecem', async () => {
@@ -2612,7 +2613,7 @@ describe('App — modo Automático', () => {
     await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
     await act(async () => {})
 
-    expect(Array.from(selectModel(container).options).map((o) => o.value)).not.toContain('auto')
+    expect(modelOptions(selectModel(container)).map((o) => o.value)).not.toContain('auto')
     fireEvent.click(container.querySelector('.effort-trigger') as HTMLElement)
     const slider = screen.getByRole('slider', { name: 'Esforço' }) as HTMLInputElement
     expect(slider.min).toBe('0')
@@ -2633,7 +2634,7 @@ describe('App — modo Automático', () => {
     await waitFor(() => expect(api.isTypeSafeConfigured).toHaveBeenCalled())
     await act(async () => {})
 
-    expect(selectModel(container).value).toBe('auto')
+    expect(modelValue(selectModel(container))).toBe('auto')
     expect(container.querySelector('.effort-trigger')?.textContent).toBe('Esforço Auto')
   })
 
@@ -2644,7 +2645,7 @@ describe('App — modo Automático', () => {
       JSON.stringify([{ ...conv, model: 'gpt-oss:120b-cloud', effort: 'high', effortSplit: true }])
     )
     const { container } = render(<UiProvider><App /></UiProvider>)
-    await waitFor(() => expect(selectModel(container)?.value).toBe('gpt-oss:120b-cloud'))
+    await waitFor(() => expect(modelValue(selectModel(container))).toBe('gpt-oss:120b-cloud'))
     expect(container.querySelector('.effort-picker')).toBeNull()
   })
 
@@ -2701,7 +2702,7 @@ describe('App — modo Automático', () => {
     expect(screen.getByText('Automático: Fable 5.2, esforço médio.').getAttribute('role')).toBe('status')
     // Se o evento fixasse `model`, a conversa sairia do Automático e o turno
     // seguinte nunca mais perguntaria.
-    expect(selectModel(container).value).toBe('auto')
+    expect(modelValue(selectModel(container))).toBe('auto')
   })
 
   it('troca de configuração com a fila: UMA sessão nova, já com a escolha do turno', async () => {
@@ -2746,7 +2747,7 @@ describe('App — modo Automático', () => {
 
     await emit({ kind: 'system', sessionId: 's1', model: 'claude-fable-5-2', cwd: 'C:/p', tools: [] })
 
-    expect(selectModel(container).value).toBe('auto')
+    expect(modelValue(selectModel(container))).toBe('auto')
   })
 })
 
@@ -2876,12 +2877,12 @@ describe('App — conversa de planejamento', () => {
     expect(screen.getByPlaceholderText(/Mensagem para o Agent/i)).toBeTruthy()
     // O seletor do chat edita o modelo do Agent Manager (a config de planejamento),
     // com o Automático; Econômico e Loop não existem mais.
-    const select = container.querySelector('.pl-chat select.model-select') as HTMLSelectElement
+    const select = container.querySelector('.pl-chat button.model-select') as HTMLButtonElement
     // Com o TypeSafe pronto (assíncrono no boot); sem ele o Automático sai da lista.
-    await waitFor(() => expect([...select.options].map((o) => o.value)).toContain('auto'))
+    await waitFor(() => expect(modelOptions(select).map((o) => o.value)).toContain('auto'))
     expect(screen.queryByRole('button', { name: /Econômico/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Loop/ })).toBeNull()
-    fireEvent.change(select, { target: { value: 'claude-sonnet-5-5' } })
+    pickModel(select, 'claude-sonnet-5-5')
     expect(api.setConfig).toHaveBeenCalledWith({ planning: expect.objectContaining({ model: 'claude-sonnet-5-5' }) })
     // Nada do workspace normal: nem divisor, nem painel/rail da direita.
     expect(container.querySelector('.splitter')).toBeNull()
@@ -2953,7 +2954,7 @@ describe('App — conversa de planejamento', () => {
     expect(api.startAgent.mock.calls[0][0]).not.toHaveProperty('handoff')
     expect(container.querySelector('.workspace > .chat-panel')).toBeTruthy()
     expect(container.querySelector('.workspace > .right-pane')).toBeTruthy()
-    expect(container.querySelector('select.model-select')).toBeTruthy()
+    expect(container.querySelector('button.model-select')).toBeTruthy()
     expect(container.querySelector('.planning-workspace')).toBeNull()
     expect(api.planningOpen).not.toHaveBeenCalled()
   })

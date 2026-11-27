@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect, it, vi } from 'vitest'
-import { loadConversationSeed, seedEntriesFromMessages, userRequestFromPrompt, type SessionMessagesLoader } from './conversationSeed'
+import { memoryExcerpt } from '../memoryIndex'
+import { loadConversationSeed,seedEntriesFromMessages, userRequestFromPrompt, type SessionMessagesLoader } from './conversationSeed'
 
 const STAMP = '[Contexto do sistema: mensagem enviada do PC MAQ em 15/10/2026, 10:00:00 (America/Sao_Paulo).]'
 
@@ -43,6 +44,13 @@ describe('userRequestFromPrompt', () => {
     expect(userRequestFromPrompt(changed, (rel) => (rel === 'b.md' ? 'b' : 'novo'))).toBe('pedido')
     const last = prompt('--- Memória relevante: a.md ---\nvelho', 'pedido')
     expect(userRequestFromPrompt(last, () => 'novo')).toBeNull()
+  })
+
+  it('memória longa enviada cortada sai pelo trecho; se mudou depois, pela marca de corte', () => {
+    const body = `# Longa\n${'linha de conteúdo.\n'.repeat(200)}`
+    const sent = prompt(`--- Memória relevante: a.md ---\n${memoryExcerpt('a.md', body)}`, 'pedido\n\ncom parágrafo')
+    expect(userRequestFromPrompt(sent, () => body)).toBe('pedido\n\ncom parágrafo')
+    expect(userRequestFromPrompt(sent, () => `mudou\n${body}`)).toBe('pedido\n\ncom parágrafo')
   })
 
   it('desembrulha a visão e tira as notas do sistema', () => {

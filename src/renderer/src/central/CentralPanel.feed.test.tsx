@@ -204,7 +204,7 @@ describe('CentralPanel — resposta do destino', () => {
     expect(block.querySelector('.central-answer strong')?.textContent).toBe('12.345.678/0001-90')
     const act = block.querySelector('.central-act') as HTMLElement
     expect(act.title).toBe('Procurou "cnpj" · editou filtros.js +6 −2 · rodou os testes ✓ (inteira)')
-    expect(act.querySelector('.central-chev')?.textContent).toBe('▸')
+    expect(act.querySelector('svg.central-chev')?.getAttribute('class')).toBe('central-chev')
     expect(act.querySelector('b')?.textContent).toBe('filtros.js')
     expect(act.querySelector('.add')?.textContent).toBe('+6')
     expect(act.querySelector('.rem')?.textContent).toBe('−2')
@@ -233,7 +233,7 @@ describe('CentralPanel — resposta do destino', () => {
     expect(controller.turnTools).toHaveBeenCalledWith({ convId: 'darj', msgId: 'u1' })
     expect(container.querySelectorAll('.central-tools .tool-card')).toHaveLength(2)
     expect(act.getAttribute('aria-expanded')).toBe('true')
-    expect(act.querySelector('.central-chev')?.textContent).toBe('▾')
+    expect(act.querySelector('svg.central-chev')?.getAttribute('class')).toBe('central-chev open')
     fireEvent.click(act)
     expect(container.querySelector('.central-tools')).toBeNull()
   })

@@ -39,6 +39,7 @@
   white-space: nowrap;
 }
 .md-code-copy {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -51,6 +52,12 @@
   font: inherit;
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+/* área de clique um pouco mais alta que o botão desenhado */
+.md-code-copy::after {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
 }
 .md-code-copy:hover {
   color: var(--text);

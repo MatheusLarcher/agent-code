@@ -13,9 +13,11 @@ import { PLAN_GATE_MESSAGE } from './board/planGate'
 
 const cacheState = vi.hoisted(() => ({ dir: '', memoriesDir: '', skillsDir: '' }))
 vi.mock('./store', () => ({ getCacheInfo: () => ({ ...cacheState }) }))
+const chromeState = vi.hoisted(() => ({ enabled: true }))
 vi.mock('./config', () => ({
   loadConfig: () => ({
     windowsControlEnabled: false,
+    chromeControlEnabled: chromeState.enabled,
     ollama: { enabled: false, apiKey: '' },
     // A trava do plano LIGADA: é o que prova que o Manager a desliga.
     board: { requirePlan: true }
@@ -76,6 +78,8 @@ function makeSession(extra: Partial<StartAgentOptions> = {}): AgentSession {
 type Gate = (name: string, input: Record<string, unknown>) => Promise<{ behavior: string; message?: string }>
 const gate = (s: AgentSession): Gate => (name, input) =>
   (s as unknown as { handlePermission: Gate }).handlePermission(name, input)
+const planReminder = (s: AgentSession, tool: string): string | null =>
+  (s as unknown as { planReminderFor(t: string, a: null): string | null }).planReminderFor(tool, null)
 const beginTurn = (s: AgentSession): void => (s as unknown as { beginTurn(): void }).beginTurn()
 const handle = (s: AgentSession, message: unknown): void =>
   (s as unknown as { handleMessage(m: unknown): void }).handleMessage(message)
@@ -107,6 +111,7 @@ afterAll(async () => {
 beforeEach(() => {
   queryMock.mockClear()
   sdkStream.fail = false
+  chromeState.enabled = true
 })
 
 afterEach(() => {
@@ -143,6 +148,15 @@ describe('AgentSession — start() da sessão do Agent Manager', () => {
     expect(append).not.toContain('"android" MCP tools')
   })
 
+  it('permissão do Chrome desligada: o Manager nasce sem o servidor chrome e sem a dica', async () => {
+    chromeState.enabled = false
+    await makeSession({ planning: { slug } }).start()
+    expect(Object.keys(lastOptions().mcpServers as object)).not.toContain('chrome')
+    const { append } = lastOptions().systemPrompt as { append: string }
+    expect(append).not.toContain('Controle do Chrome do usuário')
+    expect(append).toContain('real Google Chrome window') // o navegador do agente continua
+  })
+
   it('sem subagentes nem outros shells; strictMcpConfig; nenhum agente especialista', async () => {
     await makeSession({ planning: { slug } }).start()
     const options = lastOptions()
@@ -157,7 +171,8 @@ describe('AgentSession — start() da sessão do Agent Manager', () => {
     await makeSession().start()
     const options = lastOptions()
     const servers = Object.keys(options.mcpServers as object)
-    expect(servers).toEqual(expect.arrayContaining(['browser', 'android', 'memory', 'tasks']))
+    expect(servers).toEqual(expect.arrayContaining(['browser', 'memory', 'tasks']))
+    expect(servers).not.toContain('android') // sob demanda (app_ativar_android) fora de projeto Android
     expect(servers).not.toContain('planning')
     expect(options.disallowedTools).toBeUndefined()
     expect(options.strictMcpConfig).toBeUndefined()
@@ -182,9 +197,20 @@ describe('AgentSession — gate do Agent Manager com "Permitir tudo" ligado', ()
     expect(res).toEqual({ behavior: 'allow', updatedInput: input })
   })
 
-  it('controle: numa sessão comum, a mesma escrita em turno leva a recusa da trava do plano', async () => {
-    const res = await armed({})('Write', { file_path: at('docs', 'spec', slug, '_sandbox', 'a.ts'), content: 'x' })
-    expect(res).toEqual({ behavior: 'deny', message: PLAN_GATE_MESSAGE })
+  it('controle: numa sessão comum, a escrita em turno passa e leva o lembrete do plano', async () => {
+    const s = makeSession({})
+    s.setBypass(true)
+    beginTurn(s)
+    const input = { file_path: at('docs', 'spec', slug, '_sandbox', 'a.ts'), content: 'x' }
+    expect(await gate(s)('Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+    expect(planReminder(s, 'Write')).toBe(PLAN_GATE_MESSAGE)
+    expect(planReminder(s, 'Write')).toBeNull() // uma vez por turno
+  })
+
+  it('no Agent Manager não há lembrete do plano', () => {
+    const s = makeSession({ planning: { slug } })
+    beginTurn(s)
+    expect(planReminder(s, 'Write')).toBeNull()
   })
 
   it('Write em docs/spec/<slug>/cards/x.md é negado (cards só mudam por plan_*)', async () => {
@@ -352,10 +378,13 @@ describe('AgentSession — conversa de handoff', () => {
     await vi.waitFor(async () => expect((await gate(s)('Skill', { skill: 'planejar' })).behavior).toBe('allow'))
   })
 
-  it('não recebe o escopo do Manager nem desliga a trava do plano', async () => {
-    const g = armed({ handoff: { slug } })
-    const res = await g('Write', { file_path: at('src', 'x.ts'), content: 'x' })
-    expect(res).toEqual({ behavior: 'deny', message: PLAN_GATE_MESSAGE })
+  it('não recebe o escopo do Manager nem desliga o lembrete do plano', async () => {
+    const s = makeSession({ handoff: { slug } })
+    s.setBypass(true)
+    beginTurn(s)
+    const input = { file_path: at('src', 'x.ts'), content: 'x' }
+    expect(await gate(s)('Write', input)).toEqual({ behavior: 'allow', updatedInput: input })
+    expect(planReminder(s, 'Write')).toBe(PLAN_GATE_MESSAGE)
   })
 })
 

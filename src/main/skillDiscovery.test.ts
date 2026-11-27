@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -7,6 +7,8 @@ import {
   discoverSkills,
   parseSkillFrontmatter,
   renderAgentSkillCatalog,
+  renderSkillCatalogChange,
+  renderSkillCatalogUpdate,
   skillCatalogFilesystemVersion
 } from './skillDiscovery'
 import { exposeCacheSkills } from './skillManager'
@@ -42,14 +44,18 @@ describe('skillDiscovery', () => {
     expect(found.find(({ name }) => name === 'duplicada')?.source).toBe('project-claude')
     expect(found.find(({ name }) => name === 'planejar')?.source).toBe('user-claude')
 
+    // O catálogo do app é só a regra: nome e descrição já vão na listagem do SDK.
     const catalog = renderAgentSkillCatalog(found)
-    expect(catalog).not.toContain('/adaptada')
-    expect(catalog).toContain('/duplicada')
-    expect(catalog).toContain('Description: projeto nativo')
-    expect(catalog).toContain('/global')
-    expect(catalog).toContain('/planejar')
-    expect(catalog).toContain('SKILL.md:')
-    expect(catalog).not.toContain('BODY_SENTINEL')
+    expect(catalog).toContain('FILESYSTEM SKILLS: 3 skills')
+    expect(catalog).toContain('Skill tool')
+    for (const repeated of ['/duplicada', '/global', '/planejar', 'projeto nativo', 'SKILL.md', 'BODY_SENTINEL']) {
+      expect(catalog).not.toContain(repeated)
+    }
+    expect(catalog.length).toBeLessThan(500)
+  })
+
+  it('catálogo vazio avisa que não há skills', () => {
+    expect(renderAgentSkillCatalog([])).toContain('no filesystem skills are currently available')
   })
 
   it('lê somente o prefixo de SKILL.md grande sem descartar seu frontmatter', async () => {
@@ -94,14 +100,35 @@ describe('skillDiscovery', () => {
     expect(changedFilesystemVersion).not.toBe(firstFilesystemVersion)
     expect(added.version).not.toBe(changed.version)
     expect(removed.version).not.toBe(added.version)
-    expect(added.catalog).toContain('Description: descrição atualizada e maior')
-    expect(added.catalog).toContain('Description: segunda skill')
-    expect(removed.catalog).not.toContain('/one')
+    // A listagem do SDK só anuncia nome novo: descrição mudada e remoção vão no delta.
+    const delta = renderSkillCatalogChange(first.skills, added.skills)
+    expect(delta).toContain('/one\n  Description: descrição atualizada e maior')
+    expect(delta).toContain('/two\n  Description: segunda skill')
+    expect(delta).not.toContain('Removed')
+    const gone = renderSkillCatalogChange(added.skills, removed.skills)
+    expect(gone).toContain('Removed (no longer available): one')
+    expect(gone).not.toContain('/two')
+    expect(renderSkillCatalogChange(added.skills, [])).toContain('no filesystem skills are currently available')
+
+    const update = renderSkillCatalogUpdate(removed, { skills: added.skills, announced: true })
+    expect(update.startsWith('[SKILL_CATALOG_UPDATE]')).toBe(true)
+    expect(update).toContain('Removed (no longer available): one')
+    expect(update).not.toContain(removed.catalog)
+    expect(renderSkillCatalogUpdate(first)).toContain(first.catalog)
+
+    // Primeiro anúncio da conversa: a regra, mais só o que mudou desde a lista do SDK na subida.
+    const firstSend = renderSkillCatalogUpdate(changed, { skills: first.skills, announced: false })
+    expect(firstSend).toContain(changed.catalog)
+    expect(firstSend).toContain('/one\n  Description: descrição atualizada e maior')
+    const unchanged = renderSkillCatalogUpdate(first, { skills: first.skills, announced: false })
+    expect(unchanged).toContain(first.catalog)
+    expect(unchanged).not.toContain('Description:')
   })
 
   it('mantém as skills do app quando a conversa abre outro projeto', async () => {
     const project = await mkdtemp(join(tmpdir(), 'skills-other-project-'))
-    const home = await mkdtemp(join(tmpdir(), 'skills-empty-home-'))
+    // realpath: no macOS o tmpdir passa pelo symlink /var → /private/var.
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'skills-empty-home-')))
     const cache = await mkdtemp(join(tmpdir(), 'skills-agent-code-'))
     await skill(cache, 'code-review', 'code-review', 'revisar o diff')
     expect(exposeCacheSkills(cache, home).errors).toEqual([])

@@ -14,6 +14,11 @@ import type { EditorElement } from '../inlineMedia/InlineEditor'
 
 afterEach(cleanup)
 
+/** A miniatura do anexo só aparece depois do FileReader (assíncrono) e do
+ *  upgrade do anexo: com a suíte inteira disputando a CPU, o 1s padrão do
+ *  Testing Library estoura. A condição é a mesma; só a paciência é maior. */
+const SLOW = { timeout: 10_000 }
+
 type SendFn = (text: string, images: ImageAttachment[], files: FileAttachment[], fileRefs: FileRefAttachment[]) => void
 type DraftFn = (convId: string, text: string, media?: unknown[]) => void
 
@@ -76,7 +81,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
     fireEvent.change(box(), { target: { value: 'analisa a imagem  e modifique' } })
     act(() => box().setSelectionRange(17, 17))
     attach(png('tela.png'))
-    const thumb = await screen.findByAltText('Imagem anexada: tela.png')
+    const thumb = await screen.findByAltText('Imagem anexada: tela.png', {}, SLOW)
     expect(thumb.closest('[role="textbox"]')).toBe(box()) // no texto, não numa faixa em cima
     expect(document.querySelector('.img-previews, .file-chips')).toBeNull()
 
@@ -95,10 +100,10 @@ describe('Composer — anexo entra no ponto do cursor', () => {
     fireEvent.change(box(), { target: { value: 'de  para ' } })
     act(() => box().setSelectionRange(3, 3))
     attach(png('antes.png'))
-    await screen.findByAltText('Imagem anexada: antes.png')
+    await screen.findByAltText('Imagem anexada: antes.png', {}, SLOW)
     act(() => box().setSelectionRange(box().value.length, box().value.length))
     attach(new File(['a,b'], 'dados.csv', { type: 'text/csv' }))
-    await screen.findByAltText(/Arquivo anexado: dados\.csv/)
+    await screen.findByAltText(/Arquivo anexado: dados\.csv/, {}, SLOW)
     fireEvent.keyDown(box(), { key: 'Enter' })
     const [text, images, files] = onSend.mock.calls[0]
     expect(text).toBe('de {{midia:1}} para {{midia:2}}')
@@ -110,7 +115,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
     const { box, attach, onSend } = setup()
     fireEvent.change(box(), { target: { value: 'oi ' } })
     attach(png('x.png'))
-    const thumb = await screen.findByAltText('Imagem anexada: x.png')
+    const thumb = await screen.findByAltText('Imagem anexada: x.png', {}, SLOW)
     act(() => {
       thumb.remove() // o que o Backspace/Delete do navegador faz com o <img>
       box().dispatchEvent(new Event('input', { bubbles: true }))
@@ -122,7 +127,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
   it('hover na miniatura mostra a prévia ampliada (flutuante) e some ao sair', async () => {
     const { attach } = setup()
     attach(png('grande.png'))
-    const thumb = await screen.findByAltText('Imagem anexada: grande.png')
+    const thumb = await screen.findByAltText('Imagem anexada: grande.png', {}, SLOW)
     fireEvent.mouseOver(thumb)
     const tip = screen.getByRole('tooltip')
     expect(tip.textContent).toContain('midia:1')
@@ -135,7 +140,7 @@ describe('Composer — anexo entra no ponto do cursor', () => {
     const { box, attach } = setup()
     fireEvent.change(box(), { target: { value: 'a' } })
     attach(png('f.png'))
-    const thumb = await screen.findByAltText('Imagem anexada: f.png')
+    const thumb = await screen.findByAltText('Imagem anexada: f.png', {}, SLOW)
     act(() => {
       box().focus()
       box().setSelectionRange(2, 2) // logo depois do anexo
@@ -161,7 +166,7 @@ describe('Composer — link/caminho colado', () => {
     const { box, onSend } = setup()
     fireEvent.change(box(), { target: { value: 'veja ' } })
     paste(box(), 'https://exemplo.com/planilha.xlsx')
-    await screen.findByAltText(/Arquivo anexado: planilha\.xlsx/)
+    await screen.findByAltText(/Arquivo anexado: planilha\.xlsx/, {}, SLOW)
     fireEvent.keyDown(box(), { key: 'Enter' })
     const [text, , , refs] = onSend.mock.calls[0]
     expect(text).toBe('veja {{midia:1}}')
@@ -202,7 +207,7 @@ describe('Composer — regressões do campo novo', () => {
     const { box, attach, onSend } = setup()
     fireEvent.change(box(), { target: { value: 'ver ' } })
     attach(png('p.png'))
-    await screen.findByAltText('Imagem anexada: p.png')
+    await screen.findByAltText('Imagem anexada: p.png', {}, SLOW)
     fireEvent.change(box(), { target: { value: `${box().value} em @app` } })
     expect(await screen.findByRole('listbox')).toBeTruthy()
     fireEvent.keyDown(box(), { key: 'Enter' }) // escolhe o item, não envia

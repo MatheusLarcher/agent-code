@@ -178,9 +178,14 @@ export function normalizeSourceItems(items: BoardSourceItem[]): BoardSourceItem[
  * acabou de gravar em cima de um cartão que o agente deixou em andamento. E é
  * isso que torna a reabertura idempotente: o cartão já reaberto tem
  * `poStatus = 'pending'` e não aparece de novo.
+ *
+ * Fica de fora o cartão de uma tarefa do registro em andamento (`taskHeld`, ver
+ * `heldBoardItemIds`): o trabalho dele não acaba com o turno, e a coluna vem da tarefa.
  */
-export function boardItemsToReopen(items: BoardItem[]): BoardItem[] {
-  return items.filter((item) => item.dismissedAt === null && boardItemStatus(item) === 'in_progress')
+export function boardItemsToReopen(items: BoardItem[], taskHeld: ReadonlySet<string> = new Set()): BoardItem[] {
+  return items.filter(
+    (item) => item.dismissedAt === null && boardItemStatus(item) === 'in_progress' && !taskHeld.has(item.id)
+  )
 }
 
 /**
@@ -197,8 +202,8 @@ export function boardItemsToReopen(items: BoardItem[]): BoardItem[] {
  * escrito depois do fim do turno tem uma decisão mais recente que a
  * reabertura, e prevalece.
  */
-export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number): BoardItem[] {
-  return boardItemsToReopen(items).filter((item) => {
+export function boardItemsToReopenBefore(items: BoardItem[], cutoffMs: number, taskHeld = new Set<string>()): BoardItem[] {
+  return boardItemsToReopen(items, taskHeld).filter((item) => {
     // O PENDENTE do PO (justificativa do que faltou) é escrito SEMPRE depois do
     // fim do turno — o PO de fechamento roda no `result`. Pelo carimbo, o
     // cartão justificado escaparia da reabertura que ele mesmo explica. A

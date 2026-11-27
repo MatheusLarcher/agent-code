@@ -162,6 +162,7 @@
   margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
+  text-wrap: balance;
 }
 .next-modal textarea {
   width: 100%;

@@ -5,10 +5,10 @@ import { RightPaneTabs } from './RightPaneTabs'
 afterEach(cleanup)
 
 describe('RightPaneTabs', () => {
-  it('exatamente duas abas: Quadro e Scrum Master (o navegador virou janela do Chrome)', () => {
+  it('três abas: Quadro, Scrum Master e Preview (o navegador antigo virou janela do Chrome)', () => {
     const onSelect = vi.fn()
     const { rerender } = render(<RightPaneTabs active="board" onSelect={onSelect} onCollapse={vi.fn()} liveAgents={0} boardProgress={null} />)
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Quadro', 'Scrum Master'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Quadro', 'Scrum Master', 'Preview'])
     expect(screen.queryByRole('tab', { name: /Navegador/ })).toBeNull()
     expect(screen.queryByRole('tab', { name: /Escritório/ })).toBeNull()
     expect(screen.getByRole('tab', { name: /Quadro/ }).getAttribute('aria-selected')).toBe('true')
@@ -18,6 +18,9 @@ describe('RightPaneTabs', () => {
     rerender(<RightPaneTabs active="scrum" onSelect={onSelect} onCollapse={vi.fn()} liveAgents={0} boardProgress={null} />)
     expect(screen.getByRole('tab', { name: /Scrum Master/ }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tab', { name: /Quadro/ }).getAttribute('aria-selected')).toBe('false')
+
+    fireEvent.click(screen.getByRole('tab', { name: /Preview/ }))
+    expect(onSelect).toHaveBeenCalledWith('preview')
   })
 
   it('o progresso e o "espera você" ficam na aba Quadro, com a dica do app (sem title nativo)', () => {

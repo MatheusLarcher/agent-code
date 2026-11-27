@@ -120,7 +120,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.16s ease;
+  transition: width 0.16s ease-out;
 }
 .sidebar.collapsed {
   width: 56px;
@@ -395,6 +395,7 @@ body {
   padding: 0 7px;
   min-width: 18px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .project-convs {
   margin: 1px 0 4px;
@@ -414,39 +415,102 @@ body {
 /* Árvore projeto → conversas: uma guia vertical contínua (ligada ao ícone da
    pasta) com um "cotovelo" horizontal em cada conversa — deixa explícito que
    ela pertence a ESTE projeto, não é só uma indentação genérica. */
+/* Fita de LED: o desenho da árvore nunca muda de forma. ::after = a reta
+   vertical (cinza por baixo + a luz laranja por cima, que "enche" de cima para
+   baixo pelo tamanho da camada); ::before = só a curva do cotovelo. */
 .conv-row.nested {
   position: relative;
   margin-left: 0;
   padding-left: 14px;
+  --led-t: 130ms; /* tempo da luz percorrer uma conversa */
+  --led-delay: calc(min(var(--i, 0), 10) * var(--led-t));
+  --led-fill: 0%;
+  --led-elbow: var(--line);
+  --tree-mid: var(--line);
+  --tree-tail: var(--line);
 }
 .conv-row.nested::before {
   content: '';
   position: absolute;
   left: -6px;
-  top: 0;
-  bottom: 50%;
+  top: calc(50% - 7px);
+  height: 7px;
   width: 10px;
-  border-left: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--led-elbow);
+  border-bottom: 1px solid var(--led-elbow);
   border-bottom-left-radius: 6px;
+  transition: border-color 150ms ease-out;
 }
 .conv-row.nested::after {
   content: '';
   position: absolute;
+  z-index: 1;
   left: -6px;
+  top: 0;
   bottom: 0;
-  top: 50%;
-  border-left: 1px solid var(--line);
+  width: 1px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) top / 1px var(--led-fill) no-repeat,
+    linear-gradient(
+      to bottom,
+      var(--line) 0 calc(50% - 6px),
+      var(--tree-mid) calc(50% - 6px) 50%,
+      var(--tree-tail) 50% 100%
+    ) top / 1px 100% no-repeat;
+  /* Apagar: a luz recolhe para cima, rápido e tudo junto. */
+  transition: background-size 150ms ease-in;
 }
-.project-convs .conv-row.nested:last-child::after {
-  display: none;
+/* Última conversa: a reta termina na curva. */
+.project-convs .conv-row.nested:last-child {
+  --tree-tail: transparent;
 }
 .conv-row:hover {
   background: var(--bg-3);
 }
+/* Ativo: fundo + ícone no acento. Sem faixa na esquerda — dentro do projeto,
+   o destaque é o caminho aceso da árvore até o chat ativo. */
 .conv-row.active {
   background: var(--bg-3);
-  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Acender: a luz desce em velocidade constante (linear), uma conversa depois
+   da outra (--i = posição na lista), passa pelas de cima inteira e, no chat
+   ativo, desce até a curva e segue pelo cotovelo. Os cotovelos cinza das
+   outras ficam por trás da luz. */
+.conv-row.nested:has(~ .conv-row.nested.active) {
+  --led-fill: 100%;
+}
+.conv-row.nested:has(~ .conv-row.nested.active)::after {
+  transition: background-size var(--led-t) linear var(--led-delay);
+}
+.conv-row.nested.active {
+  --led-fill: calc(50% - 6px);
+  --led-elbow: var(--accent);
+  --tree-mid: transparent;
+}
+.conv-row.nested.active::after {
+  transition: background-size calc(var(--led-t) / 2) linear var(--led-delay);
+}
+.conv-row.nested.active::before {
+  transition: border-color 120ms linear calc(var(--led-delay) + var(--led-t) / 2);
+}
+.project-convs .conv-row.nested:nth-child(2) { --i: 1; }
+.project-convs .conv-row.nested:nth-child(3) { --i: 2; }
+.project-convs .conv-row.nested:nth-child(4) { --i: 3; }
+.project-convs .conv-row.nested:nth-child(5) { --i: 4; }
+.project-convs .conv-row.nested:nth-child(6) { --i: 5; }
+.project-convs .conv-row.nested:nth-child(7) { --i: 6; }
+.project-convs .conv-row.nested:nth-child(8) { --i: 7; }
+.project-convs .conv-row.nested:nth-child(9) { --i: 8; }
+.project-convs .conv-row.nested:nth-child(10) { --i: 9; }
+.project-convs .conv-row.nested:nth-child(n + 11) { --i: 10; }
+@media (prefers-reduced-motion: reduce) {
+  .conv-row.nested::before,
+  .conv-row.nested::after,
+  .conv-row.nested.active::before,
+  .conv-row.nested.active::after,
+  .conv-row.nested:has(~ .conv-row.nested.active)::after {
+    transition: none;
+  }
 }
 .conv-ico {
   display: flex;
@@ -481,6 +545,7 @@ body {
   min-width: 0;
 }
 .conv-del {
+  position: relative;
   background: transparent;
   border: none;
   color: var(--muted);
@@ -496,6 +561,12 @@ body {
 .conv-del:hover {
   background: var(--line);
   color: var(--err);
+}
+/* Área de toque maior que o ícone de 20px, sem invadir a linha vizinha. */
+.conv-del::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 /* ---- top bar ---- */
@@ -623,9 +694,13 @@ body {
   padding: 7px 14px;
   cursor: pointer;
   font-size: 13px;
+  transition: scale 150ms ease-out, background-color 120ms ease-out;
 }
 .btn:hover {
   background: var(--line);
+}
+.btn:active:not(:disabled) {
+  scale: 0.96;
 }
 .btn.primary {
   background: var(--accent);
@@ -745,6 +820,12 @@ button svg {
 .splitter:active {
   background: var(--accent);
 }
+/* Arrastando o divisor: página do Preview e iframes não roubam o mouse
+   (senão o painel trava ao passar por cima e o soltar se perde). */
+body.pane-resizing webview,
+body.pane-resizing iframe {
+  pointer-events: none;
+}
 
 
 
@@ -757,6 +838,60 @@ button svg {
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg-2) calc(100% * var(--chat-bg-alpha, 1)), transparent);
   z-index: 2;
+}
+/* Título à esquerda; consumo, "Contexto" e opacidade num grupo só à direita
+   (com space-between o "Contexto" ficava solto no meio). */
+.chat-panel > .chat-header {
+  justify-content: flex-start;
+  gap: 8px;
+}
+.chat-panel > .chat-header > .token-meter,
+.chat-panel > .chat-header > .um {
+  margin-left: auto;
+}
+.chat-panel > .chat-header > .chat-opacity {
+  margin-left: 0;
+}
+/* Coluna estreita (não cabe tudo numa linha): em cima o título com
+   "Contexto" e opacidade à direita; o consumo desce inteiro para a linha de
+   baixo, em vez de quebrar em três linhas desencontradas. */
+@container chat (max-width: 640px) {
+  .chat-panel > .chat-header > .token-meter,
+  .chat-panel > .chat-header > .um {
+    order: 10;
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .chat-panel > .chat-header > .chat-context-toggle {
+    margin-left: auto;
+  }
+  /* Na linha de baixo, os chips nunca quebram o texto; quem cede espaço é a
+     barrinha da entrada, que estica ou encolhe com a coluna. */
+  .chat-header > .token-meter {
+    min-width: 0;
+  }
+  .chat-header > .token-meter > * {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .chat-header > .token-meter > .ctx-bar {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .chat-header > .token-meter .ctx-bar-track {
+    flex: 1 1 70px;
+    width: auto;
+    min-width: 16px;
+  }
+}
+/* Bem estreita: sai o rótulo "ENTRADA" (a dica do mouse continua explicando). */
+@container chat (max-width: 430px) {
+  .chat-header > .token-meter .ctx-bar-cap {
+    display: none;
+  }
+  .chat-header > .token-meter {
+    gap: 4px;
+  }
 }
 .chat-title {
   font-size: 12px;
@@ -815,28 +950,41 @@ button svg {
   max-height: 40vh;
   overflow-y: auto;
 }
+/* "Última resposta": dentro da barra do modelo, à direita do Rápido, em texto
+   corrido separado por um traço fino — sem cartão, sem borda colorida e sem
+   pílulas. Faltando espaço, o rótulo cede primeiro (reticências), os números não. */
 .last-usage-float {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  margin: 0 16px;
-  padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg-2));
-  box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 10%, transparent);
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
   font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 .last-usage-title {
-  color: var(--text);
-  font-weight: 650;
-  letter-spacing: .01em;
-  margin-right: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-weight: 500;
 }
-.last-usage-float .ctx-bar,
 .last-usage-float .tok {
-  background: color-mix(in srgb, var(--bg-3) 80%, transparent);
+  flex: none;
+}
+.last-usage-float .tok {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.last-usage-float .tok.in,
+.last-usage-float .tok.out {
+  color: var(--text);
 }
 .tok {
   background: var(--bg-3);
@@ -1140,9 +1288,11 @@ button svg {
 .empty-state h2 {
   color: var(--text);
   margin: 0 0 8px;
+  text-wrap: balance;
 }
 .empty-state p {
   max-width: 360px;
+  text-wrap: pretty;
 }
 .empty-connect {
   margin-top: 16px;
@@ -1183,14 +1333,15 @@ button svg {
   color: var(--text);
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
-  transition: background 0.12s, transform 0.12s;
+  /* O press usa a propriedade scale, separada do transform da animação de entrada. */
+  transition: background-color 0.12s ease-out, scale 0.12s ease-out;
   animation: jumpin 0.16s ease-out;
 }
 .jump-bottom:hover {
   background: var(--bg-3);
 }
 .jump-bottom:active {
-  transform: scale(0.94);
+  scale: 0.96;
 }
 @keyframes jumpin {
   from {
@@ -1340,6 +1491,7 @@ button svg {
 }
 .md p {
   margin: 0 0 8px;
+  text-wrap: pretty;
 }
 .md h1,
 .md h2,
@@ -1347,6 +1499,7 @@ button svg {
 .md h4 {
   margin: 14px 0 6px;
   line-height: 1.3;
+  text-wrap: balance;
 }
 .md h1 {
   font-size: 1.35em;
@@ -1367,6 +1520,7 @@ button svg {
 }
 .md li {
   margin: 2px 0;
+  text-wrap: pretty;
 }
 .md li > p {
   margin: 0;
@@ -1427,6 +1581,8 @@ button svg {
 .md img {
   max-width: 100%;
   border-radius: 6px;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
 }
 /* Intermediate narration ("Let me check…", "Done, now I'll…") — no bubble, on
    the turn's rail (chatLook.css). The final answer keeps the full style above. */
@@ -1504,6 +1660,13 @@ button svg {
 .tool-caret {
   color: var(--muted);
   font-size: 10px;
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1);
+}
+.tool-caret.open {
+  transform: rotate(90deg);
 }
 .tool-name {
   font-family: ui-monospace, monospace;
@@ -1580,6 +1743,7 @@ button svg {
 }
 /* "Ouvir" / "Parar" read-aloud button under a final answer. */
 .msg-copy {
+  position: relative;
   display: inline-grid;
   place-items: center;
   width: 26px;
@@ -1595,6 +1759,12 @@ button svg {
 .msg-copy:hover {
   color: var(--text);
   background: var(--line);
+}
+/* Área de toque maior que os 26px; para dentro do vão de 10px até o vizinho. */
+.msg-copy::after {
+  content: '';
+  position: absolute;
+  inset: -7px -5px;
 }
 .msg-copy.done {
   color: #3fb950;
@@ -1777,16 +1947,20 @@ button svg {
   position: relative; display: flex; align-items: center; justify-content: flex-end; width: 30px; height: 16px; padding: 0 8px 0 0;
   border: 0; background: transparent; cursor: pointer;
 }
+/* O traço tem o tamanho cheio (20x4) e encolhe por transform (10x3 em repouso):
+   o hover anima sem mexer no layout. Ancorado à direita, como antes. */
 .question-map-point::before {
-  content: ''; display: block; width: 10px; height: 3px; border-radius: 999px;
+  content: ''; display: block; width: 20px; height: 4px; border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 70%, transparent);
-  transition: width 140ms ease, height 140ms ease, background 140ms ease;
+  transform: scale(0.5, 0.75); transform-origin: right;
+  transition: transform 120ms ease-out, background-color 120ms ease-out;
 }
+/* Agrupado: 5px de altura em repouso e no hover (vem antes do hover para o transform dele valer). */
+.question-map-point.grouped::before { height: 5px; transform: scale(0.5, 1); }
 .question-map-point:hover::before, .question-map-point:focus-visible::before, .question-map-point.active::before {
-  width: 20px; height: 4px; background: color-mix(in srgb, var(--text) 90%, transparent);
+  transform: none; background: color-mix(in srgb, var(--text) 90%, transparent);
 }
 .question-map-point:focus-visible { outline: none; }
-.question-map-point.grouped::before { height: 5px; }
 .question-map-point:hover { background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 6px; }
 .question-map-card {
   position: absolute; right: 30px; top: 50%; transform: translateY(-50%); width: min(340px, 45vw);
@@ -1839,6 +2013,8 @@ button svg {
   height: 26px;
   object-fit: cover;
   border-radius: 4px;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
 }
 .queue-text {
   flex: 1;
@@ -1851,6 +2027,7 @@ button svg {
   opacity: 0.85;
 }
 .queue-x {
+  position: relative;
   flex-shrink: 0;
   width: 22px;
   height: 22px;
@@ -1864,6 +2041,13 @@ button svg {
 .queue-x:hover {
   background: var(--bg-3);
   color: var(--err);
+}
+/* Área de toque maior em volta do X de 22px. Para cima/baixo 8px (o X do item vizinho fica a 17px);
+   à esquerda 4px, metade do gap até o botão "agora"; à direita até a borda do item. */
+.queue-x::after {
+  content: '';
+  position: absolute;
+  inset: -8px -9px -8px -4px;
 }
 
 /* ---- pergunta minimizada (AskUserQuestion) — chip entre o histórico e o composer ---- */
@@ -2034,23 +2218,90 @@ button svg {
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  /* Sem espaço para a "Última resposta" ao lado do Rápido, ela desce de linha
+     inteira em vez de espremer os botões. */
+  flex-wrap: wrap;
+  gap: 6px 12px;
   /* Symmetric vertical padding so the model select / "Permitir tudo" sit
      centered in the bar with breathing room above the composer input below
      (previously padding-bottom:0 made them cram against the message box). */
   padding: 8px 16px;
   background: var(--bg-2);
 }
-.composer-bar .model-select {
-  padding: 4px 6px;
-  font-size: 12.5px;
-  /* Size the box to the SELECTED option's label (not the widest option), so it
-     stays as small as "Opus 4.8" and grows only for longer model names.
-     field-sizing is supported by the Chromium that Electron ships. A max-width
-     keeps very long Ollama names from pushing "Permitir tudo" off-screen. */
-  field-sizing: content;
-  max-width: 240px;
+/* Seletor de modelo personalizado (ModelSelect.tsx): botão + lista para cima. */
+.model-select-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+.model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.model-select-label {
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+.model-select-chevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.model-select[aria-expanded='true'] .model-select-chevron {
+  transform: rotate(180deg);
+}
+.model-select-list {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 100%;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  outline: none;
+}
+.model-select-list[hidden] {
+  display: none;
+}
+.model-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: pointer;
+}
+.model-select-option.active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+.model-select-option[aria-selected='true'] {
+  font-weight: 600;
+}
+.model-select-option svg {
+  flex: none;
+  color: var(--accent);
+}
+.composer-bar .model-select {
+  padding: 4px 8px 4px 10px;
+  font-size: 12.5px;
+  /* O botão cresce com o nome do modelo; o max-width impede nomes longos
+     (Ollama) de empurrar o "Permitir tudo" para fora da tela. */
+  max-width: 240px;
 }
 /* In session the model is fixed. Rather than a dead `disabled` control (which
    gives no feedback on click), the select stays clickable but reads as locked:
@@ -2390,6 +2641,8 @@ button svg {
   max-height: 220px;
   border-radius: 8px;
   display: block;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
 }
 
 /* ---- file attachment cards (composer chips + sent-bubble cards) ---- */
@@ -2617,7 +2870,10 @@ img.inline-att {
 img.inline-att-image {
   width: 26px;
   object-fit: cover;
-  border: 1px solid var(--line);
+  /* Contorno por dentro em vez de borda: não soma largura e não briga com o fundo da foto.
+     O contorno de 2px do item no cursor (abaixo) é mais específico e continua valendo. */
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
   cursor: zoom-in;
 }
 img.inline-att-file,
@@ -2638,7 +2894,7 @@ img.inline-att[data-caret] {
   pointer-events: none;
   max-width: 280px;
   padding: 6px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-2);
   border: 1px solid var(--line);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
@@ -2649,6 +2905,8 @@ img.inline-att[data-caret] {
   max-height: 240px;
   border-radius: 6px;
   object-fit: contain;
+  outline: 1px solid oklch(1 0 0 / 0.1);
+  outline-offset: -1px;
 }
 .inline-att-preview img.chip {
   max-height: 24px;
@@ -2828,6 +3086,13 @@ img.inline-att[data-caret] {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
+  position: relative;
+}
+/* Só 16px de largura: a área de toque cresce na vertical (40px), sem invadir o botão do microfone ao lado. */
+.mic-caret::after {
+  content: '';
+  position: absolute;
+  inset: -5px 0;
 }
 .mic-caret:hover:not(:disabled) {
   color: var(--text);
@@ -2844,7 +3109,7 @@ img.inline-att[data-caret] {
   max-width: 320px;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 5px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
   z-index: 40;
@@ -2891,7 +3156,7 @@ img.inline-att[data-caret] {
   overflow-y: auto;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 5px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
   z-index: 20;
@@ -2942,7 +3207,7 @@ img.inline-att[data-caret] {
   align-items: center;
   justify-content: center;
   flex: none;
-  transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+  transition: scale 150ms ease-out, filter 0.12s ease-out, box-shadow 0.12s ease-out, background-color 120ms ease-out;
 }
 .btn.send {
   background: var(--accent);
@@ -2953,11 +3218,10 @@ img.inline-att[data-caret] {
 .btn.send:hover:not(:disabled) {
   background: var(--accent);
   filter: brightness(1.08);
-  transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(217, 119, 87, 0.45);
 }
+/* O aperto (scale 0.96) vem de .btn:active. */
 .btn.send:active:not(:disabled) {
-  transform: translateY(0);
   filter: brightness(0.96);
 }
 .btn.send:disabled {
@@ -2985,19 +3249,15 @@ img.inline-att[data-caret] {
   .composer-row { flex-wrap: wrap; row-gap: 6px; }
   .composer-row > .composer-input-wrap { order: -1; flex: 1 0 100%; }
   .composer-row > .mic-wrap { margin-right: auto; }
+  /* Coluna estreita: a linha da última resposta desce inteira para baixo dos
+     botões, sem o traço divisor. */
   .last-usage-float {
     flex-wrap: nowrap;
-    gap: 10px;
-    margin: 0 10px;
-    padding: 5px 10px;
-    border-radius: 10px;
-    box-shadow: none;
-    white-space: nowrap;
+    flex-basis: 100%;
+    padding-left: 0;
+    border-left: 0;
     overflow: hidden;
   }
-  /* Faltando espaço, o rótulo cede primeiro (reticências); os números não. */
-  .last-usage-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .last-usage-float .tok { flex: none; padding: 0; border: 0; background: none; }
   /* Esforço: o rótulo inteiro ("Esforço Auto · Alto") fica; o botão só aperta
      o espaçamento, a barra quebra linha em vez de cortar Econômico/Loop, e o
      painel cabe na coluna. */
@@ -3064,10 +3324,11 @@ img.inline-att[data-caret] {
   line-height: 1.4;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
   cursor: pointer;
-  animation: toast-in 0.26s cubic-bezier(0.21, 1.02, 0.73, 1);
+  animation: toast-in 0.26s cubic-bezier(0.2, 0, 0, 1);
 }
+/* Saída mais curta e discreta que a entrada. */
 .toast.leaving {
-  animation: toast-out 0.28s forwards;
+  animation: toast-out 150ms ease-out forwards;
 }
 .toast-ico {
   width: 20px;
@@ -3093,6 +3354,13 @@ img.inline-att[data-caret] {
   line-height: 1;
   padding: 0 2px;
   flex-shrink: 0;
+  position: relative;
+}
+/* O X tem ~12x16px: a área de toque cresce dentro do padding do toast. */
+.toast-x::after {
+  content: '';
+  position: absolute;
+  inset: -12px -10px;
 }
 .toast-x:hover {
   color: var(--text);
@@ -3128,7 +3396,7 @@ img.inline-att[data-caret] {
 @keyframes toast-out {
   to {
     opacity: 0;
-    transform: translateX(24px);
+    transform: translateX(12px);
   }
 }
 
@@ -3156,7 +3424,7 @@ img.inline-att[data-caret] {
   border-radius: 14px;
   padding: 20px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
-  animation: modal-in 0.2s cubic-bezier(0.21, 1.02, 0.73, 1);
+  animation: modal-in 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 .modal-card.permission-modal {
   max-width: 460px;
@@ -3582,7 +3850,7 @@ img.inline-att[data-caret] {
   gap: 10px;
   cursor: pointer;
 }
-.settings-toggle input {
+.settings-toggle input[type='checkbox']:not(.switch-input) {
   margin-top: 3px;
 }
 .settings-toggle > span {
@@ -3594,6 +3862,7 @@ img.inline-att[data-caret] {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
+  text-wrap: pretty;
 }
 
 /* "Permitir tudo" — a styled toggle switch (danger accent), applied live. The
@@ -3669,6 +3938,42 @@ img.inline-att[data-caret] {
 .switch-input:focus-visible + .switch-visual {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
+/* Checkbox personalizado em todo o app (nada do visual nativo do Windows).
+   O input continua sendo o próprio checkbox: teclado e leitor de tela iguais. */
+input[type='checkbox']:not(.switch-input) {
+  appearance: none;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--muted) 75%, transparent);
+  border-radius: 4px;
+  background: var(--bg-2) center / 12px 12px no-repeat;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+input[type='checkbox']:not(.switch-input):hover:not(:disabled) {
+  border-color: var(--text);
+}
+input[type='checkbox']:not(.switch-input):checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='5 12.5 10 17.5 19 7'/%3E%3C/svg%3E");
+}
+input[type='checkbox']:not(.switch-input):indeterminate {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='6' y1='12' x2='18' y2='12'/%3E%3C/svg%3E");
+}
+input[type='checkbox']:not(.switch-input):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+input[type='checkbox']:not(.switch-input):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .settings-field {
   display: flex;
   flex-direction: column;
@@ -3740,6 +4045,48 @@ img.inline-att[data-caret] {
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.45;
+  text-wrap: pretty;
+}
+/* Importar conversas do Agent Code: lista para marcar (Configurações › Dados). */
+.importar-auto {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.importar-lista {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.importar-lista li + li {
+  border-top: 1px solid var(--line);
+}
+.importar-lista label {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.importar-titulo {
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.importar-info {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
 }
 /* Lista de modelos do Automático — oculta por padrão atrás de um botão de
    expandir, para não empilhar checkboxes em cima da seção do TypeSafe. */
@@ -4460,7 +4807,8 @@ img.inline-att[data-caret] {
   border: 1px solid var(--line);
   background: var(--bg-2);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
-  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* backwards, não both: com both o transform:none do fim fica preso e anula o translateY do hover. */
+  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards;
   transition: border-color 0.16s ease, transform 0.16s ease;
 }
 .flow-node:hover {
@@ -4490,7 +4838,7 @@ img.inline-att[data-caret] {
 .flow-node.agent.running {
   border-color: var(--accent);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent), 0 6px 18px rgba(0, 0, 0, 0.28);
-  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both, node-halo 2s ease-out infinite 0.32s;
+  animation: node-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards, node-halo 2s ease-out infinite 0.32s;
 }
 @keyframes node-halo {
   70% {
@@ -5254,7 +5602,7 @@ img.inline-att[data-caret] {
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  animation: modal-in 0.16s cubic-bezier(0.21, 1.02, 0.73, 1);
+  animation: modal-in 0.16s cubic-bezier(0.2, 0, 0, 1);
 }
 .usage-popover-section {
   display: flex;
@@ -5333,6 +5681,30 @@ img.inline-att[data-caret] {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* Versão nova pronta: o botão pisca (anel laranja) até ser aberto — fácil de não ver
+   no canto da barra. Agendada, instalando ou com o aviso aberto, fica parado. */
+.update-badge:not(.open):not(.scheduled):not(.installing) .update-trigger {
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: update-pisca 1.6s ease-in-out infinite;
+}
+@keyframes update-pisca {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent);
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-badge:not(.open):not(.scheduled):not(.installing) .update-trigger {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+}
 .update-trigger.scheduled {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
@@ -5366,7 +5738,7 @@ img.inline-att[data-caret] {
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  animation: modal-in 0.16s cubic-bezier(0.21, 1.02, 0.73, 1);
+  animation: modal-in 0.16s cubic-bezier(0.2, 0, 0, 1);
 }
 .update-popover h4 {
   margin: 0;
@@ -5782,6 +6154,7 @@ img.inline-att[data-caret] {
   border-radius: 999px;
   padding: 0 5px;
   line-height: 15px;
+  font-variant-numeric: tabular-nums;
 }
 /* Quantos cartões esperam você (aba Quadro). */
 .pane-tab-count.awaiting {
@@ -5820,6 +6193,7 @@ img.inline-att[data-caret] {
 .token-usage-call-count {
   color: var(--muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 .token-usage-empty {
   color: var(--muted);
@@ -6699,6 +7073,7 @@ img.inline-att[data-caret] {
   line-height: 1.35;
   /* O título vai inteiro: quebra nomes longos (pasta.arquivo-sem-espaço) em vez de cortar. */
   overflow-wrap: anywhere;
+  text-wrap: pretty;
   padding-right: 16px;
 }
 /* "Do que se trata": o RESUMO do PO, em até 3 linhas no cartão (inteiro no detalhe). */
@@ -6708,6 +7083,7 @@ img.inline-att[data-caret] {
   line-height: 1.45;
   color: var(--muted);
   overflow-wrap: anywhere;
+  text-wrap: pretty;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -7122,6 +7498,7 @@ span.board-agent-dot {
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 /* A faixa de cima do detalhe tem a cor do estado, a mesma da lombada do cartão. */
 .board-detail {
@@ -7435,6 +7812,7 @@ span.board-agent-dot {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
+  text-wrap: balance;
 }
 .crew-seg {
   margin-left: auto;
@@ -7860,6 +8238,7 @@ span.board-agent-dot {
 }
 .crew-chip-n {
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7929,4 +8308,38 @@ span.board-agent-dot {
   color: var(--muted);
   text-align: right;
   margin-top: 2px;
+}
+
+/* Movimento reduzido (preferência do sistema): desliga pulsos, varreduras e entradas/saídas da
+   casca. Os blocos próprios do fluxo, grafo, equipe e quadro continuam onde estão.
+   O toast sai sem animação: o UiProvider remove por setTimeout, não por animationend. */
+@media (prefers-reduced-motion: reduce) {
+  .tok.time.running,
+  .working-banner::after,
+  .pending-question-chip,
+  .rec-dot,
+  .task-progress::after,
+  .board-po-dot,
+  .jump-bottom,
+  .msg.msg-flash .bubble,
+  .file-chip,
+  .toast,
+  .toast.leaving,
+  .modal-overlay,
+  .modal-card,
+  .right-rail-btn .rail-badge,
+  .pane-tab-badge,
+  .speech-setup,
+  .usage-popover,
+  .update-popover {
+    animation: none;
+  }
+  /* Sem os pontinhos andando: fica a reticência parada. */
+  .working-dots::after {
+    animation: none;
+    content: '…';
+  }
+  .sidebar {
+    transition: none;
+  }
 }

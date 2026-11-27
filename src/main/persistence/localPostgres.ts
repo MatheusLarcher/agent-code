@@ -18,8 +18,11 @@ import { StorageError } from './types'
 
 export const LOCAL_POSTGRES_USER = 'agentcode'
 
+/** Binário do PostgreSQL na pasta bin: `.exe` só no Windows. */
+export const pgExe = (binDir: string, tool: string): string => join(binDir, process.platform === 'win32' ? `${tool}.exe` : tool)
+
 export interface LocalPostgresPaths {
-  /** Pasta com initdb.exe, pg_ctl.exe e postgres.exe. */
+  /** Pasta com initdb, pg_ctl e postgres (`.exe` no Windows). */
   binDir: string
   /** PGDATA. Fora do OneDrive (machineLocalDir); backup é pg_dump, nunca cópia da pasta. */
   dataDir: string
@@ -83,7 +86,7 @@ export async function restoreEmptyClusterDirs(dataDir: string): Promise<string[]
 export function localPostgresPaths(resourceRoots: string[], localRoot: string): LocalPostgresPaths {
   const binDir = resourceRoots
     .map((root) => join(root, 'postgres', 'bin'))
-    .find((bin) => existsSync(join(bin, 'pg_ctl.exe')))
+    .find((bin) => existsSync(pgExe(bin, 'pg_ctl')))
   if (!binDir) {
     throw new StorageError(
       'LOCAL_POSTGRES_UNAVAILABLE',
@@ -124,7 +127,7 @@ export class LocalPostgres {
     if (!this.used) return
     this.used = false
     const paths = this.resolvePaths()
-    const pgCtl = join(paths.binDir, 'pg_ctl.exe')
+    const pgCtl = pgExe(paths.binDir, 'pg_ctl')
     const stopWith = (mode: 'fast' | 'immediate'): Promise<CommandResult | null> =>
       this.deps
         .run(pgCtl, ['stop', '-D', paths.dataDir, '-m', mode, '-w', '-t', String(STOP_WAIT_SECONDS), '-s'], (STOP_WAIT_SECONDS + 10) * 1000)
@@ -180,7 +183,7 @@ export class LocalPostgres {
     await writeFile(passwordFile, `${password}\n`, { encoding: 'utf8', mode: 0o600 })
     try {
       const result = await this.deps.run(
-        join(paths.binDir, 'initdb.exe'),
+        pgExe(paths.binDir, 'initdb'),
         ['-D', staging, '-U', LOCAL_POSTGRES_USER, `--pwfile=${passwordFile}`, '-E', 'UTF8', '--no-locale', '--auth=scram-sha-256', '--no-instructions'],
         INITDB_TIMEOUT_MS
       )
@@ -216,7 +219,7 @@ export class LocalPostgres {
    *  WAL), 2 ninguém responde. */
   private async probe(paths: LocalPostgresPaths, port: number): Promise<Readiness> {
     const result = await this.deps.run(
-      join(paths.binDir, 'pg_isready.exe'),
+      pgExe(paths.binDir, 'pg_isready'),
       ['-h', '127.0.0.1', '-p', String(port), '-t', '3'],
       PROBE_TIMEOUT_MS
     )
@@ -240,7 +243,7 @@ export class LocalPostgres {
   }
 
   private async statusRunning(paths: LocalPostgresPaths): Promise<boolean> {
-    const status = await this.deps.run(join(paths.binDir, 'pg_ctl.exe'), ['status', '-D', paths.dataDir], STATUS_TIMEOUT_MS)
+    const status = await this.deps.run(pgExe(paths.binDir, 'pg_ctl'), ['status', '-D', paths.dataDir], STATUS_TIMEOUT_MS)
     return status.code === 0
   }
 
@@ -259,7 +262,7 @@ export class LocalPostgres {
     }
     const result = await this.deps
       .start(
-        join(paths.binDir, 'pg_ctl.exe'),
+        pgExe(paths.binDir, 'pg_ctl'),
         ['start', '-D', paths.dataDir, '-l', paths.logFile, '-w', '-t', String(START_WAIT_SECONDS), '-s', '-o', `-p ${port} -c listen_addresses=127.0.0.1`],
         (START_WAIT_SECONDS + 15) * 1000
       )

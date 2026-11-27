@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -84,10 +84,12 @@ describe('watchSessionTasks', () => {
     const seen: TaskItem[][] = []
     const stop = watchSessionTasks(SESSION, (items) => seen.push(items), root)
     try {
-      writeTask('1', { status: 'in_progress' })
-      await new Promise((r) => setTimeout(r, 700))
-      expect(seen.length).toBeGreaterThan(0)
-      expect(seen[seen.length - 1][0].status).toBe('in_progress')
+      // Regrava a cada volta: logo após o watch armar, o macOS (FSEvents) pode
+      // juntar ou perder o 1º evento com a máquina carregada (item 3.23).
+      await vi.waitFor(() => {
+        writeTask('1', { status: 'in_progress' })
+        expect(seen.at(-1)?.[0].status).toBe('in_progress')
+      }, { timeout: 8_000, interval: 1_000 }) // > debounce de 250 ms do watcher
     } finally {
       stop()
     }
@@ -109,17 +111,18 @@ describe('watchSessionTasks', () => {
     try {
       // Simulate the CLI creating both directories before the root watcher can
       // react to the tasks/ creation event.
-      writeTask('1', { status: 'pending' })
-      await new Promise((r) => setTimeout(r, 700))
-      expect(seen.at(-1)?.map((task) => [task.id, task.status])).toEqual([['1', 'pending']])
-
-      writeTask('1', { status: 'in_progress' })
-      await new Promise((r) => setTimeout(r, 700))
-      expect(seen.at(-1)?.[0].status).toBe('in_progress')
-
-      writeTask('1', { status: 'completed' })
-      await new Promise((r) => setTimeout(r, 700))
-      expect(seen.at(-1)?.[0].status).toBe('completed')
+      // Wait on the condition, not a fixed sleep: file watchers lag under full-suite load.
+      // Regrava a cada volta (1 s > debounce de 250 ms): o macOS pode perder o
+      // 1º evento logo após o watch armar, com a máquina carregada (item 3.23).
+      const until = { timeout: 8_000, interval: 1_000 }
+      const reach = (status: string): Promise<void> =>
+        vi.waitFor(() => {
+          writeTask('1', { status })
+          expect(seen.at(-1)?.map((task) => [task.id, task.status])).toEqual([['1', status]])
+        }, until)
+      await reach('pending')
+      await reach('in_progress')
+      await reach('completed')
     } finally {
       stop()
     }
